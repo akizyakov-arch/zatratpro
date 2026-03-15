@@ -22,3 +22,16 @@ class ProjectService:
         async with pool.acquire() as connection:
             rows = await connection.fetch(query)
         return [Project(id=row["id"], name=row["name"], is_archived=row["is_archived"]) for row in rows]
+
+    async def get_active_project(self, project_id: int) -> Project | None:
+        pool = get_pool()
+        query = """
+            SELECT id, name, is_archived
+            FROM projects
+            WHERE id =  AND is_archived = FALSE
+        """
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(query, project_id)
+        if row is None:
+            return None
+        return Project(id=row["id"], name=row["name"], is_archived=row["is_archived"])
