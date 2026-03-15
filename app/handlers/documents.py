@@ -6,7 +6,7 @@ from aiogram.types import Message
 
 from app.schemas.document import DocumentSchema
 from app.services.deepseek import DeepSeekError, DeepSeekService
-from app.services.json_formatter import chunk_message, format_document_json
+from app.services.json_formatter import chunk_message, format_document_json, format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.telegram_files import TelegramFileService
 
@@ -44,14 +44,8 @@ async def process_photo(message: Message) -> None:
         await message.answer("OCR не вернул текст. Попробуй более четкое фото.")
         return
 
-    for chunk in chunk_message(f"Распознанный текст OCR:\n\n{ocr_text}"):
-        await message.answer(chunk)
-
     try:
         cleaned_text = await deepseek_service.clean_ocr_text(ocr_text)
-        for chunk in chunk_message(f"Нормализованный текст:\n\n{cleaned_text}"):
-            await message.answer(chunk)
-
         document = await deepseek_service.extract_document(cleaned_text)
         validated = DocumentSchema.model_validate(document)
     except DeepSeekError as exc:
@@ -62,6 +56,10 @@ async def process_photo(message: Message) -> None:
         logger.exception("JSON validation failed")
         await message.answer(f"JSON не прошел проверку: {exc}")
         return
+
+    preview = format_document_preview(validated)
+    for chunk in chunk_message(preview):
+        await message.answer(chunk)
 
     formatted = format_document_json(json.loads(validated.model_dump_json()))
     for chunk in chunk_message(f"Структурированный JSON:\n```json\n{formatted}\n```"):
