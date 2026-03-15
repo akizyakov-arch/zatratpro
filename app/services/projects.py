@@ -28,7 +28,7 @@ class ProjectService:
         query = """
             SELECT id, name, is_archived
             FROM projects
-            WHERE id =  AND is_archived = FALSE
+            WHERE id = $1 AND is_archived = FALSE
         """
         async with pool.acquire() as connection:
             row = await connection.fetchrow(query, project_id)
