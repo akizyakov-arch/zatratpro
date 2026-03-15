@@ -1,13 +1,11 @@
-import json
 import logging
 
 from aiogram import F, Router
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 
-from app.schemas.document import DocumentSchema
 from app.services.deepseek import DeepSeekError, DeepSeekService
-from app.services.json_formatter import chunk_message, format_document_json, format_document_preview
+from app.services.json_formatter import chunk_message
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.telegram_files import TelegramFileService
 
@@ -46,28 +44,26 @@ async def process_photo(message: Message) -> None:
         await message.answer("OCR не вернул текст. Попробуй более четкое фото.")
         return
 
-    await message.answer("OCR завершен. Подготавливаю структуру документа.")
+    await message.answer("OCR завершен. Нормализую документ.")
 
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            document = await deepseek_service.extract_document(ocr_text)
-            validated = DocumentSchema.model_validate(document)
+            normalized_text = await deepseek_service.normalize_document_text(ocr_text)
     except DeepSeekError as exc:
-        logger.exception("DeepSeek failed")
-        await message.answer(f"Не удалось собрать JSON: {exc}")
+        logger.exception("DeepSeek normalization failed")
+        await message.answer(f"Не удалось нормализовать документ: {exc}")
         return
     except Exception as exc:  # noqa: BLE001
-        logger.exception("JSON validation failed")
-        await message.answer(f"JSON не прошел проверку: {exc}")
+        logger.exception("Normalization failed")
+        await message.answer(f"Не удалось подготовить документ: {exc}")
         return
 
-    preview = format_document_preview(validated)
-    for chunk in chunk_message(preview):
+    for chunk in chunk_message(normalized_text):
         await message.answer(chunk)
 
-    formatted = format_document_json(json.loads(validated.model_dump_json()))
-    for chunk in chunk_message(f"Структурированный JSON:\n```json\n{formatted}\n```"):
-        await message.answer(chunk, parse_mode="Markdown")
+    await message.answer(
+        "Документ подготовлен. Следующий шаг: выбрать проект, после чего я соберу JSON для сохранения."
+    )
 
 
 @router.message()
