@@ -124,9 +124,10 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         document = DocumentSchema.model_validate({**extracted_document, "raw_text": pending_document.ocr_text})
         document_id = await document_service.save_document(
             telegram_user=callback.from_user,
-            project_id=project.id,
+            project=project,
             normalized_text=pending_document.normalized_text,
             document=document,
+            source_type="photo",
         )
     except DeepSeekError as exc:
         logger.exception("DeepSeek extraction failed")
@@ -157,3 +158,4 @@ async def unsupported_message(message: Message) -> None:
         "Поддерживаются команды /start, /help, кнопки главного меню и фото документов.",
         reply_markup=build_main_menu_keyboard(),
     )
+EOF

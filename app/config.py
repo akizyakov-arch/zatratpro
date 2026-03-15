@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     postgres_password: str = Field(default="change_me", alias="POSTGRES_PASSWORD")
     postgres_host: str = Field(default="zatratpro-db", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
+    default_company_slug: str = Field(default="default-company", alias="DEFAULT_COMPANY_SLUG")
+    default_company_name: str = Field(default="Основная компания", alias="DEFAULT_COMPANY_NAME")
 
     model_config = SettingsConfigDict(
         env_file=".env",
