@@ -5,6 +5,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.schemas.document import DocumentSchema
+from app.services.companies import CompanyAccessError
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService
 from app.services.json_formatter import chunk_message
@@ -78,10 +79,15 @@ async def process_photo(message: Message) -> None:
     for chunk in chunk_message(normalized_text):
         await message.answer(chunk, reply_markup=build_main_menu_keyboard())
 
-    projects = await project_service.list_active_projects()
+    try:
+        projects = await project_service.list_active_projects(message.from_user.id)
+    except CompanyAccessError as exc:
+        await message.answer(str(exc), reply_markup=build_main_menu_keyboard())
+        return
+
     if not projects:
         await message.answer(
-            "Документ подготовлен, но в базе пока нет активных проектов. Добавь проекты и повтори выбор.",
+            "В текущей компании пока нет активных проектов. Добавь проекты и повтори выбор.",
             reply_markup=build_main_menu_keyboard(),
         )
         return
@@ -108,7 +114,12 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         return
 
     project_id = int(callback.data.removeprefix(PROJECT_CALLBACK_PREFIX))
-    project = await project_service.get_active_project(project_id)
+    try:
+        project = await project_service.get_active_project(callback.from_user.id, project_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+
     if project is None:
         await callback.answer("Проект недоступен. Обнови список и попробуй снова.", show_alert=True)
         return
@@ -155,6 +166,6 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 @router.message()
 async def unsupported_message(message: Message) -> None:
     await message.answer(
-        "Поддерживаются команды /start, /help, кнопки главного меню и фото документов.",
+        "Поддерживаются команды /start, /help, кнопки главного меню, команды компаний и фото документов.",
         reply_markup=build_main_menu_keyboard(),
     )

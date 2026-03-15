@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     postgres_password: str = Field(default="change_me", alias="POSTGRES_PASSWORD")
     postgres_host: str = Field(default="zatratpro-db", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
+    bot_owner_telegram_id: int = Field(default=0, alias="BOT_OWNER_TELEGRAM_ID")
     default_company_slug: str = Field(default="default-company", alias="DEFAULT_COMPANY_SLUG")
     default_company_name: str = Field(default="Основная компания", alias="DEFAULT_COMPANY_NAME")
 

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.config import get_settings
+from app.services.companies import CompanyService
 from app.services.database import get_pool
 
 
@@ -13,20 +13,21 @@ class Project:
 
 
 class ProjectService:
-    async def list_active_projects(self) -> list[Project]:
-        settings = get_settings()
+    def __init__(self) -> None:
+        self.company_service = CompanyService()
+
+    async def list_active_projects(self, telegram_user_id: int) -> list[Project]:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
         pool = get_pool()
         query = """
-            SELECT p.id, p.company_id, p.name, p.is_archived
-            FROM projects AS p
-            JOIN companies AS c ON c.id = p.company_id
-            WHERE c.slug = $1
-              AND c.is_active = TRUE
-              AND p.is_archived = FALSE
-            ORDER BY p.created_at, p.id
+            SELECT id, company_id, name, is_archived
+            FROM projects
+            WHERE company_id = $1
+              AND is_archived = FALSE
+            ORDER BY created_at, id
         """
         async with pool.acquire() as connection:
-            rows = await connection.fetch(query, settings.default_company_slug)
+            rows = await connection.fetch(query, company.id)
         return [
             Project(
                 id=row["id"],
@@ -37,20 +38,18 @@ class ProjectService:
             for row in rows
         ]
 
-    async def get_active_project(self, project_id: int) -> Project | None:
-        settings = get_settings()
+    async def get_active_project(self, telegram_user_id: int, project_id: int) -> Project | None:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
         pool = get_pool()
         query = """
-            SELECT p.id, p.company_id, p.name, p.is_archived
-            FROM projects AS p
-            JOIN companies AS c ON c.id = p.company_id
-            WHERE p.id = $1
-              AND c.slug = $2
-              AND c.is_active = TRUE
-              AND p.is_archived = FALSE
+            SELECT id, company_id, name, is_archived
+            FROM projects
+            WHERE id = $1
+              AND company_id = $2
+              AND is_archived = FALSE
         """
         async with pool.acquire() as connection:
-            row = await connection.fetchrow(query, project_id, settings.default_company_slug)
+            row = await connection.fetchrow(query, project_id, company.id)
         if row is None:
             return None
         return Project(
