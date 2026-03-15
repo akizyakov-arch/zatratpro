@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 NUMERIC_FIXES = str.maketrans({
@@ -47,6 +47,11 @@ class DocumentSchema(BaseModel):
     def normalize_total(cls, value: Any) -> Any:
         return _coerce_number(value)
 
+    @model_validator(mode="after")
+    def normalize_document_type(self) -> "DocumentSchema":
+        self.document_type = _detect_document_type(self.document_type, self.raw_text)
+        return self
+
 
 def _coerce_number(value: Any) -> Any:
     if value is None or isinstance(value, (int, float)):
@@ -65,3 +70,18 @@ def _coerce_number(value: Any) -> Any:
         return float(cleaned)
     except ValueError:
         return value
+
+
+def _detect_document_type(current_type: str | None, raw_text: str | None) -> str:
+    text = (raw_text or "").lower()
+
+    if any(token in text for token in ("товарная накладная", "накладная", "торг-12", "упд")):
+        return "invoice"
+    if any(token in text for token in ("акт выполненных работ", "акт оказанных услуг", "акт")):
+        return "act"
+    if any(token in text for token in ("кассовый чек", "фискальный чек", "чек ккт", "чек")):
+        return "receipt"
+
+    if current_type in {"receipt", "invoice", "act"}:
+        return current_type
+    return "receipt"
