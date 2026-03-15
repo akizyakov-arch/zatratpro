@@ -1,0 +1,12 @@
+services:
+  zatratpro-bot:
+    build: .
+    container_name: zatratpro-bot
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./tmp:/app/tmp
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8

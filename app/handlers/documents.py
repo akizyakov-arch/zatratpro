@@ -44,11 +44,15 @@ async def process_photo(message: Message) -> None:
         await message.answer("OCR не вернул текст. Попробуй более четкое фото.")
         return
 
-    for chunk in chunk_message(f"Распознанный текст:\n\n{ocr_text}"):
+    for chunk in chunk_message(f"Распознанный текст OCR:\n\n{ocr_text}"):
         await message.answer(chunk)
 
     try:
-        document = await deepseek_service.extract_document(ocr_text)
+        cleaned_text = await deepseek_service.clean_ocr_text(ocr_text)
+        for chunk in chunk_message(f"Нормализованный текст:\n\n{cleaned_text}"):
+            await message.answer(chunk)
+
+        document = await deepseek_service.extract_document(cleaned_text)
         validated = DocumentSchema.model_validate(document)
     except DeepSeekError as exc:
         logger.exception("DeepSeek failed")

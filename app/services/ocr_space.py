@@ -18,7 +18,11 @@ class OCRSpaceService:
                 with file_path.open("rb") as image_file:
                     response = await client.post(
                         "https://api.ocr.space/parse/image",
-                        data={"apikey": settings.ocr_space_api_key, "language": "rus"},
+                        data={
+                            "apikey": settings.ocr_space_api_key,
+                            "language": "rus",
+                            "OCREngine": 2,
+                        },
                         files={"file": (file_path.name, image_file, "image/jpeg")},
                     )
             response.raise_for_status()
