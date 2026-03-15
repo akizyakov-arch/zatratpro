@@ -7,7 +7,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from app.schemas.document import DocumentSchema
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService
-from app.services.json_formatter import chunk_message, format_document_preview
+from app.services.json_formatter import chunk_message
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
 from app.services.telegram_files import TelegramFileService
@@ -115,7 +115,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 
     deepseek_service = DeepSeekService()
 
-    await callback.answer("Сохраняю документ...")
+    await callback.answer("Проверяю документ...")
 
     try:
         async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=callback.bot):
@@ -144,13 +144,10 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 
     pop_pending_document(callback.from_user.id)
 
-    preview_text = format_document_preview(document)
     await callback.message.answer(
         f"Документ сохранен в проект \"{project.name}\". ID записи: {document_id}.",
         reply_markup=build_main_menu_keyboard(),
     )
-    for chunk in chunk_message(preview_text):
-        await callback.message.answer(chunk, reply_markup=build_main_menu_keyboard())
 
 
 @router.message()
