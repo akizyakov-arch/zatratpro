@@ -158,4 +158,3 @@ async def unsupported_message(message: Message) -> None:
         "Поддерживаются команды /start, /help, кнопки главного меню и фото документов.",
         reply_markup=build_main_menu_keyboard(),
     )
-EOF
