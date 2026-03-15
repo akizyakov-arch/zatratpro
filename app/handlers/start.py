@@ -2,16 +2,19 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
+from app.services.projects import ProjectService
 from app.ui.main_menu import MAIN_MENU_TEXT, build_main_menu_keyboard
 
 
 router = Router()
+project_service = ProjectService()
 
 
 HELP_TEXT = (
     "Я работаю с фото чеков, актов и накладных.\n\n"
     "Кнопка \"Распознать документ\" запускает текущий основной сценарий.\n"
-    "Сценарии \"Ручной ввод\" и \"Проекты\" подготовлены как следующие шаги MVP."
+    "Сценарий \"Проекты\" уже читает реальные записи из базы.\n"
+    "Сценарий \"Ручной ввод\" подготовлен как следующий шаг MVP."
 )
 
 
@@ -43,10 +46,13 @@ async def manual_expense_entry(message: Message) -> None:
 
 @router.message(F.text == "Проекты")
 async def projects_entry(message: Message) -> None:
-    await message.answer(
-        "Меню проектов находится в разработке. Следующий продуктовый этап: выбор проекта сразу после распознавания документа.",
-        reply_markup=build_main_menu_keyboard(),
-    )
+    projects = await project_service.list_active_projects()
+    if not projects:
+        text = "В базе пока нет активных проектов."
+    else:
+        project_lines = [f"{index}. {project.name}" for index, project in enumerate(projects, start=1)]
+        text = "Доступные проекты:\n\n" + "\n".join(project_lines)
+    await message.answer(text, reply_markup=build_main_menu_keyboard())
 
 
 @router.message(F.text == "Помощь")

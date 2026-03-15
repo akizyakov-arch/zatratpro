@@ -33,3 +33,10 @@ CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
 CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_document_date ON documents(document_date);
 CREATE INDEX IF NOT EXISTS idx_projects_is_archived ON projects(is_archived);
+
+INSERT INTO projects (name)
+VALUES
+    ('Основной объект'),
+    ('Офис'),
+    ('Склад')
+ON CONFLICT (name) DO NOTHING;

@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     )
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    postgres_db: str = Field(default="zatratpro", alias="POSTGRES_DB")
+    postgres_user: str = Field(default="zatratpro", alias="POSTGRES_USER")
+    postgres_password: str = Field(default="change_me", alias="POSTGRES_PASSWORD")
+    postgres_host: str = Field(default="zatratpro-db", alias="POSTGRES_HOST")
+    postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -26,6 +31,13 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @property
+    def postgres_dsn(self) -> str:
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
 
 
 @lru_cache
