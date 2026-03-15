@@ -3,6 +3,7 @@ import logging
 
 from aiogram import F, Router
 from aiogram.types import Message
+from aiogram.utils.chat_action import ChatActionSender
 
 from app.schemas.document import DocumentSchema
 from app.services.deepseek import DeepSeekError, DeepSeekService
@@ -29,8 +30,9 @@ async def process_photo(message: Message) -> None:
     await message.answer("Фото получено. Начинаю распознавание.")
 
     try:
-        file_path = await file_service.download_best_photo(message.photo)
-        ocr_text = await ocr_service.extract_text(file_path)
+        async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
+            file_path = await file_service.download_best_photo(message.photo)
+            ocr_text = await ocr_service.extract_text(file_path)
     except OCRSpaceError as exc:
         logger.exception("OCR failed")
         await message.answer(f"OCR не удался: {exc}")
@@ -44,10 +46,13 @@ async def process_photo(message: Message) -> None:
         await message.answer("OCR не вернул текст. Попробуй более четкое фото.")
         return
 
+    await message.answer("OCR завершен. Подготавливаю структуру документа.")
+
     try:
-        cleaned_text = await deepseek_service.clean_ocr_text(ocr_text)
-        document = await deepseek_service.extract_document(cleaned_text)
-        validated = DocumentSchema.model_validate(document)
+        async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
+            cleaned_text = await deepseek_service.clean_ocr_text(ocr_text)
+            document = await deepseek_service.extract_document(cleaned_text)
+            validated = DocumentSchema.model_validate(document)
     except DeepSeekError as exc:
         logger.exception("DeepSeek failed")
         await message.answer(f"Не удалось собрать JSON: {exc}")
