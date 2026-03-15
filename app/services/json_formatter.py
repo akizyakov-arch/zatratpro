@@ -11,6 +11,12 @@ DOCUMENT_TYPE_TITLES = {
     "act": "АКТ",
 }
 
+CURRENCY_SYMBOLS = {
+    "RUB": "₽",
+    "USD": "$",
+    "EUR": "€",
+}
+
 
 def format_document_json(document: dict) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2)
@@ -18,6 +24,7 @@ def format_document_json(document: dict) -> str:
 
 def format_document_preview(document: DocumentSchema) -> str:
     title = DOCUMENT_TYPE_TITLES.get(document.document_type, "ДОКУМЕНТ")
+    currency_display = _format_currency(document.currency)
     lines = [title]
 
     number = document.external_document_number or document.incoming_number
@@ -38,11 +45,11 @@ def format_document_preview(document: DocumentSchema) -> str:
         lines.append("")
         lines.append("Состав документа:")
         for item in items:
-            lines.append(_format_item(item, document.currency))
+            lines.append(_format_item(item, currency_display))
 
     if document.total is not None:
         lines.append("")
-        lines.append(f"Итого: {_format_amount(document.total)} {document.currency}")
+        lines.append(f"Итого: {_format_amount(document.total)} {currency_display}")
 
     return "\n".join(lines).strip()
 
@@ -62,12 +69,12 @@ def _item_has_value(item: DocumentItem) -> bool:
     return any(value is not None for value in (item.name, item.quantity, item.price, item.line_total))
 
 
-def _format_item(item: DocumentItem, currency: str) -> str:
+def _format_item(item: DocumentItem, currency_display: str) -> str:
     name = item.name or "Без названия"
     quantity = _format_amount(item.quantity) if item.quantity is not None else "?"
     price = _format_amount(item.price) if item.price is not None else "?"
     line_total = _format_amount(item.line_total) if item.line_total is not None else "?"
-    return f"{name} — {quantity} шт × {price} {currency} = {line_total} {currency}"
+    return f"{name} — {quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
 
 
 def _format_amount(value: float | int | None) -> str:
@@ -81,3 +88,9 @@ def _format_amount(value: float | int | None) -> str:
 
     quantized = amount.quantize(Decimal("0.01"))
     return f"{quantized:.2f}"
+
+
+def _format_currency(currency_code: str | None) -> str:
+    if not currency_code:
+        return "RUB"
+    return CURRENCY_SYMBOLS.get(currency_code.upper(), currency_code.upper())

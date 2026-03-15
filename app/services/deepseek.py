@@ -1,3 +1,6 @@
+import json
+import re
+
 import httpx
 
 from app.config import get_settings
@@ -7,6 +10,13 @@ from app.prompts.extraction_prompt import EXTRACTION_PROMPT
 
 class DeepSeekError(RuntimeError):
     pass
+
+
+CURRENCY_SYMBOLS = {
+    "RUB": "₽",
+    "USD": "$",
+    "EUR": "€",
+}
 
 
 class DeepSeekService:
@@ -41,7 +51,7 @@ class DeepSeekService:
         )
         if not content:
             raise DeepSeekError("DeepSeek вернул пустой нормализованный текст.")
-        return content
+        return _apply_currency_symbols(content)
 
     async def extract_document(self, ocr_text: str) -> dict:
         settings = get_settings()
@@ -76,9 +86,13 @@ class DeepSeekService:
         if not content:
             raise DeepSeekError("DeepSeek вернул пустой ответ.")
 
-        import json
-
         try:
             return json.loads(content)
         except json.JSONDecodeError as exc:
             raise DeepSeekError("DeepSeek вернул невалидный JSON.") from exc
+
+
+def _apply_currency_symbols(text: str) -> str:
+    for code, symbol in CURRENCY_SYMBOLS.items():
+        text = re.sub(rf"\b{code}\b", symbol, text, flags=re.IGNORECASE)
+    return text
