@@ -50,8 +50,7 @@ async def process_photo(message: Message) -> None:
 
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            cleaned_text = await deepseek_service.clean_ocr_text(ocr_text)
-            document = await deepseek_service.extract_document(cleaned_text)
+            document = await deepseek_service.extract_document(ocr_text)
             validated = DocumentSchema.model_validate(document)
     except DeepSeekError as exc:
         logger.exception("DeepSeek failed")
