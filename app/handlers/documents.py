@@ -115,7 +115,8 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 
     deepseek_service = DeepSeekService()
 
-    await callback.answer("Проверяю документ...")
+    await callback.answer()
+    await callback.message.answer("Проверяю документ...")
 
     try:
         async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=callback.bot):
