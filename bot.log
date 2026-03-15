@@ -1,0 +1,348 @@
+2026-03-15 15:15:07,187 | INFO | app.bot | Starting Telegram bot polling
+2026-03-15 15:15:07,187 | INFO | aiogram.dispatcher | Start polling
+2026-03-15 15:15:15,306 | INFO | aiogram.dispatcher | Run polling for bot @kzztest_bot id=8319396393 - 'KZtest'
+2026-03-15 15:16:54,627 | ERROR | app.handlers.documents | OCR failed
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/app/services/ocr_space.py", line 19, in extract_text
+    response = await client.post(
+               ^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1859, in post
+    return await self.request(
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/app/handlers/documents.py", line 33, in process_photo
+    ocr_text = await ocr_service.extract_text(file_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/app/services/ocr_space.py", line 26, in extract_text
+    raise OCRSpaceError(f"Ошибка сети OCR.Space: {exc}") from exc
+app.services.ocr_space.OCRSpaceError: Ошибка сети OCR.Space: 
+2026-03-15 15:17:12,074 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:17:12,075 | WARNING | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8319396393)
+2026-03-15 15:17:55,073 | INFO | aiogram.event | Update id=753058047 is not handled. Duration 144208 ms by bot id=8319396393
+2026-03-15 15:17:55,073 | ERROR | aiogram.event | Cause exception while process update id=753058047 by bot id=8319396393
+TelegramNetworkError: HTTP Client says - Request timeout error
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client.py", line 779, in _request
+    resp = await handler(req)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client.py", line 734, in _connect_and_send_request
+    conn = await self._connector.connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/connector.py", line 672, in connect
+    proto = await self._create_connection(req, traces, timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/connector.py", line 1239, in _create_connection
+    _, proto = await self._create_direct_connection(req, traces, timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/connector.py", line 1580, in _create_direct_connection
+    transp, proto = await self._wrap_create_connection(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/connector.py", line 1298, in _wrap_create_connection
+    sock = await aiohappyeyeballs.start_connection(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohappyeyeballs/impl.py", line 87, in start_connection
+    sock, _, _ = await _staggered.staggered_race(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohappyeyeballs/_staggered.py", line 165, in staggered_race
+    done = await _wait_one(
+           ^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohappyeyeballs/_staggered.py", line 46, in _wait_one
+    return await wait_next
+           ^^^^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 167, in make_request
+    async with session.post(
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client.py", line 1510, in __aenter__
+    self._resp: _RetType = await self._coro
+                           ^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client.py", line 624, in _request
+    with timer:
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/helpers.py", line 713, in __exit__
+    raise asyncio.TimeoutError from exc_val
+TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 189, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 181, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/app/handlers/documents.py", line 36, in process_photo
+    await message.answer(f"OCR не удался: {exc}")
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/methods/base.py", line 82, in emit
+    return await bot(self)
+           ^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/bot.py", line 488, in __call__
+    return await self.session(self, method, timeout=request_timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/session/base.py", line 259, in __call__
+    return cast(TelegramType, await middleware(bot, method))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 174, in make_request
+    raise TelegramNetworkError(method=method, message="Request timeout error") from e
+aiogram.exceptions.TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:18:24,089 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:18:24,089 | WARNING | aiogram.dispatcher | Sleep for 1.291729 seconds and try again... (tryings = 1, bot id = 8319396393)
+2026-03-15 15:19:36,130 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:19:36,130 | WARNING | aiogram.dispatcher | Sleep for 1.658189 seconds and try again... (tryings = 2, bot id = 8319396393)
+2026-03-15 15:20:48,087 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:20:48,087 | WARNING | aiogram.dispatcher | Sleep for 2.249898 seconds and try again... (tryings = 3, bot id = 8319396393)
+2026-03-15 15:21:29,461 | INFO | aiogram.dispatcher | Connection established (tryings = 4, bot id = 8319396393)
+2026-03-15 15:22:40,115 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:22:40,115 | WARNING | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8319396393)
+2026-03-15 15:23:52,102 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:23:52,102 | WARNING | aiogram.dispatcher | Sleep for 1.320257 seconds and try again... (tryings = 1, bot id = 8319396393)
+2026-03-15 15:25:04,130 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:25:04,131 | WARNING | aiogram.dispatcher | Sleep for 1.687535 seconds and try again... (tryings = 2, bot id = 8319396393)
+2026-03-15 15:26:16,130 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:26:16,130 | WARNING | aiogram.dispatcher | Sleep for 2.316315 seconds and try again... (tryings = 3, bot id = 8319396393)
+2026-03-15 15:26:40,003 | INFO | aiogram.dispatcher | Connection established (tryings = 4, bot id = 8319396393)
+2026-03-15 15:27:41,061 | ERROR | app.handlers.documents | Unexpected error while processing photo
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/streams.py", line 371, in _wait
+    await waiter
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/app/handlers/documents.py", line 32, in process_photo
+    file_path = await file_service.download_best_photo(message.photo)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/app/services/telegram_files.py", line 18, in download_best_photo
+    await self.bot.download_file(telegram_file.file_path, destination=target_path)
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/bot.py", line 432, in download_file
+    await self.__download_file(destination=destination, stream=stream)
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/bot.py", line 381, in __download_file
+    async for chunk in stream:
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 204, in stream_content
+    async for chunk in resp.content.iter_chunked(chunk_size):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/streams.py", line 52, in __anext__
+    rv = await self.read_func()
+         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/streams.py", line 452, in read
+    await self._wait("read")
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/streams.py", line 370, in _wait
+    with self._timer:
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/helpers.py", line 713, in __exit__
+    raise asyncio.TimeoutError from exc_val
+TimeoutError
+2026-03-15 15:27:50,170 | INFO | aiogram.event | Update id=753058048 is handled. Duration 70166 ms by bot id=8319396393
+2026-03-15 15:28:40,062 | INFO | aiogram.event | Update id=753058049 is not handled. Duration 60153 ms by bot id=8319396393
+2026-03-15 15:28:40,063 | ERROR | aiogram.event | Cause exception while process update id=753058049 by bot id=8319396393
+TelegramNetworkError: HTTP Client says - Request timeout error
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client_reqrep.py", line 539, in start
+    message, payload = await protocol.read()  # type: ignore[union-attr]
+                       ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/streams.py", line 703, in read
+    await self._waiter
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 167, in make_request
+    async with session.post(
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client.py", line 1510, in __aenter__
+    self._resp: _RetType = await self._coro
+                           ^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client.py", line 779, in _request
+    resp = await handler(req)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client.py", line 757, in _connect_and_send_request
+    await resp.start(conn)
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/client_reqrep.py", line 534, in start
+    with self._timer:
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiohttp/helpers.py", line 713, in __exit__
+    raise asyncio.TimeoutError from exc_val
+TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 189, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 181, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/app/handlers/documents.py", line 29, in process_photo
+    await message.answer("Фото получено. Начинаю распознавание.")
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/methods/base.py", line 82, in emit
+    return await bot(self)
+           ^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/bot.py", line 488, in __call__
+    return await self.session(self, method, timeout=request_timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/session/base.py", line 259, in __call__
+    return cast(TelegramType, await middleware(bot, method))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kizz/DEVV/ZATRATPRO/.venv/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 174, in make_request
+    raise TelegramNetworkError(method=method, message="Request timeout error") from e
+aiogram.exceptions.TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:29:18,067 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:29:18,068 | WARNING | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8319396393)
+2026-03-15 15:30:30,102 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:30:30,102 | WARNING | aiogram.dispatcher | Sleep for 1.432031 seconds and try again... (tryings = 1, bot id = 8319396393)
+2026-03-15 15:31:42,130 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:31:42,130 | WARNING | aiogram.dispatcher | Sleep for 1.769505 seconds and try again... (tryings = 2, bot id = 8319396393)
+2026-03-15 15:32:54,129 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:32:54,129 | WARNING | aiogram.dispatcher | Sleep for 2.360083 seconds and try again... (tryings = 3, bot id = 8319396393)
+2026-03-15 15:34:07,130 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:34:07,130 | WARNING | aiogram.dispatcher | Sleep for 3.012419 seconds and try again... (tryings = 4, bot id = 8319396393)
+2026-03-15 15:35:21,122 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:35:21,123 | WARNING | aiogram.dispatcher | Sleep for 3.931978 seconds and try again... (tryings = 5, bot id = 8319396393)
+2026-03-15 15:36:36,130 | ERROR | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-03-15 15:36:36,130 | WARNING | aiogram.dispatcher | Sleep for 5.058168 seconds and try again... (tryings = 6, bot id = 8319396393)
