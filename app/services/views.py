@@ -709,8 +709,24 @@ class ViewService:
                 """
                 SELECT COUNT(*) AS documents,
                        COALESCE(SUM(d.total_amount), 0) AS total_amount,
-                       COUNT(*) FILTER (WHERE d.duplicate_status = 'exact') AS exact_duplicates,
-                       COUNT(*) FILTER (WHERE d.duplicate_status = 'probable') AS probable_duplicates
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'exact'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS exact_duplicates,
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'probable'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS probable_duplicates
                 FROM documents d
                 WHERE d.company_id = $1
                   AND d.created_at >= $2
@@ -759,6 +775,7 @@ class ViewService:
         )
 
     async def list_report_projects(self, telegram_user_id: int, period: str) -> list[ProjectReportRow]:
+        await self.document_service.cleanup_broken_duplicate_links(telegram_user_id)
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         pool = get_pool()
         async with pool.acquire() as connection:
@@ -768,8 +785,24 @@ class ViewService:
                        p.name AS project_name,
                        COUNT(d.id) AS document_count,
                        COALESCE(SUM(d.total_amount), 0) AS total_amount,
-                       COUNT(*) FILTER (WHERE d.duplicate_status = 'exact') AS exact_duplicate_count,
-                       COUNT(*) FILTER (WHERE d.duplicate_status = 'probable') AS probable_duplicate_count
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'exact'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS exact_duplicate_count,
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'probable'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS probable_duplicate_count
                 FROM projects p
                 LEFT JOIN documents d
                     ON d.project_id = p.id
@@ -786,6 +819,7 @@ class ViewService:
         return [ProjectReportRow(**dict(row)) for row in rows]
 
     async def list_report_employees(self, telegram_user_id: int, period: str) -> list[EmployeeReportRow]:
+        await self.document_service.cleanup_broken_duplicate_links(telegram_user_id)
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         pool = get_pool()
         async with pool.acquire() as connection:
@@ -797,8 +831,24 @@ class ViewService:
                        u.last_name,
                        COUNT(d.id) AS document_count,
                        COALESCE(SUM(d.total_amount), 0) AS total_amount,
-                       COUNT(*) FILTER (WHERE d.duplicate_status = 'exact') AS exact_duplicate_count,
-                       COUNT(*) FILTER (WHERE d.duplicate_status = 'probable') AS probable_duplicate_count
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'exact'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS exact_duplicate_count,
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'probable'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS probable_duplicate_count
                 FROM company_members cm
                 JOIN users u ON u.id = cm.user_id
                 LEFT JOIN documents d
