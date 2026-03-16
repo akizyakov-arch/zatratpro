@@ -892,10 +892,6 @@ class ViewService:
         conditions = ['d.company_id = $1', 'd.created_at >= $2']
         params: list[object] = [company_id, start_at]
         index = 3
-        if document_id is not None:
-            conditions.append(f'd.id = ${index}')
-            params.append(document_id)
-            index += 1
         if project_id is not None:
             conditions.append(f'd.project_id = ${index}')
             params.append(project_id)
