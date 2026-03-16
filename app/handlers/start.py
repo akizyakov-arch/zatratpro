@@ -925,8 +925,8 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     await callback.message.answer(
-        format_documents_with_items(f'Проект: {project.name}', period, documents, items),
-        reply_markup=build_report_detail_back_keyboard(REPORT_KIND_PROJECTS, period),
+        format_report_documents(f'Проект: {project.name}', period, documents),
+        reply_markup=build_report_documents_keyboard(REPORT_KIND_PROJECTS, period, project.id, documents),
     )
 
 
@@ -946,8 +946,8 @@ async def report_employee_detail_callback(callback: CallbackQuery) -> None:
     employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
     await callback.answer()
     await callback.message.answer(
-        format_documents_with_items(f'Сотрудник: {employee_name}', period, documents, items),
-        reply_markup=build_report_detail_back_keyboard(REPORT_KIND_EMPLOYEES, period),
+        format_report_documents(f'Сотрудник: {employee_name}', period, documents),
+        reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
     )
 
 

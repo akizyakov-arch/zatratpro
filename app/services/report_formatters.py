@@ -43,9 +43,14 @@ def format_project_report(summary, rows) -> str:
         lines.append('За период документов по проектам нет.')
         return NL.join(lines)
     for index, row in enumerate(rows[:20], start=1):
+        duplicate_parts = []
+        if row.exact_duplicate_count:
+            duplicate_parts.append(f'точные дубли: {row.exact_duplicate_count}')
+        if row.probable_duplicate_count:
+            duplicate_parts.append(f'возможные дубли: {row.probable_duplicate_count}')
+        duplicate_suffix = f" | {'; '.join(duplicate_parts)}" if duplicate_parts else ''
         lines.append(
-            f"{index}. {row.project_name} — {row.document_count} док. — {format_amount(row.total_amount)} "
-            f"(exact: {row.exact_duplicate_count}, probable: {row.probable_duplicate_count})"
+            f"{index}. {row.project_name} — {row.document_count} док. — {format_amount(row.total_amount)}{duplicate_suffix}"
         )
     return NL.join(lines)
 
@@ -57,9 +62,14 @@ def format_employee_report(summary, rows) -> str:
         return NL.join(lines)
     for index, row in enumerate(rows[:20], start=1):
         employee_name = row.employee_name or (f'@{row.username}' if row.username else f'user:{row.user_id}')
+        duplicate_parts = []
+        if row.exact_duplicate_count:
+            duplicate_parts.append(f'точные дубли: {row.exact_duplicate_count}')
+        if row.probable_duplicate_count:
+            duplicate_parts.append(f'возможные дубли: {row.probable_duplicate_count}')
+        duplicate_suffix = f" | {'; '.join(duplicate_parts)}" if duplicate_parts else ''
         lines.append(
-            f"{index}. {employee_name} — {row.document_count} док. — {format_amount(row.total_amount)} "
-            f"(exact: {row.exact_duplicate_count}, probable: {row.probable_duplicate_count})"
+            f"{index}. {employee_name} — {row.document_count} док. — {format_amount(row.total_amount)}{duplicate_suffix}"
         )
     return NL.join(lines)
 
