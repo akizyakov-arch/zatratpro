@@ -252,12 +252,15 @@ def _resolve_document_number(document: DocumentSchema) -> str | None:
         return direct
     text = document.raw_text or ""
     patterns = (
-        r"(?:чек|продажа|номер|№)\s*№?\s*([A-Za-zА-Яа-я0-9\-/]+)",
+        r"(?:продажа|чек|номер)\s*№?\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
+        r"№\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
     )
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
-            return _normalize_text_key(match.group(1))
+            value = _normalize_text_key(match.group(1))
+            if value is not None and any(ch.isdigit() for ch in value):
+                return value
     return None
 
 
@@ -350,7 +353,11 @@ def _normalize_text_key(value: str | None) -> str | None:
 
 
 def _document_number(document: DocumentSchema) -> str | None:
-    return _normalize_text_key(document.external_document_number) or _normalize_text_key(document.incoming_number)
+    for value in (document.external_document_number, document.incoming_number):
+        normalized = _normalize_text_key(value)
+        if normalized is not None and any(ch.isdigit() for ch in normalized):
+            return normalized
+    return None
 
 
 def _normalize_vendor_key(document: DocumentSchema) -> str | None:
