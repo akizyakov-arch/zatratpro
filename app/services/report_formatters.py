@@ -40,7 +40,6 @@ def format_report_overview(summary, title: str) -> str:
 def format_project_report(summary, rows) -> str:
     lines = [
         'Отчет по проектам',
-        f'С даты: {summary.start_at:%Y-%m-%d}',
         f'Документов: {summary.documents}',
         f'Сумма: {format_amount(summary.total_amount)}',
         f'Точных дублей: {summary.exact_duplicates}',
