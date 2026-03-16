@@ -106,24 +106,7 @@ def format_report_documents(title: str, period: str, documents) -> str:
     if not documents:
         lines.append('Документов за период нет.')
         return NL.join(lines)
-    for index, document in enumerate(documents[:20], start=1):
-        counterparty = document.vendor or document.vendor_inn or 'Контрагент не указан'
-        number = document.document_number or 'без номера'
-        date_line = format_date(document.document_date)
-        executor = document.uploaded_by_name or 'не указан'
-        first_item = document.first_item_name or 'позиция не распознана'
-        lines.extend([
-            f'{index}. {counterparty}',
-            f'Дата: {date_line}',
-            f'Номер: {number}',
-            f'Сумма: {format_amount(document.total_amount)}',
-            f'Позиция: {first_item}',
-            f'Исполнитель: {executor}',
-            '',
-        ])
-    if len(documents) > 20:
-        lines.append('Показаны только первые 20 документов за период.')
-    lines.extend(['', 'Документы 👇'])
+    lines.append('Документы 👇')
     return NL.join(lines).strip()
 
 
