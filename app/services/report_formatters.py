@@ -115,8 +115,10 @@ def format_report_document_items(title: str, period: str, document, items) -> st
     date_line = format_date(document.document_date)
     vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
     executor = document.uploaded_by_name or 'не указан'
+    project_name = document.project_name or 'Проект не указан'
     lines = [
         f'<b>{title}</b>',
+        f'Проект: {project_name}',
         f'Контрагент: {vendor}',
         f'Дата: {date_line}',
         f'Номер: {number}',
