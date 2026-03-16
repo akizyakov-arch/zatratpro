@@ -44,7 +44,7 @@ async def _ensure_company_access(message: Message) -> bool:
         await company_service.get_active_company_for_user(message.from_user.id)
     except CompanyAccessError:
         await message.answer(
-            "Сначала нужно получить доступ к компании. Используй invite-код администратора и выполни /join КОД.",
+            "Сначала нужно получить доступ к компании. Используй invite-код руководителя и выполни /join КОД.",
             reply_markup=await _main_menu_markup(message),
         )
         return False
@@ -147,9 +147,12 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         await callback.answer("Нет подготовленного документа. Отправь фото заново.", show_alert=True)
         return
 
-    project_id = int(callback.data.removeprefix(PROJECT_CALLBACK_PREFIX))
     try:
+        project_id = int(callback.data.removeprefix(PROJECT_CALLBACK_PREFIX))
         project = await project_service.get_active_project(callback.from_user.id, project_id)
+    except (TypeError, ValueError):
+        await callback.answer("Проект недоступен. Обнови список и попробуй снова.", show_alert=True)
+        return
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
@@ -181,6 +184,9 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             reply_markup=menu_markup,
         )
         return
+    except CompanyAccessError as exc:
+        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        return
     except Exception as exc:  # noqa: BLE001
         logger.exception("Document save failed")
         await callback.message.answer(
@@ -203,6 +209,3 @@ async def unsupported_message(message: Message) -> None:
         "Поддерживаются кнопки главного меню, управление компанией, команды /start, /help, /join и фото документов.",
         reply_markup=await _main_menu_markup(message),
     )
-
-
-

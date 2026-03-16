@@ -48,13 +48,14 @@ CREATE TABLE IF NOT EXISTS projects (
     is_archived BOOLEAN NOT NULL DEFAULT FALSE,
     created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_projects_company_name UNIQUE (company_id, name)
+    CONSTRAINT uq_projects_company_name UNIQUE (company_id, name),
+    CONSTRAINT uq_projects_id_company UNIQUE (id, company_id)
 );
 
 CREATE TABLE IF NOT EXISTS documents (
     id BIGSERIAL PRIMARY KEY,
     company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,
-    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    project_id BIGINT NOT NULL,
     user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     document_type TEXT NOT NULL,
     source_type TEXT NOT NULL,
@@ -69,7 +70,11 @@ CREATE TABLE IF NOT EXISTS documents (
     raw_text TEXT,
     normalized_text TEXT,
     structured_json JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_documents_project_company
+        FOREIGN KEY (project_id, company_id)
+        REFERENCES projects(id, company_id)
+        ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS document_items (
@@ -84,6 +89,12 @@ CREATE TABLE IF NOT EXISTS document_items (
 
 CREATE INDEX IF NOT EXISTS idx_company_members_company_id ON company_members(company_id);
 CREATE INDEX IF NOT EXISTS idx_company_members_user_id ON company_members(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_company_members_one_active_company_per_user
+    ON company_members(user_id)
+    WHERE is_active = TRUE;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_company_members_one_active_manager_per_company
+    ON company_members(company_id)
+    WHERE is_active = TRUE AND role = 'manager';
 CREATE INDEX IF NOT EXISTS idx_company_invites_company_id ON company_invites(company_id);
 CREATE INDEX IF NOT EXISTS idx_projects_company_id ON projects(company_id);
 CREATE INDEX IF NOT EXISTS idx_projects_is_archived ON projects(is_archived);
@@ -92,20 +103,3 @@ CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
 CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_document_date ON documents(document_date);
 CREATE INDEX IF NOT EXISTS idx_document_items_document_id ON document_items(document_id);
-
-INSERT INTO companies (name, slug)
-VALUES ('Основная компания', 'default-company')
-ON CONFLICT (slug) DO UPDATE
-SET name = EXCLUDED.name;
-
-INSERT INTO projects (company_id, name)
-SELECT companies.id, seeded.name
-FROM companies
-CROSS JOIN (
-    VALUES
-        ('Основной объект'),
-        ('Офис'),
-        ('Склад')
-) AS seeded(name)
-WHERE companies.slug = 'default-company'
-ON CONFLICT (company_id, name) DO NOTHING;

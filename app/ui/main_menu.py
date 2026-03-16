@@ -21,6 +21,7 @@ MENU_BUTTONS = {
     "archive_project": "Архивировать проект",
     "restore_project": "Деархивировать проект",
     "invite_employee": "Пригласить сотрудника",
+    "remove_employee": "Исключить сотрудника",
     "members": "Участники",
     "join_company": "Ввести invite-код",
     "back": "Назад",
@@ -32,24 +33,23 @@ def build_main_menu_keyboard(
     has_company: bool = True,
     can_view_reports: bool = False,
 ) -> ReplyKeyboardMarkup:
-    if not has_company:
-        keyboard = []
-        if menu_kind == "platform_owner":
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["create_company"])])
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["company"]), KeyboardButton(text=MENU_BUTTONS["help"])])
-        else:
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["join_company"])])
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["help"])])
-    elif menu_kind in {"platform_owner", "manager"}:
+    if menu_kind == "platform_owner":
+        keyboard = [
+            [KeyboardButton(text=MENU_BUTTONS["create_company"])],
+            [KeyboardButton(text=MENU_BUTTONS["company"]), KeyboardButton(text=MENU_BUTTONS["help"])],
+        ]
+    elif not has_company:
+        keyboard = [
+            [KeyboardButton(text=MENU_BUTTONS["join_company"])],
+            [KeyboardButton(text=MENU_BUTTONS["help"])],
+        ]
+    elif menu_kind == "manager":
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["recognize"])],
             [KeyboardButton(text=MENU_BUTTONS["projects"]), KeyboardButton(text=MENU_BUTTONS["company"])],
+            [KeyboardButton(text=MENU_BUTTONS["manual"]), KeyboardButton(text=MENU_BUTTONS["reports"])],
+            [KeyboardButton(text=MENU_BUTTONS["help"])],
         ]
-        if can_view_reports:
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["reports"]), KeyboardButton(text=MENU_BUTTONS["help"])])
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["manual"])])
-        else:
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["manual"]), KeyboardButton(text=MENU_BUTTONS["help"])])
     else:
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["recognize"])],
@@ -79,7 +79,10 @@ def build_company_menu_keyboard(
             KeyboardButton(text=MENU_BUTTONS["archive_project"]),
         ])
         keyboard.append([KeyboardButton(text=MENU_BUTTONS["restore_project"])])
-        keyboard.append([KeyboardButton(text=MENU_BUTTONS["invite_employee"])])
+        keyboard.append([
+            KeyboardButton(text=MENU_BUTTONS["invite_employee"]),
+            KeyboardButton(text=MENU_BUTTONS["remove_employee"]),
+        ])
         keyboard.append([KeyboardButton(text=MENU_BUTTONS["members"])])
 
     keyboard.append([KeyboardButton(text=MENU_BUTTONS["back"])])
@@ -89,4 +92,3 @@ def build_company_menu_keyboard(
         resize_keyboard=True,
         input_field_placeholder="Выбери действие",
     )
-

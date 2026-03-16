@@ -5,11 +5,15 @@ from decimal import Decimal
 from aiogram.types import User
 
 from app.schemas.document import DocumentItem, DocumentSchema
+from app.services.companies import CompanyAccessError, CompanyService
 from app.services.database import get_pool
 from app.services.projects import Project
 
 
 class DocumentService:
+    def __init__(self) -> None:
+        self.company_service = CompanyService()
+
     async def save_document(
         self,
         telegram_user: User,
@@ -18,6 +22,10 @@ class DocumentService:
         document: DocumentSchema,
         source_type: str = "photo",
     ) -> int:
+        active_company = await self.company_service.get_active_company_for_user(telegram_user.id)
+        if active_company.id != project.company_id:
+            raise CompanyAccessError("Нельзя сохранить документ в проект другой компании.")
+
         pool = get_pool()
         document_date = _parse_document_date(document.date)
         structured_json = json.dumps(document.model_dump(mode="json"), ensure_ascii=False)
