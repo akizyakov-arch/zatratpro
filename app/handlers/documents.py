@@ -25,12 +25,16 @@ document_service = DocumentService()
 company_service = CompanyService()
 
 
-async def _main_menu_markup(message: Message) -> object:
-    if message.from_user is None:
+async def _main_menu_markup_for_user(user) -> object:
+    if user is None:
         return build_main_menu_keyboard(has_company=False)
-    await company_service.ensure_platform_user(message.from_user)
-    context = await company_service.get_user_context(message.from_user.id)
+    await company_service.ensure_platform_user(user)
+    context = await company_service.get_user_context(user.id)
     return build_main_menu_keyboard(menu_kind=context.menu_kind, has_company=context.has_company)
+
+
+async def _main_menu_markup(message: Message) -> object:
+    return await _main_menu_markup_for_user(message.from_user)
 
 
 async def _ensure_company_access(message: Message) -> bool:
@@ -127,7 +131,7 @@ async def create_project_from_document(callback: CallbackQuery) -> None:
 async def process_project_selection(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    menu_markup = await _main_menu_markup(callback.message)
+    menu_markup = await _main_menu_markup_for_user(callback.from_user)
     pending_document = get_pending_document(callback.from_user.id)
     if pending_document is None:
         await callback.answer('Нет подготовленного документа. Отправь фото заново.', show_alert=True)

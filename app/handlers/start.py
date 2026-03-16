@@ -33,6 +33,13 @@ from app.ui.company import (
     OWNER_COMPANY_RESET_INVITE_PREFIX,
     OWNER_COMPANY_SHOW_INVITE_PREFIX,
     OWNER_COMPANY_VIEW_PREFIX,
+    OWNER_USERS_CALLBACK,
+    OWNER_USER_ASSIGN_COMPANY_PREFIX,
+    OWNER_USER_ASSIGN_EMPLOYEE_PREFIX,
+    OWNER_USER_ASSIGN_MANAGER_PREFIX,
+    OWNER_USER_REMOVE_CONFIRM_PREFIX,
+    OWNER_USER_REMOVE_PREFIX,
+    OWNER_USER_VIEW_PREFIX,
     build_companies_keyboard,
     build_company_actions_keyboard,
     build_company_members_keyboard,
@@ -40,9 +47,19 @@ from app.ui.company import (
     build_employee_card_keyboard,
     build_employees_keyboard,
     build_employees_menu_keyboard,
+    build_owner_user_card_keyboard,
+    build_owner_user_company_select_keyboard,
+    build_owner_users_keyboard,
     build_project_card_keyboard,
     build_projects_keyboard,
     build_projects_menu_keyboard,
+)
+from app.ui.help import (
+    HELP_MENU_PREFIX,
+    HELP_TOPIC_PREFIX,
+    build_help_topic_keyboard,
+    build_help_topics_keyboard,
+    get_help_topic_text,
 )
 from app.ui.main_menu import MAIN_MENU_TEXT, MENU_BUTTONS, build_main_menu_keyboard
 from app.ui.projects import build_projects_keyboard as build_document_projects_keyboard
@@ -53,18 +70,6 @@ company_service = CompanyService()
 project_service = ProjectService()
 view_service = ViewService()
 NL = chr(10)
-HELP_TEXT = NL.join([
-    'ZATRATPRO работает с документами внутри компании.',
-    '',
-    'Owner создает компании и выдает invite первому manager.',
-    'Manager управляет проектами и сотрудниками своей компании.',
-    'Employee загружает документы и видит только свои записи.',
-    '',
-    'Fallback-команды:',
-    '/create_company Название компании',
-    '/invite employee',
-    '/join КОД',
-])
 
 
 async def _ensure_context(message: Message):
@@ -74,11 +79,24 @@ async def _ensure_context(message: Message):
     return await company_service.get_user_context(message.from_user.id)
 
 
-async def _main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
-    context = await _ensure_context(message)
-    if context is None:
+async def _main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
+    if user is None:
         return build_main_menu_keyboard(has_company=False)
+    await company_service.ensure_platform_user(user)
+    context = await company_service.get_user_context(user.id)
     return build_main_menu_keyboard(menu_kind=context.menu_kind, has_company=context.has_company)
+
+
+async def _main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
+    return await _main_menu_markup_for_user(message.from_user)
+
+
+async def _help_menu_kind_for_user(user) -> str:
+    if user is None:
+        return 'employee'
+    await company_service.ensure_platform_user(user)
+    context = await company_service.get_user_context(user.id)
+    return context.menu_kind
 
 
 async def _require_company_access(message: Message) -> bool:
@@ -135,6 +153,25 @@ def _format_member_card(member) -> str:
     ])
 
 
+def _format_user_card(user) -> str:
+    username = f'@{user.username}' if user.username else '—'
+    full_name = user.full_name or '—'
+    company_name = user.company_name or 'не привязан'
+    company_role = user.company_role or '—'
+    company_status = user.company_status or '—'
+    joined_at = user.joined_at.strftime('%Y-%m-%d %H:%M') if getattr(user, 'joined_at', None) else '—'
+    return NL.join([
+        f'Пользователь: {full_name}',
+        f'Username: {username}',
+        f'Telegram ID: {user.telegram_id}',
+        f'System role: {user.system_role}',
+        f'Компания: {company_name}',
+        f'Роль в компании: {company_role}',
+        f'Статус компании: {company_status}',
+        f'Дата привязки: {joined_at}',
+    ])
+
+
 @router.message(CommandStart())
 async def start_command(message: Message, command: CommandObject | None = None) -> None:
     context = await _ensure_context(message)
@@ -153,7 +190,8 @@ async def start_command(message: Message, command: CommandObject | None = None) 
 
 @router.message(Command('help'))
 async def help_command(message: Message) -> None:
-    await message.answer(HELP_TEXT, reply_markup=await _main_menu_markup(message))
+    menu_kind = await _help_menu_kind_for_user(message.from_user)
+    await message.answer('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
 
 
 @router.message(Command('create_company'))
@@ -238,6 +276,138 @@ async def companies_entry(message: Message) -> None:
     await message.answer('Компании:', reply_markup=build_companies_keyboard(companies))
 
 
+@router.message(F.text == MENU_BUTTONS['users'])
+async def users_entry(message: Message) -> None:
+    if message.from_user is None:
+        return
+    try:
+        users = await view_service.list_users(message.from_user.id)
+    except CompanyAccessError as exc:
+        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
+        return
+    if not users:
+        await message.answer('Пользователей пока нет.', reply_markup=await _main_menu_markup(message))
+        return
+    await message.answer('Пользователи:', reply_markup=build_owner_users_keyboard(users))
+
+
+@router.callback_query(F.data == OWNER_USERS_CALLBACK)
+async def users_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        users = await view_service.list_users(callback.from_user.id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer('Пользователи:', reply_markup=build_owner_users_keyboard(users))
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_VIEW_PREFIX))
+async def user_view_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    user_id = int(callback.data.removeprefix(OWNER_USER_VIEW_PREFIX))
+    try:
+        user = await view_service.get_user_card(callback.from_user.id, user_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(_format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_ASSIGN_EMPLOYEE_PREFIX))
+async def user_assign_employee_prompt(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    user_id = int(callback.data.removeprefix(OWNER_USER_ASSIGN_EMPLOYEE_PREFIX))
+    try:
+        companies = [company for company in await view_service.list_companies(callback.from_user.id) if company.is_active]
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    if not companies:
+        await callback.answer('Нет активных компаний для привязки.', show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer('Выбери компанию для роли employee.', reply_markup=build_owner_user_company_select_keyboard(companies, user_id, 'employee'))
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_ASSIGN_MANAGER_PREFIX))
+async def user_assign_manager_prompt(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    user_id = int(callback.data.removeprefix(OWNER_USER_ASSIGN_MANAGER_PREFIX))
+    try:
+        companies = [company for company in await view_service.list_companies(callback.from_user.id) if company.is_active]
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    if not companies:
+        await callback.answer('Нет активных компаний для привязки.', show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer('Выбери компанию для роли manager.', reply_markup=build_owner_user_company_select_keyboard(companies, user_id, 'manager'))
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_ASSIGN_COMPANY_PREFIX))
+async def user_assign_company_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(OWNER_USER_ASSIGN_COMPANY_PREFIX)
+    try:
+        user_id_text, role, company_id_text = payload.split(':', 2)
+        user_id = int(user_id_text)
+        company_id = int(company_id_text)
+        member = await company_service.assign_user_to_company_by_owner(callback.from_user.id, user_id, company_id, role)
+        user = await view_service.get_user_card(callback.from_user.id, user_id)
+    except (TypeError, ValueError):
+        await callback.answer('Некорректные данные привязки.', show_alert=True)
+        return
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Пользователь привязан.')
+    await callback.message.answer(
+        f'Пользователь привязан к компании как {member.role}.',
+        reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company),
+    )
+    await callback.message.answer(_format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_REMOVE_PREFIX))
+async def user_remove_prompt(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    user_id = int(callback.data.removeprefix(OWNER_USER_REMOVE_PREFIX))
+    await callback.answer()
+    await callback.message.answer(
+        'Подтвердить исключение пользователя из компании?',
+        reply_markup=build_confirm_keyboard(f'{OWNER_USER_REMOVE_CONFIRM_PREFIX}{user_id}', f'{OWNER_USER_VIEW_PREFIX}{user_id}'),
+    )
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_REMOVE_CONFIRM_PREFIX))
+async def user_remove_confirm(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    user_id = int(callback.data.removeprefix(OWNER_USER_REMOVE_CONFIRM_PREFIX))
+    try:
+        member = await company_service.remove_user_from_company_by_owner(callback.from_user.id, user_id)
+        user = await view_service.get_user_card(callback.from_user.id, user_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Пользователь исключен.')
+    await callback.message.answer(
+        f'Пользователь исключен из компании: {member.full_name or member.username or member.telegram_user_id}.',
+        reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company),
+    )
+    await callback.message.answer(_format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+
+
 @router.callback_query(F.data == OWNER_COMPANIES_CALLBACK)
 async def companies_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
@@ -277,7 +447,7 @@ async def company_issue_invite_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer('Invite выдан.')
-    await callback.message.answer(f'Invite для manager: {code}', reply_markup=await _main_menu_markup(callback.message))
+    await callback.message.answer(f'Invite для manager: {code}', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_SHOW_INVITE_PREFIX))
@@ -443,7 +613,7 @@ async def project_create_callback(callback: CallbackQuery) -> None:
         return
     set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
-    await callback.message.answer('Отправь название нового проекта.', reply_markup=await _main_menu_markup(callback.message))
+    await callback.message.answer('Отправь название нового проекта.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
 
 @router.callback_query(F.data.startswith(MANAGER_PROJECT_VIEW_PREFIX))
@@ -467,7 +637,7 @@ async def project_rename_prompt(callback: CallbackQuery) -> None:
     project_id = int(callback.data.removeprefix(MANAGER_PROJECT_RENAME_PREFIX))
     set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
     await callback.answer()
-    await callback.message.answer('Отправь новое название проекта.', reply_markup=await _main_menu_markup(callback.message))
+    await callback.message.answer('Отправь новое название проекта.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
 
 @router.callback_query(F.data.startswith(MANAGER_PROJECT_ARCHIVE_PREFIX))
@@ -648,12 +818,47 @@ async def nav_main_callback(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
     await callback.answer()
-    await callback.message.answer(MAIN_MENU_TEXT, reply_markup=await _main_menu_markup(callback.message))
+    await callback.message.answer(MAIN_MENU_TEXT, reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
 
 @router.message(F.text == MENU_BUTTONS['help'])
 async def help_button(message: Message) -> None:
     await help_command(message)
+
+
+@router.callback_query(F.data.startswith(HELP_MENU_PREFIX))
+async def help_menu_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    actual_menu_kind = await _help_menu_kind_for_user(callback.from_user)
+    requested_menu_kind = callback.data.removeprefix(HELP_MENU_PREFIX) or actual_menu_kind
+    if requested_menu_kind != actual_menu_kind:
+        await callback.answer('Раздел помощи недоступен.', show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(actual_menu_kind))
+
+
+@router.callback_query(F.data.startswith(HELP_TOPIC_PREFIX))
+async def help_topic_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    payload = callback.data.removeprefix(HELP_TOPIC_PREFIX)
+    try:
+        menu_kind, topic_id = payload.split(':', 1)
+    except ValueError:
+        await callback.answer('Тема помощи недоступна.', show_alert=True)
+        return
+    actual_menu_kind = await _help_menu_kind_for_user(callback.from_user)
+    if menu_kind != actual_menu_kind:
+        await callback.answer('Тема помощи недоступна.', show_alert=True)
+        return
+    text_value = get_help_topic_text(menu_kind, topic_id)
+    if text_value is None:
+        await callback.answer('Тема помощи недоступна.', show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(text_value, reply_markup=build_help_topic_keyboard(menu_kind))
 
 
 @router.message(F.text)
