@@ -3,6 +3,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboardMarkup
 
 from app.services.companies import CompanyAccessError, CompanyService
+from app.services.documents import DocumentService
 from app.services.projects import ProjectService
 from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
@@ -73,6 +74,10 @@ from app.ui.help import (
 from app.ui.main_menu import MAIN_MENU_TEXT, MENU_BUTTONS, build_main_menu_keyboard
 from app.ui.reports import (
     MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
     MANAGER_REPORTS_EMPLOYEES_CALLBACK,
     MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX,
@@ -85,6 +90,8 @@ from app.ui.reports import (
     REPORT_KIND_EMPLOYEES,
     REPORT_KIND_EXPORT,
     REPORT_KIND_PROJECTS,
+    build_duplicate_card_keyboard,
+    build_duplicate_delete_confirm_keyboard,
     build_duplicate_report_keyboard,
     build_employee_report_keyboard,
     build_project_report_keyboard,
@@ -99,6 +106,7 @@ from app.ui.projects import build_projects_keyboard as build_document_projects_k
 router = Router()
 company_service = CompanyService()
 project_service = ProjectService()
+document_service = DocumentService()
 view_service = ViewService()
 NL = chr(10)
 
@@ -218,6 +226,37 @@ def _person_identity(user) -> str:
     if username:
         return f'{name} ({username})'
     return name
+
+
+def _format_duplicate_card(row) -> str:
+    date_line = row.document_date.strftime('%d.%m.%Y') if row.document_date else 'без даты'
+    base_date_line = row.base_document_date.strftime('%d.%m.%Y') if row.base_document_date else 'без даты'
+    number = row.document_number or 'без номера'
+    base_number = row.base_document_number or 'без номера'
+    vendor = row.vendor or row.vendor_inn or 'контрагент не указан'
+    base_vendor = row.base_vendor or row.base_vendor_inn or 'контрагент не указан'
+    uploader = row.uploaded_by_name or 'не указан'
+    base_uploader = row.base_uploaded_by_name or 'не указан'
+    duplicate_label = 'Точный дубль' if row.duplicate_status == 'exact' else 'Вероятный дубль'
+    return NL.join([
+        duplicate_label,
+        '',
+        'Текущая запись:',
+        f'Проект: {row.project_name}',
+        f'Контрагент: {vendor}',
+        f'Дата: {date_line}',
+        f'Номер: {number}',
+        f'Сумма: {row.total_amount or 0}',
+        f'Внес: {uploader}',
+        '',
+        'Исходная запись:',
+        f'Проект: {row.base_project_name or "не найден"}',
+        f'Контрагент: {base_vendor}',
+        f'Дата: {base_date_line}',
+        f'Номер: {base_number}',
+        f'Сумма: {row.base_total_amount or 0}',
+        f'Внес: {base_uploader}',
+    ])
 
 
 
@@ -893,7 +932,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         if report_kind == REPORT_KIND_DUPLICATES:
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
             await callback.answer()
-            await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period))
+            await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
             return
         if report_kind == REPORT_KIND_EXPORT:
             projects = await view_service.list_report_projects(callback.from_user.id, period)
@@ -949,6 +988,76 @@ async def report_employee_detail_callback(callback: CallbackQuery) -> None:
         format_report_documents(f'Сотрудник: {employee_name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
     )
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX))
+async def duplicate_view_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+        row = await view_service.get_duplicate_report_row(callback.from_user.id, period, duplicate_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные дубля.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(_format_duplicate_card(row), reply_markup=build_duplicate_card_keyboard(period, duplicate_id))
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX))
+async def duplicate_keep_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+        await document_service.resolve_duplicate_keep_separate(callback.from_user.id, duplicate_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные дубля.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer('Статус дубля снят.')
+    rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
+    summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
+    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX))
+async def duplicate_delete_prompt_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+    except ValueError:
+        await callback.answer('Некорректные данные дубля.', show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer('Подтвердить удаление дубликата?', reply_markup=build_duplicate_delete_confirm_keyboard(period, duplicate_id))
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX))
+async def duplicate_delete_confirm_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+        await document_service.delete_duplicate_document(callback.from_user.id, duplicate_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные дубля.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer('Дубликат удален.')
+    rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
+    summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
+    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX))

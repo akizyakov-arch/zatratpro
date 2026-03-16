@@ -12,6 +12,10 @@ MANAGER_REPORTS_PERIOD_PREFIX = "manager:reports:period:"
 MANAGER_REPORTS_PROJECT_DETAIL_PREFIX = "manager:reports:project_detail:"
 MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX = "manager:reports:employee_detail:"
 MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX = "manager:reports:document_detail:"
+MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX = "manager:reports:duplicate:view:"
+MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX = "manager:reports:duplicate:keep:"
+MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX = "manager:reports:duplicate:delete:"
+MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX = "manager:reports:duplicate:delete_confirm:"
 
 REPORT_KIND_PROJECTS = "projects"
 REPORT_KIND_EMPLOYEES = "employees"
@@ -74,12 +78,32 @@ def build_employee_report_keyboard(period: str, rows: list[Any]) -> InlineKeyboa
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def build_duplicate_report_keyboard(period: str) -> InlineKeyboardMarkup:
+def build_duplicate_report_keyboard(period: str, rows: list[Any]) -> InlineKeyboardMarkup:
+    inline_rows = [
+        [InlineKeyboardButton(text=_duplicate_row_text(row), callback_data=f"{MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX}{period}:{row.id}")]
+        for row in rows[:20]
+    ]
+    inline_rows.append([InlineKeyboardButton(text="Excel выгрузка за период", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_EXPORT}:{period}")])
+    inline_rows.append([InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:_back")])
+    inline_rows.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
+    return InlineKeyboardMarkup(inline_keyboard=inline_rows)
+
+
+def build_duplicate_card_keyboard(period: str, duplicate_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Excel выгрузка за период", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_EXPORT}:{period}")],
-            [InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:_back")],
-            [InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)],
+            [InlineKeyboardButton(text="Оставить как отдельный", callback_data=f"{MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX}{period}:{duplicate_id}")],
+            [InlineKeyboardButton(text="Удалить дубликат", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX}{period}:{duplicate_id}")],
+            [InlineKeyboardButton(text="Назад к дублям", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:{period}")],
+        ]
+    )
+
+
+def build_duplicate_delete_confirm_keyboard(period: str, duplicate_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Подтвердить удаление", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX}{period}:{duplicate_id}")],
+            [InlineKeyboardButton(text="Назад к карточке дубля", callback_data=f"{MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX}{period}:{duplicate_id}")],
         ]
     )
 
@@ -130,3 +154,8 @@ def _back_to_report_callback(report_kind: str, period: str) -> str:
     return f"{MANAGER_REPORTS_PERIOD_PREFIX}{report_kind}:{period}"
 
 
+
+
+def _duplicate_row_text(row: Any) -> str:
+    base_project = getattr(row, "base_project_name", None) or "без исходной записи"
+    return f"{row.project_name} -> {base_project} | {row.duplicate_status}"

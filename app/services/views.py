@@ -222,6 +222,13 @@ class DuplicateReportRow:
     duplicate_status: str
     duplicate_of_document_id: int | None
     uploaded_by_name: str | None
+    base_project_name: str | None
+    base_uploaded_by_name: str | None
+    base_vendor: str | None
+    base_vendor_inn: str | None
+    base_document_number: str | None
+    base_document_date: date | datetime | None
+    base_total_amount: Decimal | None
     created_at: datetime
 
 
@@ -830,17 +837,22 @@ class ViewService:
                        d.created_at,
                        uploader.username AS uploader_username,
                        uploader.first_name AS uploader_first_name,
-                       uploader.last_name AS uploader_last_name
+                       uploader.last_name AS uploader_last_name,
+                       base_project.name AS base_project_name,
+                       base_doc.vendor AS base_vendor,
+                       base_doc.vendor_inn AS base_vendor_inn,
+                       COALESCE(NULLIF(base_doc.external_document_number, ''), NULLIF(base_doc.incoming_number, '')) AS base_document_number,
+                       base_doc.document_date AS base_document_date,
+                       base_doc.total_amount AS base_total_amount,
+                       base_uploader.username AS base_uploader_username,
+                       base_uploader.first_name AS base_uploader_first_name,
+                       base_uploader.last_name AS base_uploader_last_name
                 FROM documents d
                 JOIN projects p ON p.id = d.project_id
                 LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
-            LEFT JOIN LATERAL (
-                SELECT di.name
-                FROM document_items di
-                WHERE di.document_id = d.id
-                ORDER BY di.line_no ASC
-                LIMIT 1
-            ) first_item ON TRUE
+                LEFT JOIN documents base_doc ON base_doc.id = d.duplicate_of_document_id
+                LEFT JOIN projects base_project ON base_project.id = base_doc.project_id
+                LEFT JOIN users base_uploader ON base_uploader.id = base_doc.uploaded_by_user_id
                 WHERE d.company_id = $1
                   AND d.created_at >= $2
                   AND d.duplicate_status IN ('exact', 'probable')
@@ -861,10 +873,24 @@ class ViewService:
                 duplicate_status=row['duplicate_status'],
                 duplicate_of_document_id=row['duplicate_of_document_id'],
                 uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+                base_project_name=row['base_project_name'],
+                base_uploaded_by_name=_display_name(row['base_uploader_first_name'], row['base_uploader_last_name'], row['base_uploader_username']),
+                base_vendor=row['base_vendor'],
+                base_vendor_inn=row['base_vendor_inn'],
+                base_document_number=row['base_document_number'],
+                base_document_date=row['base_document_date'],
+                base_total_amount=row['base_total_amount'],
                 created_at=row['created_at'],
             )
             for row in rows
         ]
+
+    async def get_duplicate_report_row(self, telegram_user_id: int, period: str, duplicate_id: int) -> DuplicateReportRow:
+        rows = await self.list_duplicate_report_rows(telegram_user_id, period)
+        for row in rows:
+            if row.id == duplicate_id:
+                return row
+        raise CompanyAccessError('Дубль не найден в отчете за выбранный период.')
 
     async def list_report_documents_for_company(self, telegram_user_id: int, period: str) -> list[ReportDocumentDetail]:
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)

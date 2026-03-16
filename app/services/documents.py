@@ -330,6 +330,65 @@ class DocumentService:
             total_amount=row['total_amount'],
         )
 
+    async def resolve_duplicate_keep_separate(self, telegram_user_id: int, document_id: int) -> None:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        member_role = await self.company_service.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES:
+            raise CompanyAccessError('Действие доступно только manager.')
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                UPDATE documents
+                SET duplicate_status = 'none',
+                    duplicate_of_document_id = NULL,
+                    duplicate_checked_at = NOW(),
+                    updated_at = NOW()
+                WHERE company_id = $1
+                  AND id = $2
+                RETURNING id
+                """,
+                company.id,
+                document_id,
+            )
+        if row is None:
+            raise CompanyAccessError('Документ не найден.')
+
+    async def delete_duplicate_document(self, telegram_user_id: int, document_id: int) -> None:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        member_role = await self.company_service.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES:
+            raise CompanyAccessError('Действие доступно только manager.')
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    DELETE FROM documents
+                    WHERE company_id = $1
+                      AND id = $2
+                      AND duplicate_status IN ('exact', 'probable')
+                    RETURNING id
+                    """,
+                    company.id,
+                    document_id,
+                )
+                if row is None:
+                    raise CompanyAccessError('Дубликат не найден или уже удален.')
+                await connection.execute(
+                    """
+                    UPDATE documents
+                    SET duplicate_status = 'none',
+                        duplicate_of_document_id = NULL,
+                        duplicate_checked_at = NOW(),
+                        updated_at = NOW()
+                    WHERE company_id = $1
+                      AND duplicate_of_document_id = $2
+                    """,
+                    company.id,
+                    document_id,
+                )
+
     def _ensure_expense_document(self, document: DocumentSchema) -> None:
         if document.document_type not in ALLOWED_DOCUMENT_TYPES:
             raise DocumentValidationError(
