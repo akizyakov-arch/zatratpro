@@ -113,7 +113,7 @@ def build_projects_keyboard(projects: list[Any], archived: bool) -> InlineKeyboa
         [InlineKeyboardButton(text=project.name, callback_data=f"{MANAGER_PROJECT_VIEW_PREFIX}{project.id}")]
         for project in projects
     ]
-    back_callback = MANAGER_PROJECTS_ARCHIVED_CALLBACK if archived else MANAGER_PROJECTS_ACTIVE_CALLBACK
+    back_callback = MANAGER_PROJECTS_MENU_CALLBACK
     rows.append([InlineKeyboardButton(text="Назад", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
