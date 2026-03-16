@@ -172,6 +172,23 @@ def _format_user_card(user) -> str:
     ])
 
 
+def _person_name(user) -> str:
+    if user is None:
+        return 'коллега'
+    return user.first_name or user.full_name or user.username or 'коллега'
+
+
+
+def _person_identity(user) -> str:
+    if user is None:
+        return 'коллега'
+    username = f'@{user.username}' if user.username else None
+    name = _person_name(user)
+    if username:
+        return f'{name} ({username})'
+    return name
+
+
 @router.message(CommandStart())
 async def start_command(message: Message, command: CommandObject | None = None) -> None:
     context = await _ensure_context(message)
@@ -185,13 +202,13 @@ async def start_command(message: Message, command: CommandObject | None = None) 
         line = f'Текущая компания: {context.company.name}'
     else:
         line = 'Сначала нужен invite-код компании.'
-    await message.answer(MAIN_MENU_TEXT + NL + NL + line, reply_markup=await _main_menu_markup(message))
+    await message.answer(f'Привет, {_person_identity(message.from_user)}.' + NL + NL + MAIN_MENU_TEXT + NL + NL + line, reply_markup=await _main_menu_markup(message))
 
 
 @router.message(Command('help'))
 async def help_command(message: Message) -> None:
     menu_kind = await _help_menu_kind_for_user(message.from_user)
-    await message.answer('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
+    await message.answer(f'{_person_name(message.from_user)}, выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
 
 
 @router.message(Command('create_company'))
@@ -251,14 +268,14 @@ async def join_company_button(message: Message) -> None:
     if message.from_user is None:
         return
     set_pending_action(message.from_user.id, 'join_company')
-    await message.answer('Отправь invite-код следующим сообщением.', reply_markup=await _main_menu_markup(message))
+    await message.answer(f'{_person_name(message.from_user)}, отправь invite-код следующим сообщением.', reply_markup=await _main_menu_markup(message))
 
 
 @router.message(F.text == MENU_BUTTONS['upload_document'])
 async def upload_document_entry(message: Message) -> None:
     if not await _require_company_access(message):
         return
-    await message.answer('Отправь фото документа. После preview я предложу проекты кнопками.', reply_markup=await _main_menu_markup(message))
+    await message.answer(f'{_person_name(message.from_user)}, отправь фото документа. После preview я предложу проекты кнопками.', reply_markup=await _main_menu_markup(message))
 
 
 @router.message(F.text == MENU_BUTTONS['companies'])
@@ -553,7 +570,7 @@ async def create_company_button(message: Message) -> None:
         await message.answer('Создавать компании может только owner.', reply_markup=await _main_menu_markup(message))
         return
     set_pending_action(message.from_user.id, 'create_company')
-    await message.answer('Отправь название новой компании.', reply_markup=await _main_menu_markup(message))
+    await message.answer(f'{_person_name(message.from_user)}, отправь название новой компании.', reply_markup=await _main_menu_markup(message))
 
 
 @router.message(F.text == MENU_BUTTONS['projects'])

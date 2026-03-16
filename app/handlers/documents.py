@@ -37,6 +37,12 @@ async def _main_menu_markup(message: Message) -> object:
     return await _main_menu_markup_for_user(message.from_user)
 
 
+def _person_name(user) -> str:
+    if user is None:
+        return 'коллега'
+    return user.first_name or user.full_name or user.username or 'коллега'
+
+
 async def _ensure_company_access(message: Message) -> bool:
     if message.from_user is None:
         await message.answer('Не удалось определить пользователя.', reply_markup=await _main_menu_markup(message))
@@ -66,7 +72,7 @@ async def process_photo(message: Message) -> None:
     ocr_service = OCRSpaceService()
     deepseek_service = DeepSeekService()
 
-    await message.answer('Фото получено. Начинаю распознавание.', reply_markup=menu_markup)
+    await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             file_path = await file_service.download_best_photo(message.photo)
@@ -84,7 +90,7 @@ async def process_photo(message: Message) -> None:
         await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
         return
 
-    await message.answer('OCR завершен. Нормализую документ.', reply_markup=menu_markup)
+    await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Нормализую документ.', reply_markup=menu_markup)
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             normalized_text = await deepseek_service.normalize_document_text(ocr_text)
@@ -113,7 +119,7 @@ async def process_photo(message: Message) -> None:
         return
 
     await message.answer(
-        'Выбери проект для сохранения документа.',
+        f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
         reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
     )
 
@@ -124,7 +130,7 @@ async def create_project_from_document(callback: CallbackQuery) -> None:
         return
     set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
-    await callback.message.answer('Отправь название нового проекта.')
+    await callback.message.answer(f'{_person_name(callback.from_user)}, отправь название нового проекта.')
 
 
 @router.callback_query(F.data.startswith(PROJECT_CALLBACK_PREFIX))
@@ -153,7 +159,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 
     deepseek_service = DeepSeekService()
     await callback.answer()
-    await callback.message.answer('Проверяю документ...', reply_markup=menu_markup)
+    await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
     try:
         async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=callback.bot):
             extracted_document = await deepseek_service.extract_document(pending_document.ocr_text)
