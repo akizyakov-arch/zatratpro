@@ -437,6 +437,36 @@ class DocumentService:
                     document_id,
                 )
 
+    async def cleanup_broken_duplicate_links(self, telegram_user_id: int) -> int:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        member_role = await self.company_service.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES:
+            raise CompanyAccessError('Действие доступно только manager.')
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            result = await connection.execute(
+                """
+                UPDATE documents d
+                SET duplicate_status = 'none',
+                    duplicate_of_document_id = NULL,
+                    duplicate_checked_at = NOW(),
+                    updated_at = NOW()
+                WHERE d.company_id = $1
+                  AND d.duplicate_of_document_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM documents source
+                      WHERE source.company_id = d.company_id
+                        AND source.id = d.duplicate_of_document_id
+                  )
+                """,
+                company.id,
+            )
+        try:
+            return int(result.rsplit(' ', 1)[-1])
+        except Exception:
+            return 0
+
     def _ensure_expense_document(self, document: DocumentSchema) -> None:
         if document.document_type not in ALLOWED_DOCUMENT_TYPES:
             raise DocumentValidationError(

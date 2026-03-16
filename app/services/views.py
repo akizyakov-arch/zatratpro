@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.services.companies import CompanyAccessError, CompanyService
+from app.services.documents import DocumentService
 from app.services.database import get_pool
 
 
@@ -235,6 +236,7 @@ class DuplicateReportRow:
 class ViewService:
     def __init__(self) -> None:
         self.company_service = CompanyService()
+        self.document_service = DocumentService()
 
     async def list_companies(self, telegram_user_id: int) -> list[CompanyListItem]:
         context = await self.company_service.get_user_context(telegram_user_id)
@@ -820,6 +822,7 @@ class ViewService:
         return document, items
 
     async def list_duplicate_report_rows(self, telegram_user_id: int, period: str) -> list[DuplicateReportRow]:
+        await self.document_service.cleanup_broken_duplicate_links(telegram_user_id)
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         pool = get_pool()
         async with pool.acquire() as connection:
