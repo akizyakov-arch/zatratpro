@@ -1,7 +1,6 @@
 import secrets
 import string
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import re
 
 from aiogram.types import User
@@ -24,6 +23,39 @@ class Company:
     name: str
     slug: str
     is_active: bool
+
+
+@dataclass(slots=True)
+class CompanyMember:
+    company_id: int
+    user_id: int
+    role: str
+    username: str | None
+    full_name: str | None
+    telegram_user_id: int
+
+
+@dataclass(slots=True)
+class UserContext:
+    platform_role: str
+    company: Company | None
+    member_role: str | None
+
+    @property
+    def menu_kind(self) -> str:
+        if self.platform_role == "owner":
+            return "platform_owner"
+        if self.member_role in ADMIN_ROLES:
+            return self.member_role
+        return "employee"
+
+    @property
+    def has_company(self) -> bool:
+        return self.company is not None
+
+    @property
+    def can_manage_company(self) -> bool:
+        return self.member_role in ADMIN_ROLES
 
 
 class CompanyService:
@@ -59,6 +91,48 @@ class CompanyService:
                 telegram_user_id,
             )
         return role == "owner"
+
+    async def get_user_context(self, telegram_user_id: int) -> UserContext:
+        pool = get_pool()
+        query = """
+            SELECT u.platform_role,
+                   c.id AS company_id,
+                   c.name AS company_name,
+                   c.slug AS company_slug,
+                   c.is_active AS company_is_active,
+                   cm.role AS member_role
+            FROM users AS u
+            LEFT JOIN company_members AS cm
+                ON cm.user_id = u.id AND cm.is_active = TRUE
+            LEFT JOIN companies AS c
+                ON c.id = cm.company_id AND c.is_active = TRUE
+            WHERE u.telegram_user_id = $1
+            ORDER BY cm.joined_at NULLS LAST, cm.id
+        """
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(query, telegram_user_id)
+        if not rows:
+            return UserContext(platform_role="user", company=None, member_role=None)
+
+        active_rows = [row for row in rows if row["company_id"] is not None]
+        if len(active_rows) > 1:
+            raise CompanyAccessError("Пока поддерживается одна активная компания на пользователя. Следующий шаг — явный выбор компании.")
+
+        row = rows[0]
+        if active_rows:
+            row = active_rows[0]
+            company = Company(
+                id=row["company_id"],
+                name=row["company_name"],
+                slug=row["company_slug"],
+                is_active=row["company_is_active"],
+            )
+            member_role = row["member_role"]
+        else:
+            company = None
+            member_role = None
+
+        return UserContext(platform_role=row["platform_role"], company=company, member_role=member_role)
 
     async def create_company(self, telegram_user: User, name: str) -> Company:
         await self.ensure_platform_user(telegram_user)
@@ -99,42 +173,16 @@ class CompanyService:
         return Company(id=row["id"], name=row["name"], slug=row["slug"], is_active=row["is_active"])
 
     async def get_active_company_for_user(self, telegram_user_id: int) -> Company:
-        pool = get_pool()
-        query = """
-            SELECT c.id, c.name, c.slug, c.is_active
-            FROM companies AS c
-            JOIN company_members AS cm ON cm.company_id = c.id
-            JOIN users AS u ON u.id = cm.user_id
-            WHERE u.telegram_user_id = $1
-              AND c.is_active = TRUE
-              AND cm.is_active = TRUE
-            ORDER BY cm.joined_at NULLS LAST, cm.id
-        """
-        async with pool.acquire() as connection:
-            rows = await connection.fetch(query, telegram_user_id)
-        if not rows:
+        context = await self.get_user_context(telegram_user_id)
+        if context.company is None:
             raise CompanyAccessError("У тебя пока нет доступа ни к одной компании. Нужен invite от администратора.")
-        if len(rows) > 1:
-            raise CompanyAccessError("Пока поддерживается одна активная компания на пользователя. Следующий шаг — явный выбор компании.")
-        row = rows[0]
-        return Company(id=row["id"], name=row["name"], slug=row["slug"], is_active=row["is_active"])
+        return context.company
 
     async def ensure_member_role(self, telegram_user_id: int) -> str:
-        company = await self.get_active_company_for_user(telegram_user_id)
-        pool = get_pool()
-        query = """
-            SELECT cm.role
-            FROM company_members AS cm
-            JOIN users AS u ON u.id = cm.user_id
-            WHERE u.telegram_user_id = $1
-              AND cm.company_id = $2
-              AND cm.is_active = TRUE
-        """
-        async with pool.acquire() as connection:
-            role = await connection.fetchval(query, telegram_user_id, company.id)
-        if role is None:
+        context = await self.get_user_context(telegram_user_id)
+        if context.member_role is None:
             raise CompanyAccessError("У тебя нет активной роли в компании.")
-        return role
+        return context.member_role
 
     async def create_invite(self, telegram_user: User, role: str) -> str:
         await self.ensure_platform_user(telegram_user)
@@ -215,6 +263,40 @@ class CompanyService:
                     user_id,
                 )
         return Company(id=invite["company_id"], name=invite["name"], slug=invite["slug"], is_active=invite["is_active"])
+
+    async def list_company_members(self, telegram_user_id: int) -> list[CompanyMember]:
+        company = await self.get_active_company_for_user(telegram_user_id)
+        member_role = await self.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES:
+            raise CompanyAccessError("Просматривать участников может только owner или admin компании.")
+
+        pool = get_pool()
+        query = """
+            SELECT cm.company_id,
+                   cm.user_id,
+                   cm.role,
+                   u.username,
+                   u.full_name,
+                   u.telegram_user_id
+            FROM company_members AS cm
+            JOIN users AS u ON u.id = cm.user_id
+            WHERE cm.company_id = $1
+              AND cm.is_active = TRUE
+            ORDER BY cm.role, u.full_name NULLS LAST, u.telegram_user_id
+        """
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(query, company.id)
+        return [
+            CompanyMember(
+                company_id=row["company_id"],
+                user_id=row["user_id"],
+                role=row["role"],
+                username=row["username"],
+                full_name=row["full_name"],
+                telegram_user_id=row["telegram_user_id"],
+            )
+            for row in rows
+        ]
 
     async def _generate_unique_slug(self, name: str) -> str:
         pool = get_pool()
