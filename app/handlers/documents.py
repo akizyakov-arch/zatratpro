@@ -9,7 +9,7 @@ from app.schemas.document import DocumentSchema
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService, DocumentValidationError
-from app.services.json_formatter import chunk_message
+from app.services.json_formatter import chunk_message, format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
 from app.services.telegram_files import TelegramFileService
@@ -40,7 +40,6 @@ project_service = ProjectService()
 document_service = DocumentService()
 company_service = CompanyService()
 OCR_TIMEOUT_SECONDS = 120
-NORMALIZE_TIMEOUT_SECONDS = 240
 EXTRACT_TIMEOUT_SECONDS = 120
 
 
@@ -203,29 +202,42 @@ async def process_photo(message: Message) -> None:
         await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
         return
 
-    await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Нормализую документ.', reply_markup=menu_markup)
+    await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            async with asyncio.timeout(NORMALIZE_TIMEOUT_SECONDS):
-                normalized_text = await deepseek_service.normalize_document_text(ocr_text)
+            async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
+                extracted_document = await deepseek_service.extract_document(ocr_text)
+        document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
+        preview_text = format_document_preview(document)
     except TimeoutError:
         clear_document_flow(message.from_user.id)
-        logger.exception('Normalization timed out')
-        await message.answer('Подготовка документа заняла слишком много времени. Попробуй еще раз.', reply_markup=menu_markup)
+        logger.exception('DeepSeek extraction timed out')
+        await message.answer('Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except DeepSeekError as exc:
         clear_document_flow(message.from_user.id)
-        logger.exception('DeepSeek normalization failed')
-        await message.answer(f'Не удалось нормализовать документ: {exc}', reply_markup=menu_markup)
+        logger.exception('DeepSeek extraction failed')
+        await message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
+        return
+    except DocumentValidationError as exc:
+        clear_document_flow(message.from_user.id)
+        await message.answer(str(exc), reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
         clear_document_flow(message.from_user.id)
-        logger.exception('Normalization failed')
+        logger.exception('Extraction failed')
         await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
         return
 
-    store_pending_document(message.from_user.id, PendingDocument(ocr_text=ocr_text, normalized_text=normalized_text))
-    for chunk in chunk_message(normalized_text):
+    store_pending_document(
+        message.from_user.id,
+        PendingDocument(
+            ocr_text=ocr_text,
+            normalized_text=preview_text,
+            extracted_document=document,
+        ),
+    )
+    for chunk in chunk_message(preview_text):
         await message.answer(chunk, reply_markup=menu_markup)
 
     try:
@@ -280,21 +292,20 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         await callback.answer('Проект недоступен. Обнови список и попробуй снова.', show_alert=True)
         return
 
-    deepseek_service = DeepSeekService()
     await callback.answer()
     await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
+    document = pending_document.extracted_document
+    if document is None:
+        clear_document_flow(callback.from_user.id)
+        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
+        return
     try:
-        async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=callback.bot):
-            async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
-                extracted_document = await deepseek_service.extract_document(pending_document.ocr_text)
-        document = DocumentSchema.model_validate({**extracted_document, 'raw_text': pending_document.ocr_text})
         duplicate_check = await document_service.find_company_duplicate_document(
             telegram_user=callback.from_user,
             project=project,
             document=document,
             normalized_text=pending_document.normalized_text,
         )
-        pending_document.extracted_document = document
         pending_document.duplicate_check = duplicate_check
         pending_document.selected_project_id = project.id
         if duplicate_check.status in {'exact', 'probable'}:
@@ -315,16 +326,6 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             duplicate_check=duplicate_check,
             source_type='photo',
         )
-    except TimeoutError:
-        clear_document_flow(callback.from_user.id)
-        logger.exception('DeepSeek extraction timed out')
-        await callback.message.answer('Формирование JSON заняло слишком много времени. Отправь документ заново.', reply_markup=menu_markup)
-        return
-    except DeepSeekError as exc:
-        clear_document_flow(callback.from_user.id)
-        logger.exception('DeepSeek extraction failed')
-        await callback.message.answer(f'Не удалось собрать JSON документа: {exc}. Отправь документ заново.', reply_markup=menu_markup)
-        return
     except DocumentValidationError as exc:
         clear_document_flow(callback.from_user.id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
