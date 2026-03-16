@@ -2,40 +2,69 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
 
-from app.services.companies import CompanyAccessError, CompanyMember, CompanyService
+from app.services.companies import CompanyAccessError, CompanyService
 from app.services.projects import ProjectService
+from app.services.views import ViewService
 from app.state.pending_actions import get_pending_action, pop_pending_action, set_pending_action
+from app.state.pending_documents import get_pending_document
 from app.ui.company import (
-    ARCHIVE_PROJECT_CALLBACK_PREFIX,
-    REMOVE_EMPLOYEE_CALLBACK_PREFIX,
-    RESTORE_PROJECT_CALLBACK_PREFIX,
-    build_employee_removal_keyboard,
-    build_project_action_keyboard,
+    MANAGER_EMPLOYEES_LIST_CALLBACK,
+    MANAGER_EMPLOYEES_MENU_CALLBACK,
+    MANAGER_EMPLOYEE_INVITE_CALLBACK,
+    MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX,
+    MANAGER_EMPLOYEE_REMOVE_PREFIX,
+    MANAGER_EMPLOYEE_VIEW_PREFIX,
+    MANAGER_PROJECTS_ACTIVE_CALLBACK,
+    MANAGER_PROJECTS_ARCHIVED_CALLBACK,
+    MANAGER_PROJECTS_MENU_CALLBACK,
+    MANAGER_PROJECT_ARCHIVE_CONFIRM_PREFIX,
+    MANAGER_PROJECT_ARCHIVE_PREFIX,
+    MANAGER_PROJECT_CREATE_CALLBACK,
+    MANAGER_PROJECT_DOCUMENTS_PREFIX,
+    MANAGER_PROJECT_RENAME_PREFIX,
+    MANAGER_PROJECT_RESTORE_PREFIX,
+    MANAGER_PROJECT_VIEW_PREFIX,
+    NAV_MAIN_CALLBACK,
+    OWNER_COMPANIES_CALLBACK,
+    OWNER_COMPANY_ARCHIVE_CONFIRM_PREFIX,
+    OWNER_COMPANY_ARCHIVE_PREFIX,
+    OWNER_COMPANY_ISSUE_INVITE_PREFIX,
+    OWNER_COMPANY_MEMBERS_PREFIX,
+    OWNER_COMPANY_RESET_INVITE_PREFIX,
+    OWNER_COMPANY_SHOW_INVITE_PREFIX,
+    OWNER_COMPANY_VIEW_PREFIX,
+    build_companies_keyboard,
+    build_company_actions_keyboard,
+    build_company_members_keyboard,
+    build_confirm_keyboard,
+    build_employee_card_keyboard,
+    build_employees_keyboard,
+    build_employees_menu_keyboard,
+    build_project_card_keyboard,
+    build_projects_keyboard,
+    build_projects_menu_keyboard,
 )
-from app.ui.main_menu import (
-    COMPANY_MENU_TEXT,
-    MAIN_MENU_TEXT,
-    MENU_BUTTONS,
-    build_company_menu_keyboard,
-    build_main_menu_keyboard,
-)
+from app.ui.main_menu import MAIN_MENU_TEXT, MENU_BUTTONS, build_main_menu_keyboard
+from app.ui.projects import build_projects_keyboard as build_document_projects_keyboard
 
 
 router = Router()
-project_service = ProjectService()
 company_service = CompanyService()
-
-
-HELP_TEXT = (
-    "Я работаю с фото чеков, актов и накладных.\n\n"
-    "Кнопка \"Распознать документ\" запускает текущий основной сценарий.\n"
-    "Кнопка \"Проекты\" показывает проекты текущей компании. Проекты привязаны к компании, а не к конкретному человеку.\n"
-    "Раздел \"Компания\" открывает действия по твоей роли: owner создает компанию, manager управляет проектами и сотрудниками, employee видит только рабочий контур.\n\n"
-    "Команды fallback:\n"
-    "/create_company Название компании\n"
-    "/invite employee\n"
-    "/join КОД"
-)
+project_service = ProjectService()
+view_service = ViewService()
+NL = chr(10)
+HELP_TEXT = NL.join([
+    'ZATRATPRO работает с документами внутри компании.',
+    '',
+    'Owner создает компании и выдает invite первому manager.',
+    'Manager управляет проектами и сотрудниками своей компании.',
+    'Employee загружает документы и видит только свои записи.',
+    '',
+    'Fallback-команды:',
+    '/create_company Название компании',
+    '/invite employee',
+    '/join КОД',
+])
 
 
 async def _ensure_context(message: Message):
@@ -49,449 +78,580 @@ async def _main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
     context = await _ensure_context(message)
     if context is None:
         return build_main_menu_keyboard(has_company=False)
-    return build_main_menu_keyboard(
-        menu_kind=context.menu_kind,
-        has_company=context.has_company,
-        can_view_reports=context.can_manage_company,
-    )
-
-
-async def _company_menu_markup(message: Message) -> ReplyKeyboardMarkup:
-    context = await _ensure_context(message)
-    if context is None:
-        return build_company_menu_keyboard(menu_kind="employee", can_manage_company=False)
-    return build_company_menu_keyboard(
-        menu_kind=context.menu_kind,
-        can_manage_company=context.can_manage_company,
-    )
+    return build_main_menu_keyboard(menu_kind=context.menu_kind, has_company=context.has_company)
 
 
 async def _require_company_access(message: Message) -> bool:
     context = await _ensure_context(message)
     if context is None or not context.has_company:
         await message.answer(
-            "Сначала нужно получить доступ к компании. Используй invite-код руководителя или открой раздел Компания, если ты owner бота.",
+            'Сначала нужен invite-код компании. Нажми "Ввести invite-код" или выполни /join КОД.',
             reply_markup=await _main_menu_markup(message),
         )
         return False
     return True
 
 
-def _member_display_name(member: CompanyMember) -> str:
-    return member.full_name or member.username or str(member.telegram_user_id)
+def _format_company_card(card) -> str:
+    invite_state = 'есть активный invite' if card.invite is not None else 'invite отсутствует'
+    manager_state = card.manager_name if card.manager_name else 'не назначен'
+    status = 'active' if getattr(card, 'is_active', True) else 'archived'
+    return NL.join([
+        f'Компания: {card.name}',
+        f'Статус: {status}',
+        f'Manager: {manager_state}',
+        f'Сотрудников: {card.employee_count}',
+        f'Активных проектов: {card.active_project_count}',
+        f'Архивных проектов: {card.archived_project_count}',
+        f'Документов: {card.document_count}',
+        f'Создана: {card.created_at:%Y-%m-%d %H:%M}',
+        f'Invite manager: {invite_state}',
+    ])
+
+
+def _format_project_card(project) -> str:
+    status = 'archived' if project.is_archived else 'active'
+    total_amount = project.total_amount if project.total_amount is not None else 0
+    created_line = f'{project.created_at:%Y-%m-%d %H:%M}' if project.created_at else '—'
+    creator = project.created_by_name or '—'
+    return NL.join([
+        f'Проект: {project.name}',
+        f'Статус: {status}',
+        f'Создан: {created_line}',
+        f'Кем создан: {creator}',
+        f'Документов: {project.document_count}',
+        f'Сумма затрат: {total_amount}',
+    ])
+
+
+def _format_member_card(member) -> str:
+    joined = member.joined_at.strftime('%Y-%m-%d %H:%M') if member.joined_at else '—'
+    username = f'@{member.username}' if member.username else '—'
+    return NL.join([
+        f'Сотрудник: {member.full_name or username}',
+        f'Username: {username}',
+        f'Дата вступления: {joined}',
+        f'Загружено документов: {member.document_count}',
+    ])
 
 
 @router.message(CommandStart())
 async def start_command(message: Message, command: CommandObject | None = None) -> None:
     context = await _ensure_context(message)
-
     payload = command.args if command is not None else None
-    if payload and payload.startswith("join_"):
-        invite_code = payload.removeprefix("join_")
-        await join_company(message, invite_code)
+    if payload and payload.startswith('join_'):
+        await join_company(message, payload.removeprefix('join_'))
         return
-
-    if context is not None and context.menu_kind == "platform_owner":
-        company_line = "Ты в owner-режиме. Создай компанию и передай invite первому manager."
+    if context is not None and context.menu_kind == 'platform_owner':
+        line = 'Owner-режим: управление компаниями и системным состоянием.'
     elif context is not None and context.has_company:
-        company_line = f"Текущая компания: {context.company.name}"
+        line = f'Текущая компания: {context.company.name}'
     else:
-        company_line = "Сначала нужен доступ к компании. Нажми \"Ввести invite-код\" или выполни /join КОД."
-
-    await message.answer(
-        f"{MAIN_MENU_TEXT}\n\n{company_line}",
-        reply_markup=await _main_menu_markup(message),
-    )
+        line = 'Сначала нужен invite-код компании.'
+    await message.answer(MAIN_MENU_TEXT + NL + NL + line, reply_markup=await _main_menu_markup(message))
 
 
-@router.message(Command("help"))
+@router.message(Command('help'))
 async def help_command(message: Message) -> None:
     await message.answer(HELP_TEXT, reply_markup=await _main_menu_markup(message))
 
 
-@router.message(Command("create_company"))
+@router.message(Command('create_company'))
 async def create_company_command(message: Message, command: CommandObject) -> None:
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
         return
-
-    company_name = (command.args or "").strip()
-    if not company_name:
-        await message.answer(
-            "Использование: /create_company Название компании",
-            reply_markup=await _main_menu_markup(message),
-        )
+    name = (command.args or '').strip()
+    if not name:
+        await message.answer('Использование: /create_company Название компании', reply_markup=await _main_menu_markup(message))
         return
-
     try:
-        company = await company_service.create_company(message.from_user, company_name)
+        company = await company_service.create_company(message.from_user, name)
         invite_code = await company_service.create_initial_manager_invite(message.from_user, company.id)
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
-
-    await message.answer(
-        f"Компания создана: {company.name} ({company.slug}).\n\nПередай этот invite-код первому руководителю: {invite_code}\n\nОн должен отправить: /join {invite_code}",
-        reply_markup=await _main_menu_markup(message),
-    )
+    await message.answer(f'Компания создана: {company.name}. Invite для первого manager: {invite_code}', reply_markup=await _main_menu_markup(message))
 
 
-@router.message(Command("invite"))
-async def create_invite_command(message: Message, command: CommandObject) -> None:
+@router.message(Command('invite'))
+async def invite_command(message: Message, command: CommandObject) -> None:
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
         return
-
-    role = (command.args or "employee").strip()
-    if role != "employee":
-        await message.answer(
-            "Использование: /invite employee",
-            reply_markup=await _main_menu_markup(message),
-        )
+    role = (command.args or 'employee').strip()
+    if role != 'employee':
+        await message.answer('Использование: /invite employee', reply_markup=await _main_menu_markup(message))
         return
-
     try:
-        code = await company_service.create_invite(message.from_user, role)
+        code = await company_service.create_invite(message.from_user, 'employee')
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
-
-    await message.answer(
-        f"Invite-код для сотрудника: {code}\n\nСотрудник должен отправить: /join {code}",
-        reply_markup=await _company_menu_markup(message),
-    )
+    await message.answer(f'Invite-код для сотрудника: {code}', reply_markup=await _main_menu_markup(message))
 
 
-@router.message(Command("join"))
+@router.message(Command('join'))
 async def join_command(message: Message, command: CommandObject) -> None:
-    invite_code = (command.args or "").strip()
-    await join_company(message, invite_code)
+    await join_company(message, (command.args or '').strip())
 
 
 async def join_company(message: Message, invite_code: str) -> None:
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
         return
-
     if not invite_code:
-        await message.answer(
-            "Использование: /join КОД",
-            reply_markup=await _main_menu_markup(message),
-        )
+        await message.answer('Использование: /join КОД', reply_markup=await _main_menu_markup(message))
         return
-
     try:
         company = await company_service.join_company(message.from_user, invite_code)
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
-
-    await message.answer(
-        f"Доступ к компании \"{company.name}\" подключен.",
-        reply_markup=await _main_menu_markup(message),
-    )
+    await message.answer(f'Доступ к компании "{company.name}" подключен.', reply_markup=await _main_menu_markup(message))
 
 
-@router.message(F.text == MENU_BUTTONS["join_company"])
+@router.message(F.text == MENU_BUTTONS['join_company'])
 async def join_company_button(message: Message) -> None:
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
         return
-
-    set_pending_action(message.from_user.id, "join_company")
-    await message.answer(
-        "Отправь invite-код следующим сообщением.",
-        reply_markup=await _main_menu_markup(message),
-    )
+    set_pending_action(message.from_user.id, 'join_company')
+    await message.answer('Отправь invite-код следующим сообщением.', reply_markup=await _main_menu_markup(message))
 
 
-@router.message(F.text == MENU_BUTTONS["recognize"])
-async def recognize_document_entry(message: Message) -> None:
+@router.message(F.text == MENU_BUTTONS['upload_document'])
+async def upload_document_entry(message: Message) -> None:
     if not await _require_company_access(message):
         return
-    await message.answer(
-        "Отправь фото чека, акта или накладной. После распознавания я покажу выжимку и предложу проект кнопками.",
-        reply_markup=await _main_menu_markup(message),
-    )
+    await message.answer('Отправь фото документа. После preview я предложу проекты кнопками.', reply_markup=await _main_menu_markup(message))
 
 
-@router.message(F.text == MENU_BUTTONS["manual"])
-async def manual_expense_entry(message: Message) -> None:
-    if not await _require_company_access(message):
-        return
-    await message.answer(
-        "Ручной ввод расходов будет следующим шагом MVP. Сначала доводим сценарий документа и привязку к проекту.",
-        reply_markup=await _main_menu_markup(message),
-    )
-
-
-@router.message(F.text == MENU_BUTTONS["projects"])
-async def projects_entry(message: Message) -> None:
+@router.message(F.text == MENU_BUTTONS['companies'])
+async def companies_entry(message: Message) -> None:
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
         return
-
-    if not await _require_company_access(message):
-        return
-
     try:
-        projects = await project_service.list_active_projects(message.from_user.id)
+        companies = await view_service.list_companies(message.from_user.id)
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
+    if not companies:
+        await message.answer('Компаний пока нет.', reply_markup=await _main_menu_markup(message))
+        return
+    await message.answer('Компании:', reply_markup=build_companies_keyboard(companies))
 
-    if not projects:
-        text = "В текущей компании пока нет активных проектов."
-    else:
-        project_lines = [f"{index}. {project.name}" for index, project in enumerate(projects, start=1)]
-        text = "Проекты текущей компании:\n\n" + "\n".join(project_lines)
+
+@router.callback_query(F.data == OWNER_COMPANIES_CALLBACK)
+async def companies_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        companies = await view_service.list_companies(callback.from_user.id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer('Компании:', reply_markup=build_companies_keyboard(companies))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_VIEW_PREFIX))
+async def company_card_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_VIEW_PREFIX))
+    try:
+        card = await view_service.get_company_card(callback.from_user.id, company_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(_format_company_card(card), reply_markup=build_company_actions_keyboard(card.id, not card.manager_assigned, card.invite is not None, not card.is_active))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_ISSUE_INVITE_PREFIX))
+async def company_issue_invite_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_ISSUE_INVITE_PREFIX))
+    try:
+        await view_service.revoke_manager_invite(callback.from_user.id, company_id)
+        code = await company_service.create_initial_manager_invite(callback.from_user, company_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Invite выдан.')
+    await callback.message.answer(f'Invite для manager: {code}', reply_markup=await _main_menu_markup(callback.message))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_SHOW_INVITE_PREFIX))
+async def company_show_invite_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_SHOW_INVITE_PREFIX))
+    try:
+        card = await view_service.get_company_card(callback.from_user.id, company_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    if card.invite is None:
+        await callback.answer('Активного invite нет.', show_alert=True)
+        return
+    await callback.answer()
+    expires = card.invite.expires_at.strftime('%Y-%m-%d %H:%M') if card.invite.expires_at else 'без срока'
+    await callback.message.answer(f'Текущий invite: {card.invite.code}. Действует до: {expires}')
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_RESET_INVITE_PREFIX))
+async def company_reset_invite_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_RESET_INVITE_PREFIX))
+    try:
+        changed = await view_service.revoke_manager_invite(callback.from_user.id, company_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Invite сброшен.' if changed else 'Активного invite не было.')
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_MEMBERS_PREFIX))
+async def company_members_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_MEMBERS_PREFIX))
+    try:
+        members = await view_service.list_company_members_for_owner(callback.from_user.id, company_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    if not members:
+        await callback.answer('Участников нет.', show_alert=True)
+        return
+    await callback.answer()
+    lines = ['Участники компании:', '']
+    for index, member in enumerate(members, start=1):
+        lines.append(f"{index}. {member.full_name or member.username or member.telegram_id} — {member.role}")
+    await callback.message.answer(NL.join(lines), reply_markup=build_company_members_keyboard(company_id, members))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_ARCHIVE_PREFIX))
+async def company_archive_prompt(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_ARCHIVE_PREFIX))
+    await callback.answer()
+    await callback.message.answer('Подтвердить архивацию компании?', reply_markup=build_confirm_keyboard(f'{OWNER_COMPANY_ARCHIVE_CONFIRM_PREFIX}{company_id}', f'{OWNER_COMPANY_VIEW_PREFIX}{company_id}'))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_ARCHIVE_CONFIRM_PREFIX))
+async def company_archive_confirm(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_ARCHIVE_CONFIRM_PREFIX))
+    try:
+        await view_service.archive_company(callback.from_user.id, company_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Компания архивирована.')
+
+
+@router.message(F.text == MENU_BUTTONS['system_status'])
+async def system_status_entry(message: Message) -> None:
+    if message.from_user is None:
+        return
+    try:
+        stats = await view_service.get_system_stats(message.from_user.id)
+    except CompanyAccessError as exc:
+        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
+        return
+    text = NL.join([
+        f'Пользователей: {stats.users}',
+        f'Компаний: {stats.companies}',
+        f'Активных компаний: {stats.active_companies}',
+        f'Managers: {stats.managers}',
+        f'Employees: {stats.employees}',
+        f'Проектов: {stats.projects}',
+        f'Документов: {stats.documents}',
+    ])
     await message.answer(text, reply_markup=await _main_menu_markup(message))
 
 
-@router.message(F.text == MENU_BUTTONS["company"])
-async def company_entry(message: Message) -> None:
-    context = await _ensure_context(message)
-    if context is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
-        return
-
-    if context.menu_kind == "platform_owner":
-        lines = [
-            COMPANY_MENU_TEXT,
-            "Роль: owner",
-            "Owner создает компанию и выдает invite первому manager.",
-        ]
-    elif context.company is None:
-        await message.answer(
-            "У тебя пока нет доступа к компании. Нужен invite от руководителя.",
-            reply_markup=await _main_menu_markup(message),
-        )
-        return
-    elif context.can_manage_company:
-        lines = [
-            COMPANY_MENU_TEXT,
-            f"Компания: {context.company.name}",
-            "Роль: manager",
-            "Здесь доступны проекты, приглашения, исключение сотрудников и список участников.",
-        ]
-    else:
-        lines = [
-            COMPANY_MENU_TEXT,
-            f"Компания: {context.company.name}",
-            "Роль: employee",
-            "У сотрудника нет доступа к управлению компанией.",
-        ]
-
-    await message.answer("\n".join(lines), reply_markup=await _company_menu_markup(message))
-
-
-@router.message(F.text == MENU_BUTTONS["create_company"])
+@router.message(F.text == MENU_BUTTONS['create_company'])
 async def create_company_button(message: Message) -> None:
-    context = await _ensure_context(message)
-    if context is None or context.platform_role != "owner":
-        await message.answer("Создавать компании может только владелец бота.", reply_markup=await _main_menu_markup(message))
+    if message.from_user is None:
         return
-
-    set_pending_action(message.from_user.id, "create_company")
-    await message.answer("Отправь название новой компании.", reply_markup=await _company_menu_markup(message))
-
-
-@router.message(F.text == MENU_BUTTONS["create_project"])
-async def create_project_button(message: Message) -> None:
     context = await _ensure_context(message)
-    if context is None or not context.can_manage_company:
-        await message.answer("Создавать проекты может только руководитель компании.", reply_markup=await _main_menu_markup(message))
+    if context is None or context.platform_role != 'owner':
+        await message.answer('Создавать компании может только owner.', reply_markup=await _main_menu_markup(message))
         return
+    set_pending_action(message.from_user.id, 'create_company')
+    await message.answer('Отправь название новой компании.', reply_markup=await _main_menu_markup(message))
 
-    set_pending_action(message.from_user.id, "create_project")
-    await message.answer("Отправь название нового проекта.", reply_markup=await _company_menu_markup(message))
 
-
-@router.message(F.text == MENU_BUTTONS["archive_project"])
-async def archive_project_button(message: Message) -> None:
+@router.message(F.text == MENU_BUTTONS['projects'])
+async def projects_menu_entry(message: Message) -> None:
+    if message.from_user is None:
+        return
     context = await _ensure_context(message)
     if context is None or not context.can_manage_company:
-        await message.answer("Архивировать проекты может только руководитель компании.", reply_markup=await _main_menu_markup(message))
+        await message.answer('Раздел проектов доступен только manager.', reply_markup=await _main_menu_markup(message))
         return
+    await message.answer('Раздел проектов:', reply_markup=build_projects_menu_keyboard())
 
-    projects = await project_service.list_active_projects(message.from_user.id)
-    if not projects:
-        await message.answer("В текущей компании нет активных проектов для архивации.", reply_markup=await _company_menu_markup(message))
+
+@router.callback_query(F.data == MANAGER_PROJECTS_MENU_CALLBACK)
+async def projects_menu_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
         return
-
-    await message.answer(
-        "Выбери проект для архивации.",
-        reply_markup=build_project_action_keyboard(projects, ARCHIVE_PROJECT_CALLBACK_PREFIX),
-    )
+    await callback.answer()
+    await callback.message.answer('Раздел проектов:', reply_markup=build_projects_menu_keyboard())
 
 
-@router.callback_query(F.data.startswith(ARCHIVE_PROJECT_CALLBACK_PREFIX))
-async def archive_project_callback(callback: CallbackQuery) -> None:
+@router.callback_query(F.data == MANAGER_PROJECTS_ACTIVE_CALLBACK)
+async def projects_active_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
-        await callback.answer("Данные действия недоступны.", show_alert=True)
         return
-
     try:
-        project_id = int(callback.data.removeprefix(ARCHIVE_PROJECT_CALLBACK_PREFIX))
+        projects = await view_service.list_projects_for_manager(callback.from_user.id, archived=False)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    if not projects:
+        await callback.message.answer('Активных проектов пока нет.', reply_markup=build_projects_menu_keyboard())
+        return
+    await callback.message.answer('Активные проекты:', reply_markup=build_projects_keyboard(projects, archived=False))
+
+
+@router.callback_query(F.data == MANAGER_PROJECTS_ARCHIVED_CALLBACK)
+async def projects_archived_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        projects = await view_service.list_projects_for_manager(callback.from_user.id, archived=True)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    if not projects:
+        await callback.message.answer('Архивных проектов пока нет.', reply_markup=build_projects_menu_keyboard())
+        return
+    await callback.message.answer('Архивные проекты:', reply_markup=build_projects_keyboard(projects, archived=True))
+
+
+@router.callback_query(F.data == MANAGER_PROJECT_CREATE_CALLBACK)
+async def project_create_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    set_pending_action(callback.from_user.id, 'create_project')
+    await callback.answer()
+    await callback.message.answer('Отправь название нового проекта.', reply_markup=await _main_menu_markup(callback.message))
+
+
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_VIEW_PREFIX))
+async def project_view_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    project_id = int(callback.data.removeprefix(MANAGER_PROJECT_VIEW_PREFIX))
+    try:
+        project = await view_service.get_project_card(callback.from_user.id, project_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(_format_project_card(project), reply_markup=build_project_card_keyboard(project.id, archived=project.is_archived))
+
+
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_RENAME_PREFIX))
+async def project_rename_prompt(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    project_id = int(callback.data.removeprefix(MANAGER_PROJECT_RENAME_PREFIX))
+    set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
+    await callback.answer()
+    await callback.message.answer('Отправь новое название проекта.', reply_markup=await _main_menu_markup(callback.message))
+
+
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_ARCHIVE_PREFIX))
+async def project_archive_prompt(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    project_id = int(callback.data.removeprefix(MANAGER_PROJECT_ARCHIVE_PREFIX))
+    await callback.answer()
+    await callback.message.answer('Подтвердить архивацию проекта?', reply_markup=build_confirm_keyboard(f'{MANAGER_PROJECT_ARCHIVE_CONFIRM_PREFIX}{project_id}', f'{MANAGER_PROJECT_VIEW_PREFIX}{project_id}'))
+
+
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_ARCHIVE_CONFIRM_PREFIX))
+async def project_archive_confirm(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    project_id = int(callback.data.removeprefix(MANAGER_PROJECT_ARCHIVE_CONFIRM_PREFIX))
+    try:
         project = await project_service.archive_project(callback.from_user.id, project_id)
-    except (TypeError, ValueError):
-        await callback.answer("Не удалось определить проект.", show_alert=True)
-        return
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
-
-    await callback.answer("Проект архивирован.")
-    await callback.message.answer(
-        f"Проект архивирован: {project.name}.",
-        reply_markup=await _company_menu_markup(callback.message),
-    )
+    await callback.answer('Проект архивирован.')
+    await callback.message.answer(f'Проект архивирован: {project.name}.')
 
 
-@router.message(F.text == MENU_BUTTONS["restore_project"])
-async def restore_project_button(message: Message) -> None:
-    context = await _ensure_context(message)
-    if context is None or not context.can_manage_company:
-        await message.answer("Деархивировать проекты может только руководитель компании.", reply_markup=await _main_menu_markup(message))
-        return
-
-    projects = await project_service.list_archived_projects(message.from_user.id)
-    if not projects:
-        await message.answer("В архиве текущей компании нет проектов.", reply_markup=await _company_menu_markup(message))
-        return
-
-    await message.answer(
-        "Выбери проект для возврата из архива.",
-        reply_markup=build_project_action_keyboard(projects, RESTORE_PROJECT_CALLBACK_PREFIX),
-    )
-
-
-@router.callback_query(F.data.startswith(RESTORE_PROJECT_CALLBACK_PREFIX))
-async def restore_project_callback(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_RESTORE_PREFIX))
+async def project_restore_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
-        await callback.answer("Данные действия недоступны.", show_alert=True)
         return
-
+    project_id = int(callback.data.removeprefix(MANAGER_PROJECT_RESTORE_PREFIX))
     try:
-        project_id = int(callback.data.removeprefix(RESTORE_PROJECT_CALLBACK_PREFIX))
         project = await project_service.restore_project(callback.from_user.id, project_id)
-    except (TypeError, ValueError):
-        await callback.answer("Не удалось определить проект.", show_alert=True)
-        return
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
-
-    await callback.answer("Проект возвращен.")
-    await callback.message.answer(
-        f"Проект возвращен из архива: {project.name}.",
-        reply_markup=await _company_menu_markup(callback.message),
-    )
+    await callback.answer('Проект деархивирован.')
+    await callback.message.answer(f'Проект возвращен: {project.name}.')
 
 
-@router.message(F.text == MENU_BUTTONS["invite_employee"])
-async def invite_employee_button(message: Message) -> None:
-    if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
-        return
-
-    try:
-        code = await company_service.create_invite(message.from_user, "employee")
-    except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
-        return
-
-    await message.answer(
-        f"Invite-код для сотрудника: {code}\n\nСотрудник должен отправить: /join {code}",
-        reply_markup=await _company_menu_markup(message),
-    )
-
-
-@router.message(F.text == MENU_BUTTONS["remove_employee"])
-async def remove_employee_button(message: Message) -> None:
-    if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
-        return
-
-    try:
-        members = await company_service.list_company_members(message.from_user.id)
-    except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
-        return
-
-    employees = [member for member in members if member.role == "employee"]
-    if not employees:
-        await message.answer("В текущей компании нет сотрудников для исключения.", reply_markup=await _company_menu_markup(message))
-        return
-
-    await message.answer(
-        "Выбери сотрудника для исключения.",
-        reply_markup=build_employee_removal_keyboard(employees),
-    )
-
-
-@router.callback_query(F.data.startswith(REMOVE_EMPLOYEE_CALLBACK_PREFIX))
-async def remove_employee_callback(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_DOCUMENTS_PREFIX))
+async def project_documents_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
-        await callback.answer("Данные действия недоступны.", show_alert=True)
         return
-
+    project_id = int(callback.data.removeprefix(MANAGER_PROJECT_DOCUMENTS_PREFIX))
     try:
-        member_user_id = int(callback.data.removeprefix(REMOVE_EMPLOYEE_CALLBACK_PREFIX))
-        member = await company_service.remove_employee(callback.from_user.id, member_user_id)
-    except (TypeError, ValueError):
-        await callback.answer("Не удалось определить сотрудника.", show_alert=True)
-        return
+        documents = await view_service.list_project_documents(callback.from_user.id, project_id)
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
+    await callback.answer()
+    if not documents:
+        await callback.message.answer('В проекте пока нет документов.')
+        return
+    lines = ['Документы проекта:', '']
+    for index, document in enumerate(documents, start=1):
+        lines.append(f"{index}. {document.vendor or 'Без поставщика'} — {document.total_amount or 0} — {document.project_name}")
+    await callback.message.answer(NL.join(lines))
 
-    await callback.answer("Сотрудник исключен.")
-    await callback.message.answer(
-        f"Сотрудник исключен: {_member_display_name(member)}.",
-        reply_markup=await _company_menu_markup(callback.message),
-    )
 
-
-@router.message(F.text == MENU_BUTTONS["members"])
-async def members_button(message: Message) -> None:
+@router.message(F.text == MENU_BUTTONS['employees'])
+async def employees_menu_entry(message: Message) -> None:
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
         return
-
-    try:
-        members = await company_service.list_company_members(message.from_user.id)
-    except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
-        return
-
-    lines = ["Участники компании:", ""]
-    for index, member in enumerate(members, start=1):
-        lines.append(f"{index}. {_member_display_name(member)} — {member.role}")
-    await message.answer("\n".join(lines), reply_markup=await _company_menu_markup(message))
-
-
-@router.message(F.text == MENU_BUTTONS["reports"])
-async def reports_button(message: Message) -> None:
     context = await _ensure_context(message)
     if context is None or not context.can_manage_company:
-        await message.answer("Отчеты доступны только руководителю компании.", reply_markup=await _main_menu_markup(message))
+        await message.answer('Раздел сотрудников доступен только manager.', reply_markup=await _main_menu_markup(message))
         return
-
-    await message.answer(
-        "Раздел отчетов будет следующим шагом. Основа уже готова: документы, позиции, проекты и пользователи сохраняются по компании.",
-        reply_markup=await _main_menu_markup(message),
-    )
+    await message.answer('Раздел сотрудников:', reply_markup=build_employees_menu_keyboard())
 
 
-@router.message(F.text == MENU_BUTTONS["back"])
-async def back_button(message: Message) -> None:
-    if message.from_user is not None:
-        pop_pending_action(message.from_user.id)
-    await message.answer(MAIN_MENU_TEXT, reply_markup=await _main_menu_markup(message))
+@router.callback_query(F.data == MANAGER_EMPLOYEES_MENU_CALLBACK)
+async def employees_menu_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await callback.answer()
+    await callback.message.answer('Раздел сотрудников:', reply_markup=build_employees_menu_keyboard())
 
 
-@router.message(F.text == MENU_BUTTONS["help"])
+@router.callback_query(F.data == MANAGER_EMPLOYEES_LIST_CALLBACK)
+async def employees_list_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        employees = await view_service.list_employees_for_manager(callback.from_user.id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    if not employees:
+        await callback.message.answer('Сотрудников пока нет.', reply_markup=build_employees_menu_keyboard())
+        return
+    await callback.message.answer('Сотрудники:', reply_markup=build_employees_keyboard(employees))
+
+
+@router.callback_query(F.data == MANAGER_EMPLOYEE_INVITE_CALLBACK)
+async def employee_invite_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        code = await company_service.create_invite(callback.from_user, 'employee')
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(f'Invite-код для сотрудника: {code}')
+
+
+@router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_VIEW_PREFIX))
+async def employee_view_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    member_user_id = int(callback.data.removeprefix(MANAGER_EMPLOYEE_VIEW_PREFIX))
+    try:
+        member = await view_service.get_employee_card(callback.from_user.id, member_user_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(_format_member_card(member), reply_markup=build_employee_card_keyboard(member.user_id))
+
+
+@router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_REMOVE_PREFIX))
+async def employee_remove_prompt(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    member_user_id = int(callback.data.removeprefix(MANAGER_EMPLOYEE_REMOVE_PREFIX))
+    await callback.answer()
+    await callback.message.answer('Подтвердить исключение сотрудника?', reply_markup=build_confirm_keyboard(f'{MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX}{member_user_id}', f'{MANAGER_EMPLOYEE_VIEW_PREFIX}{member_user_id}'))
+
+
+@router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX))
+async def employee_remove_confirm(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    member_user_id = int(callback.data.removeprefix(MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX))
+    try:
+        member = await company_service.remove_employee(callback.from_user.id, member_user_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Сотрудник исключен.')
+    await callback.message.answer(f'Сотрудник исключен: {member.full_name or member.username or member.telegram_user_id}.')
+
+
+@router.message(F.text == MENU_BUTTONS['my_company'])
+async def my_company_entry(message: Message) -> None:
+    if message.from_user is None:
+        return
+    try:
+        card = await view_service.get_my_company_card(message.from_user.id)
+    except CompanyAccessError as exc:
+        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
+        return
+    await message.answer(_format_company_card(card), reply_markup=await _main_menu_markup(message))
+
+
+@router.message(F.text == MENU_BUTTONS['my_documents'])
+async def my_documents_entry(message: Message) -> None:
+    if message.from_user is None:
+        return
+    try:
+        documents = await view_service.list_my_documents(message.from_user.id)
+    except CompanyAccessError as exc:
+        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
+        return
+    if not documents:
+        await message.answer('У тебя пока нет документов.', reply_markup=await _main_menu_markup(message))
+        return
+    lines = ['Мои документы:', '']
+    for index, document in enumerate(documents, start=1):
+        date_line = document.document_date.isoformat() if document.document_date else 'без даты'
+        lines.append(f"{index}. {date_line} — {document.vendor or 'Без поставщика'} — {document.total_amount or 0} — {document.project_name}")
+    await message.answer(NL.join(lines), reply_markup=await _main_menu_markup(message))
+
+
+@router.callback_query(F.data == NAV_MAIN_CALLBACK)
+async def nav_main_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await callback.answer()
+    await callback.message.answer(MAIN_MENU_TEXT, reply_markup=await _main_menu_markup(callback.message))
+
+
+@router.message(F.text == MENU_BUTTONS['help'])
 async def help_button(message: Message) -> None:
     await help_command(message)
 
@@ -499,43 +659,36 @@ async def help_button(message: Message) -> None:
 @router.message(F.text)
 async def handle_pending_text(message: Message) -> None:
     if message.from_user is None or not message.text:
-        await message.answer("Поддерживаются команды /start, /help и сценарии меню.", reply_markup=await _main_menu_markup(message))
+        await message.answer('Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.', reply_markup=await _main_menu_markup(message))
         return
-
     pending_action = get_pending_action(message.from_user.id)
     if pending_action is None:
-        await message.answer(
-            "Поддерживаются кнопки главного меню, управление компанией, команды /start, /help, /invite, /join и фото документов.",
-            reply_markup=await _main_menu_markup(message),
-        )
+        await message.answer('Используй кнопки главного меню или отправь фото документа.', reply_markup=await _main_menu_markup(message))
         return
-
     pop_pending_action(message.from_user.id)
-
+    text_value = message.text.strip()
     try:
-        text_value = message.text.strip()
-        if pending_action.action == "create_company":
+        if pending_action.action == 'join_company':
+            await join_company(message, text_value)
+            return
+        if pending_action.action == 'create_company':
             company = await company_service.create_company(message.from_user, text_value)
             invite_code = await company_service.create_initial_manager_invite(message.from_user, company.id)
-            await message.answer(
-                f"Компания создана: {company.name} ({company.slug}).\n\nПередай этот invite-код первому руководителю: {invite_code}\n\nОн должен отправить: /join {invite_code}",
-                reply_markup=await _main_menu_markup(message),
-            )
+            await message.answer(f'Компания создана: {company.name}. Invite для первого manager: {invite_code}', reply_markup=await _main_menu_markup(message))
             return
-        if pending_action.action == "create_project":
-            if not await _require_company_access(message):
-                return
+        if pending_action.action == 'create_project':
             project = await project_service.create_project(message.from_user.id, text_value)
-            await message.answer(
-                f"Проект создан: {project.name}.",
-                reply_markup=await _company_menu_markup(message),
-            )
+            await message.answer(f'Проект создан: {project.name}.', reply_markup=await _main_menu_markup(message))
+            if get_pending_document(message.from_user.id) is not None:
+                projects = await project_service.list_active_projects(message.from_user.id)
+                await message.answer('Выбери проект для сохранения документа.', reply_markup=build_document_projects_keyboard(projects, allow_create_project=True))
             return
-        if pending_action.action == "join_company":
-            await join_company(message, text_value)
+        if pending_action.action == 'rename_project':
+            project_id = int(pending_action.payload['project_id'])
+            await view_service.rename_project(message.from_user.id, project_id, text_value)
+            await message.answer('Проект переименован.', reply_markup=await _main_menu_markup(message))
             return
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
-
-    await message.answer("Неизвестное действие. Попробуй снова.", reply_markup=await _main_menu_markup(message))
+    await message.answer('Неизвестное действие.', reply_markup=await _main_menu_markup(message))

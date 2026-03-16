@@ -1,16 +1,17 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
 class PendingAction:
     action: str
+    payload: dict[str, str | int] = field(default_factory=dict)
 
 
 _pending_actions: dict[int, PendingAction] = {}
 
 
-def set_pending_action(telegram_user_id: int, action: str) -> None:
-    _pending_actions[telegram_user_id] = PendingAction(action=action)
+def set_pending_action(telegram_user_id: int, action: str, payload: dict[str, str | int] | None = None) -> None:
+    _pending_actions[telegram_user_id] = PendingAction(action=action, payload=payload or {})
 
 
 def get_pending_action(telegram_user_id: int) -> PendingAction | None:
