@@ -187,7 +187,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
     await callback.message.answer(f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.', reply_markup=menu_markup)
 
 
-@router.message()
+@router.message(~F.text)
 async def unsupported_message(message: Message) -> None:
     await message.answer(
         'Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.',
