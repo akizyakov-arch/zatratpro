@@ -701,6 +701,7 @@ class ViewService:
         return SystemStats(**dict(row))
 
     async def get_manager_report_summary(self, telegram_user_id: int, period: str) -> ReportSummary:
+        await self.document_service.cleanup_broken_duplicate_links(telegram_user_id)
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         pool = get_pool()
         async with pool.acquire() as connection:
@@ -859,6 +860,8 @@ class ViewService:
                 WHERE d.company_id = $1
                   AND d.created_at >= $2
                   AND d.duplicate_status IN ('exact', 'probable')
+                  AND d.duplicate_of_document_id IS NOT NULL
+                  AND base_doc.id IS NOT NULL
                 ORDER BY d.created_at DESC, d.id DESC
                 """,
                 company.id,
@@ -893,7 +896,7 @@ class ViewService:
         for row in rows:
             if row.id == duplicate_id:
                 return row
-        raise CompanyAccessError('Дубль не найден в отчете за выбранный период.')
+        raise CompanyAccessError('Дубль больше не актуален: исходная запись удалена, статус снят.')
 
     async def list_report_documents_for_company(self, telegram_user_id: int, period: str) -> list[ReportDocumentDetail]:
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
