@@ -38,8 +38,8 @@ async def main() -> None:
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
 
-    dispatcher.include_router(start_router)
     dispatcher.include_router(documents_router)
+    dispatcher.include_router(start_router)
 
     logging.getLogger(__name__).info("Starting Telegram bot polling")
     await dispatcher.start_polling(bot)
