@@ -885,14 +885,13 @@ class ViewService:
                 FROM documents d
                 JOIN projects p ON p.id = d.project_id
                 LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
-                LEFT JOIN documents base_doc ON base_doc.id = d.duplicate_of_document_id
+                JOIN documents base_doc ON base_doc.id = d.duplicate_of_document_id AND base_doc.company_id = d.company_id
                 LEFT JOIN projects base_project ON base_project.id = base_doc.project_id
                 LEFT JOIN users base_uploader ON base_uploader.id = base_doc.uploaded_by_user_id
                 WHERE d.company_id = $1
                   AND d.created_at >= $2
                   AND d.duplicate_status IN ('exact', 'probable')
                   AND d.duplicate_of_document_id IS NOT NULL
-                  AND base_doc.id IS NOT NULL
                 ORDER BY d.created_at DESC, d.id DESC
                 """,
                 company.id,
