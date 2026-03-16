@@ -162,7 +162,8 @@ def _document_row_text(document: Any) -> str:
     date_value = getattr(document, 'document_date', None)
     date_line = date_value.strftime('%d.%m.%Y') if hasattr(date_value, 'strftime') else 'без даты'
     total_amount = getattr(document, 'total_amount', 0) or 0
-    return f"{date_line} | {number} | {total_amount:,.2f}".replace(',', ' ')
+    uploader = getattr(document, 'uploaded_by_name', None) or 'не указан'
+    return f"{date_line} | {number} | {total_amount:,.2f} | {uploader}".replace(',', ' ')
 
 
 def _back_to_report_callback(report_kind: str, period: str) -> str:

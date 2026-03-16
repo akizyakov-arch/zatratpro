@@ -907,13 +907,21 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         summary = await view_service.get_manager_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
         rows = await view_service.list_report_projects(callback.from_user.id, REPORT_PERIOD_ALL)
         await callback.answer()
-        await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(REPORT_PERIOD_ALL, rows))
+        await callback.message.answer(
+            format_project_report(summary, rows),
+            reply_markup=build_project_report_keyboard(REPORT_PERIOD_ALL, rows),
+            parse_mode='HTML',
+        )
         return
     if report_kind == REPORT_KIND_DUPLICATES:
         rows = await view_service.list_duplicate_report_rows(callback.from_user.id, REPORT_PERIOD_ALL)
         summary = await view_service.get_duplicate_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
         await callback.answer()
-        await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(REPORT_PERIOD_ALL, rows))
+        await callback.message.answer(
+            format_duplicate_report(summary, rows),
+            reply_markup=build_duplicate_report_keyboard(REPORT_PERIOD_ALL, rows),
+            parse_mode='HTML',
+        )
         return
     await callback.answer()
     await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
