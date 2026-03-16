@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from aiogram import F, Router
@@ -13,7 +14,16 @@ from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
 from app.services.telegram_files import TelegramFileService
 from app.state.pending_actions import set_pending_action
-from app.state.pending_documents import PendingDocument, get_pending_document, pop_pending_document, store_pending_document
+from app.state.pending_documents import (
+    PendingDocument,
+    begin_document_flow,
+    clear_document_flow,
+    get_pending_document,
+    has_active_document_flow,
+    pop_pending_document,
+    release_document_flow,
+    store_pending_document,
+)
 from app.ui.main_menu import build_main_menu_keyboard
 from app.ui.projects import PROJECT_CALLBACK_PREFIX, PROJECT_CREATE_CALLBACK, build_projects_keyboard
 
@@ -23,6 +33,9 @@ logger = logging.getLogger(__name__)
 project_service = ProjectService()
 document_service = DocumentService()
 company_service = CompanyService()
+OCR_TIMEOUT_SECONDS = 60
+NORMALIZE_TIMEOUT_SECONDS = 60
+EXTRACT_TIMEOUT_SECONDS = 60
 
 
 async def _main_menu_markup_for_user(user) -> object:
@@ -66,39 +79,63 @@ async def process_photo(message: Message) -> None:
     if not message.photo or message.from_user is None:
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
+    if has_active_document_flow(message.from_user.id):
+        await message.answer(
+            f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
+            reply_markup=menu_markup,
+        )
+        return
 
     bot = message.bot
     file_service = TelegramFileService(bot)
     ocr_service = OCRSpaceService()
     deepseek_service = DeepSeekService()
+    begin_document_flow(message.from_user.id)
 
     await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             file_path = await file_service.download_best_photo(message.photo)
-            ocr_text = await ocr_service.extract_text(file_path)
+            async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                ocr_text = await ocr_service.extract_text(file_path)
+    except TimeoutError:
+        release_document_flow(message.from_user.id)
+        logger.exception('OCR timed out')
+        await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
+        return
     except OCRSpaceError as exc:
+        release_document_flow(message.from_user.id)
         logger.exception('OCR failed')
         await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
+        release_document_flow(message.from_user.id)
         logger.exception('Unexpected error while processing photo')
         await message.answer(f'Не удалось обработать фото: {exc}', reply_markup=menu_markup)
         return
 
     if not ocr_text.strip():
+        release_document_flow(message.from_user.id)
         await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
         return
 
     await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Нормализую документ.', reply_markup=menu_markup)
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            normalized_text = await deepseek_service.normalize_document_text(ocr_text)
+            async with asyncio.timeout(NORMALIZE_TIMEOUT_SECONDS):
+                normalized_text = await deepseek_service.normalize_document_text(ocr_text)
+    except TimeoutError:
+        release_document_flow(message.from_user.id)
+        logger.exception('Normalization timed out')
+        await message.answer('Подготовка документа заняла слишком много времени. Попробуй еще раз.', reply_markup=menu_markup)
+        return
     except DeepSeekError as exc:
+        release_document_flow(message.from_user.id)
         logger.exception('DeepSeek normalization failed')
         await message.answer(f'Не удалось нормализовать документ: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
+        release_document_flow(message.from_user.id)
         logger.exception('Normalization failed')
         await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
         return
@@ -111,10 +148,12 @@ async def process_photo(message: Message) -> None:
         projects = await project_service.list_active_projects(message.from_user.id)
         context = await company_service.get_user_context(message.from_user.id)
     except CompanyAccessError as exc:
+        clear_document_flow(message.from_user.id)
         await message.answer(str(exc), reply_markup=menu_markup)
         return
 
     if not projects and not context.can_manage_company:
+        clear_document_flow(message.from_user.id)
         await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
         return
 
@@ -162,7 +201,8 @@ async def process_project_selection(callback: CallbackQuery) -> None:
     await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
     try:
         async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=callback.bot):
-            extracted_document = await deepseek_service.extract_document(pending_document.ocr_text)
+            async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
+                extracted_document = await deepseek_service.extract_document(pending_document.ocr_text)
         document = DocumentSchema.model_validate({**extracted_document, 'raw_text': pending_document.ocr_text})
         document_id = await document_service.save_document(
             telegram_user=callback.from_user,
@@ -171,6 +211,10 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             document=document,
             source_type='photo',
         )
+    except TimeoutError:
+        logger.exception('DeepSeek extraction timed out')
+        await callback.message.answer('Формирование JSON заняло слишком много времени. Попробуй снова выбрать проект для текущего документа.', reply_markup=menu_markup)
+        return
     except DeepSeekError as exc:
         logger.exception('DeepSeek extraction failed')
         await callback.message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
