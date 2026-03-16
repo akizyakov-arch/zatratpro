@@ -35,7 +35,7 @@ document_service = DocumentService()
 company_service = CompanyService()
 OCR_TIMEOUT_SECONDS = 60
 NORMALIZE_TIMEOUT_SECONDS = 60
-EXTRACT_TIMEOUT_SECONDS = 60
+EXTRACT_TIMEOUT_SECONDS = 120
 
 
 async def _main_menu_markup_for_user(user) -> object:
