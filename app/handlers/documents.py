@@ -214,6 +214,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             project=project,
             normalized_text=pending_document.normalized_text,
             document=document,
+            duplicate_check=duplicate_check,
             source_type='photo',
         )
     except TimeoutError:
@@ -237,19 +238,14 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         return
 
     pop_pending_document(callback.from_user.id)
+    duplicate_message = {
+        "exact": f"\n\nНайден точный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Загрузка не заблокирована.",
+        "probable": f"\n\nНайден вероятный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Проверь запись вручную.",
+        "none": "\n\nПроверка на дубли выполнена: совпадений не найдено.",
+        "not_checked": "\n\nПроверка на дубли не выполнена: для вероятного дубля нужны дата, сумма и продавец. Для точного дубля дополнительно нужен номер документа.",
+    }[duplicate_check.status]
     await callback.message.answer(
-        (
-            f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.'
-            + (
-                f'\n\nНайден точный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Загрузка не заблокирована.'
-                if duplicate_check.duplicate_document_id is not None
-                else (
-                    '\n\nТочная проверка на дубль выполнена: совпадений не найдено.'
-                    if duplicate_check.is_exact_check_complete
-                    else '\n\nТочная проверка на дубль не выполнена: нужны сумма, номер документа, дата и продавец.'
-                )
-            )
-        ),
+        f"Документ сохранен в проект \"{project.name}\". ID записи: {document_id}.{duplicate_message}",
         reply_markup=menu_markup,
     )
 

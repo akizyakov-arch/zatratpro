@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
+from decimal import Decimal
 import logging
 import re
-from decimal import Decimal
 
 from aiogram.types import User
 
@@ -14,15 +14,54 @@ from app.services.projects import Project
 
 logger = logging.getLogger(__name__)
 
+DUPLICATE_STATUS_NONE = "none"
+DUPLICATE_STATUS_EXACT = "exact"
+DUPLICATE_STATUS_PROBABLE = "probable"
+DUPLICATE_STATUS_NOT_CHECKED = "not_checked"
+
 
 class DocumentValidationError(RuntimeError):
     pass
 
 
 @dataclass(slots=True)
+class ResolvedDocumentFields:
+    document_number: str | None
+    vendor_name: str | None
+    vendor_inn: str | None
+    vendor_key: str | None
+    document_date: datetime | None
+    total_amount: Decimal | None
+
+
+@dataclass(slots=True)
 class DuplicateCheckResult:
+    status: str
     duplicate_document_id: int | None
-    is_exact_check_complete: bool
+    fields: ResolvedDocumentFields
+
+    @property
+    def is_exact_check_complete(self) -> bool:
+        return all(
+            value is not None
+            for value in (
+                self.fields.document_number,
+                self.fields.document_date,
+                self.fields.total_amount,
+                self.fields.vendor_key,
+            )
+        )
+
+    @property
+    def is_probable_check_complete(self) -> bool:
+        return all(
+            value is not None
+            for value in (
+                self.fields.document_date,
+                self.fields.total_amount,
+                self.fields.vendor_key,
+            )
+        )
 
 
 class DocumentService:
@@ -35,6 +74,7 @@ class DocumentService:
         project: Project,
         normalized_text: str,
         document: DocumentSchema,
+        duplicate_check: DuplicateCheckResult | None = None,
         source_type: str = "photo",
     ) -> int:
         member_role = await self.company_service.ensure_member_role(telegram_user.id)
@@ -48,8 +88,16 @@ class DocumentService:
             raise CompanyAccessError("Нельзя сохранить документ в архивный проект.")
         self._ensure_expense_document(document)
 
+        if duplicate_check is None:
+            duplicate_check = await self.find_company_duplicate_document(
+                telegram_user=telegram_user,
+                project=project,
+                document=document,
+                normalized_text=normalized_text,
+            )
+
         pool = get_pool()
-        document_date = _parse_document_datetime(document.date)
+        document_date = duplicate_check.fields.document_date
         items = [item for item in document.items if _item_has_value(item)]
 
         async with pool.acquire() as connection:
@@ -88,6 +136,9 @@ class DocumentService:
                         total_amount,
                         raw_text,
                         preview_text,
+                        duplicate_status,
+                        duplicate_of_document_id,
+                        duplicate_checked_at,
                         ocr_provider,
                         llm_provider,
                         source_file_path,
@@ -96,7 +147,7 @@ class DocumentService:
                     VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8,
                         $9, $10, $11, $12, $13, $14, $15,
-                        'ocr_space', 'deepseek', NULL, NULL
+                        $16, $17, NOW(), 'ocr_space', 'deepseek', NULL, NULL
                     )
                     RETURNING id
                     """,
@@ -105,16 +156,18 @@ class DocumentService:
                     user_id,
                     document.document_type,
                     source_type,
-                    document.external_document_number,
+                    duplicate_check.fields.document_number,
                     document.incoming_number,
-                    document.vendor,
-                    document.vendor_inn,
+                    duplicate_check.fields.vendor_name,
+                    duplicate_check.fields.vendor_inn,
                     document.vendor_kpp,
                     document_date,
                     document.currency,
-                    document.total,
+                    duplicate_check.fields.total_amount,
                     document.raw_text,
                     normalized_text,
+                    duplicate_check.status,
+                    duplicate_check.duplicate_document_id,
                 )
                 if items:
                     await connection.executemany(
@@ -158,50 +211,72 @@ class DocumentService:
         if active_company.id != project.company_id:
             raise CompanyAccessError("Нельзя проверять документ в проекте другой компании.")
 
-        document_date = _resolve_document_date(document, normalized_text)
-        document_number = _resolve_document_number(document, normalized_text)
-        total_amount = _resolve_total_amount(document, normalized_text)
-        vendor_key = _resolve_vendor_key(document, normalized_text)
-        is_exact_check_complete = all(
-            value is not None
-            for value in (document_number, document_date, total_amount, vendor_key)
-        )
+        fields = _resolve_document_fields(document, normalized_text)
         logger.info(
             "Duplicate check source: ext=%s incoming=%s vendor=%s inn=%s raw_snippet=%s normalized_snippet=%s",
             document.external_document_number,
             document.incoming_number,
             document.vendor,
             document.vendor_inn,
-            (document.raw_text or '')[:160],
-            (normalized_text or '')[:160],
+            (document.raw_text or "")[:160],
+            (normalized_text or "")[:160],
         )
         logger.info(
-            "Duplicate check key: company_id=%s type=%s number=%s date=%s total=%s vendor=%s complete=%s",
+            "Duplicate check key: company_id=%s type=%s number=%s date=%s total=%s vendor=%s exact=%s probable=%s",
             project.company_id,
             document.document_type,
-            document_number,
-            document_date.isoformat() if document_date is not None else None,
-            str(total_amount) if total_amount is not None else None,
-            vendor_key,
-            is_exact_check_complete,
+            fields.document_number,
+            fields.document_date.isoformat() if fields.document_date is not None else None,
+            str(fields.total_amount) if fields.total_amount is not None else None,
+            fields.vendor_key,
+            all(value is not None for value in (fields.document_number, fields.document_date, fields.total_amount, fields.vendor_key)),
+            all(value is not None for value in (fields.document_date, fields.total_amount, fields.vendor_key)),
         )
-        if not is_exact_check_complete:
-            return DuplicateCheckResult(duplicate_document_id=None, is_exact_check_complete=False)
 
         pool = get_pool()
         async with pool.acquire() as connection:
-            duplicate_document_id = await self._find_company_duplicate_document(
-                connection=connection,
-                company_id=project.company_id,
-                document=document,
-                document_number=document_number,
-                document_date=document_date,
-                total_amount=total_amount,
-                vendor_key=vendor_key,
-            )
+            if all(value is not None for value in (fields.document_number, fields.document_date, fields.total_amount, fields.vendor_key)):
+                duplicate_document_id = await self._find_exact_duplicate_document(
+                    connection=connection,
+                    company_id=project.company_id,
+                    document_type=document.document_type,
+                    document_number=fields.document_number,
+                    document_date=fields.document_date,
+                    total_amount=fields.total_amount,
+                    vendor_key=fields.vendor_key,
+                )
+                if duplicate_document_id is not None:
+                    return DuplicateCheckResult(
+                        status=DUPLICATE_STATUS_EXACT,
+                        duplicate_document_id=duplicate_document_id,
+                        fields=fields,
+                    )
+
+            if all(value is not None for value in (fields.document_date, fields.total_amount, fields.vendor_key)):
+                duplicate_document_id = await self._find_probable_duplicate_document(
+                    connection=connection,
+                    company_id=project.company_id,
+                    document_type=document.document_type,
+                    document_date=fields.document_date,
+                    total_amount=fields.total_amount,
+                    vendor_key=fields.vendor_key,
+                )
+                if duplicate_document_id is not None:
+                    return DuplicateCheckResult(
+                        status=DUPLICATE_STATUS_PROBABLE,
+                        duplicate_document_id=duplicate_document_id,
+                        fields=fields,
+                    )
+                return DuplicateCheckResult(
+                    status=DUPLICATE_STATUS_NONE,
+                    duplicate_document_id=None,
+                    fields=fields,
+                )
+
         return DuplicateCheckResult(
-            duplicate_document_id=duplicate_document_id,
-            is_exact_check_complete=True,
+            status=DUPLICATE_STATUS_NOT_CHECKED,
+            duplicate_document_id=None,
+            fields=fields,
         )
 
     def _ensure_expense_document(self, document: DocumentSchema) -> None:
@@ -210,11 +285,11 @@ class DocumentService:
                 "Документ не относится к поддерживаемым затратным документам. Допустимы: товарная накладная, акт, УПД, счет-фактура, кассовый чек, БСО, транспортная накладная, расходный кассовый ордер."
             )
 
-    async def _find_company_duplicate_document(
+    async def _find_exact_duplicate_document(
         self,
         connection,
         company_id: int,
-        document: DocumentSchema,
+        document_type: str,
         document_number: str,
         document_date: datetime,
         total_amount: Decimal,
@@ -248,12 +323,60 @@ class DocumentService:
             LIMIT 1
             """,
             company_id,
-            document.document_type,
+            document_type,
             document_number,
             document_date,
             total_amount,
             vendor_key,
         )
+
+    async def _find_probable_duplicate_document(
+        self,
+        connection,
+        company_id: int,
+        document_type: str,
+        document_date: datetime,
+        total_amount: Decimal,
+        vendor_key: str,
+    ) -> int | None:
+        return await connection.fetchval(
+            """
+            SELECT d.id
+            FROM documents d
+            WHERE d.company_id = $1
+              AND d.document_type = $2
+              AND d.document_date = $3
+              AND d.total_amount = $4
+              AND LOWER(
+                    REGEXP_REPLACE(
+                        COALESCE(NULLIF(d.vendor_inn, ''), d.vendor, ''),
+                        '[^[:alnum:]]+',
+                        '',
+                        'g'
+                    )
+                  ) = $5
+            ORDER BY d.id DESC
+            LIMIT 1
+            """,
+            company_id,
+            document_type,
+            document_date,
+            total_amount,
+            vendor_key,
+        )
+
+
+def _resolve_document_fields(document: DocumentSchema, normalized_text: str | None = None) -> ResolvedDocumentFields:
+    vendor_name = _resolve_vendor_name(document, normalized_text)
+    vendor_inn = _resolve_vendor_inn(document, normalized_text)
+    return ResolvedDocumentFields(
+        document_number=_resolve_document_number(document, normalized_text),
+        vendor_name=vendor_name,
+        vendor_inn=vendor_inn,
+        vendor_key=_normalize_text_key(vendor_inn) or _normalize_text_key(vendor_name),
+        document_date=_resolve_document_date(document, normalized_text),
+        total_amount=_resolve_total_amount(document, normalized_text),
+    )
 
 
 def _resolve_document_number(document: DocumentSchema, normalized_text: str | None = None) -> str | None:
@@ -262,8 +385,8 @@ def _resolve_document_number(document: DocumentSchema, normalized_text: str | No
         return direct
     text = "\n".join(part for part in (normalized_text, document.raw_text) if part)
     patterns = (
-        r"(?:продажа|чек|номер)\s*№?\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
-        r"№\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
+        r"(?:продажа|чек|номер)\s*[№N]?\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
+        r"[№N]\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
     )
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -274,21 +397,28 @@ def _resolve_document_number(document: DocumentSchema, normalized_text: str | No
     return None
 
 
-def _resolve_vendor_key(document: DocumentSchema, normalized_text: str | None = None) -> str | None:
-    direct = _normalize_vendor_key(document)
-    if direct is not None:
-        return direct
+def _resolve_vendor_name(document: DocumentSchema, normalized_text: str | None = None) -> str | None:
+    if document.vendor and document.vendor.strip():
+        return document.vendor.strip()
     text = "\n".join(part for part in (normalized_text, document.raw_text) if part)
-    inn_match = re.search(r"(?:инн)\s*[:№]?\s*(\d{10,12})", text, flags=re.IGNORECASE)
-    if inn_match:
-        return _normalize_text_key(inn_match.group(1))
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
         lowered = stripped.lower()
-        if lowered.startswith(("ип ", 'ооо ', 'ао ', 'пао ', 'зао ', 'оао ')):
-            return _normalize_text_key(stripped)
+        if lowered.startswith(("ип ", "ооо ", "ао ", "пао ", "зао ", "оао ")):
+            return stripped
+    return None
+
+
+def _resolve_vendor_inn(document: DocumentSchema, normalized_text: str | None = None) -> str | None:
+    normalized_direct = _normalize_text_key(document.vendor_inn)
+    if normalized_direct is not None and normalized_direct.isdigit():
+        return normalized_direct
+    text = "\n".join(part for part in (normalized_text, document.raw_text) if part)
+    inn_match = re.search(r"(?:инн)\s*[:№]?\s*(\d{10,12})", text, flags=re.IGNORECASE)
+    if inn_match:
+        return inn_match.group(1)
     return None
 
 
@@ -361,14 +491,9 @@ def _normalize_text_key(value: str | None) -> str | None:
     return cleaned or None
 
 
-
 def _document_number(document: DocumentSchema) -> str | None:
     for value in (document.external_document_number, document.incoming_number):
         normalized = _normalize_text_key(value)
         if normalized is not None and any(ch.isdigit() for ch in normalized):
             return normalized
     return None
-
-
-def _normalize_vendor_key(document: DocumentSchema) -> str | None:
-    return _normalize_text_key(document.vendor_inn) or _normalize_text_key(document.vendor)

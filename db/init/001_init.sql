@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS documents (
     total_amount NUMERIC(14, 2),
     raw_text TEXT,
     preview_text TEXT,
+    duplicate_status TEXT NOT NULL DEFAULT 'none',
+    duplicate_of_document_id BIGINT REFERENCES documents(id) ON DELETE SET NULL,
+    duplicate_checked_at TIMESTAMPTZ,
     ocr_provider TEXT DEFAULT 'ocr_space',
     llm_provider TEXT DEFAULT 'deepseek',
     source_file_path TEXT,
@@ -110,6 +113,7 @@ CREATE TABLE IF NOT EXISTS documents (
         )
     ),
     CONSTRAINT chk_documents_source_type CHECK (source_type IN ('photo', 'pdf', 'excel', 'word', 'manual')),
+    CONSTRAINT chk_documents_duplicate_status CHECK (duplicate_status IN ('none', 'exact', 'probable', 'not_checked')),
     CONSTRAINT fk_documents_project_company
         FOREIGN KEY (project_id, company_id)
         REFERENCES projects(id, company_id)
@@ -172,6 +176,8 @@ CREATE INDEX IF NOT EXISTS idx_documents_source_type ON documents(source_type);
 CREATE INDEX IF NOT EXISTS idx_documents_document_date ON documents(document_date);
 CREATE INDEX IF NOT EXISTS idx_documents_vendor ON documents(vendor);
 CREATE INDEX IF NOT EXISTS idx_documents_vendor_inn ON documents(vendor_inn);
+CREATE INDEX IF NOT EXISTS idx_documents_duplicate_status ON documents(duplicate_status);
+CREATE INDEX IF NOT EXISTS idx_documents_duplicate_of_document_id ON documents(duplicate_of_document_id);
 
 CREATE INDEX IF NOT EXISTS idx_document_items_document_id ON document_items(document_id);
 CREATE INDEX IF NOT EXISTS idx_document_items_name ON document_items(name);
