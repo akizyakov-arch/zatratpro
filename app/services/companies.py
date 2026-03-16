@@ -309,6 +309,39 @@ class CompanyService:
             for row in rows
         ]
 
+
+    async def remove_employee(self, telegram_user_id: int, member_user_id: int) -> CompanyMember:
+        company = await self.get_active_company_for_user(telegram_user_id)
+        member_role = await self.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES:
+            raise CompanyAccessError("Исключать сотрудников может только руководитель компании.")
+
+        pool = get_pool()
+        query = """
+            UPDATE company_members AS cm
+            SET is_active = FALSE
+            FROM users AS u
+            WHERE cm.user_id = u.id
+              AND cm.company_id = $1
+              AND cm.user_id = $2
+              AND cm.role = 'employee'
+              AND cm.is_active = TRUE
+            RETURNING cm.company_id, cm.user_id, cm.role, u.username, u.full_name, u.telegram_user_id
+        """
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(query, company.id, member_user_id)
+        if row is None:
+            raise CompanyAccessError("Сотрудник не найден в текущей компании или уже исключен.")
+
+        return CompanyMember(
+            company_id=row["company_id"],
+            user_id=row["user_id"],
+            role=row["role"],
+            username=row["username"],
+            full_name=row["full_name"],
+            telegram_user_id=row["telegram_user_id"],
+        )
+
     async def _generate_unique_slug(self, name: str) -> str:
         pool = get_pool()
         base_slug = _slugify(name)
@@ -357,3 +390,5 @@ def _slugify(value: str) -> str:
 def _generate_invite_code(length: int = 10) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+

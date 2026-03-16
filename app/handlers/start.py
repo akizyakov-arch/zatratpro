@@ -23,7 +23,7 @@ HELP_TEXT = (
     "Я работаю с фото чеков, актов и накладных.\n\n"
     "Кнопка \"Распознать документ\" запускает текущий основной сценарий.\n"
     "Кнопка \"Проекты\" показывает проекты текущей компании. Проекты привязаны к компании, а не к конкретному руководителю.\n"
-    "Раздел \"Компания\" открывает управление компанией по твоей роли: создание и архивация проектов, приглашения и участники.\n\n"
+    "Раздел \"Компания\" открывает управление компанией по твоей роли: создание и архивация проектов, приглашения, исключение сотрудников и участники.\n\n"
     "Команды fallback:\n"
     "/create_company Название компании\n"
     "/invite employee\n"
@@ -344,6 +344,33 @@ async def invite_employee_button(message: Message) -> None:
     )
 
 
+@router.message(F.text == MENU_BUTTONS["remove_employee"])
+async def remove_employee_button(message: Message) -> None:
+    if message.from_user is None:
+        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
+        return
+
+    try:
+        members = await company_service.list_company_members(message.from_user.id)
+    except CompanyAccessError as exc:
+        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
+        return
+
+    employees = [member for member in members if member.role == "employee"]
+    if not employees:
+        await message.answer("В текущей компании нет сотрудников для исключения.", reply_markup=await _company_menu_markup(message))
+        return
+
+    set_pending_action(message.from_user.id, "remove_employee")
+    lines = ["Сотрудники компании:", ""]
+    for index, member in enumerate(employees, start=1):
+        display_name = member.full_name or member.username or str(member.telegram_user_id)
+        lines.append(f"{index}. ID {member.user_id} — {display_name}")
+    lines.append("")
+    lines.append("Отправь ID сотрудника для исключения.")
+    await message.answer("\n".join(lines), reply_markup=await _company_menu_markup(message))
+
+
 @router.message(F.text == MENU_BUTTONS["members"])
 async def members_button(message: Message) -> None:
     if message.from_user is None:
@@ -456,6 +483,7 @@ async def handle_pending_text(message: Message) -> None:
         return
 
     await message.answer("Неизвестное действие. Попробуй снова.", reply_markup=await _main_menu_markup(message))
+
 
 
 

@@ -89,3 +89,4 @@ def build_company_menu_keyboard(
         resize_keyboard=True,
         input_field_placeholder="Выбери действие",
     )
+
