@@ -75,34 +75,9 @@ def format_employee_report(summary, rows) -> str:
 
 
 def format_duplicate_report(summary, rows) -> str:
-    lines = [format_report_overview(summary, 'Отчет по дублям документов'), '']
+    lines = [format_report_overview(summary, 'Отчет по дублям документов')]
     if not rows:
-        lines.append('За период дублей не найдено.')
-        return NL.join(lines)
-    for index, row in enumerate(rows[:20], start=1):
-        duplicate_label = 'Точный дубль' if row.duplicate_status == 'exact' else 'Вероятный дубль'
-        current_vendor = row.vendor or row.vendor_inn or 'Контрагент не указан'
-        current_number = row.document_number or 'без номера'
-        current_date = format_date(row.document_date)
-        current_project = row.project_name or 'Проект не указан'
-        base_project = row.base_project_name or 'не указана'
-        current_uploader = row.uploaded_by_name or 'не указан'
-        base_uploader = row.base_uploaded_by_name or 'не указан'
-        lines.extend([
-            f'{index}. {duplicate_label}',
-            f'Текущий проект: {current_project}',
-            f'Контрагент: {current_vendor}',
-            f'Дата: {current_date}',
-            f'Номер: {current_number}',
-            f'Сумма: {format_amount(row.total_amount)}',
-            f'Внес: {current_uploader}',
-            f'Дубликат записи ID: {row.duplicate_of_document_id or "—"}',
-            f'Исходный проект: {base_project}',
-            f'Исходную запись внес: {base_uploader}',
-            '',
-        ])
-    if len(rows) > 20:
-        lines.append('Показаны только первые 20 дублей за период.')
+        lines.extend(['', 'За период дублей не найдено.'])
     return NL.join(lines).strip()
 
 

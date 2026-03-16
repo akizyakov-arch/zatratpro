@@ -76,6 +76,8 @@ from app.ui.reports import (
     MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX,
     MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
@@ -92,6 +94,7 @@ from app.ui.reports import (
     REPORT_KIND_PROJECTS,
     build_duplicate_card_keyboard,
     build_duplicate_delete_confirm_keyboard,
+    build_duplicate_delete_source_confirm_keyboard,
     build_duplicate_report_keyboard,
     build_employee_report_keyboard,
     build_project_report_keyboard,
@@ -1004,7 +1007,7 @@ async def duplicate_view_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(_format_duplicate_card(row), reply_markup=build_duplicate_card_keyboard(period, duplicate_id))
+    await callback.message.answer(_format_duplicate_card(row), reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id is not None))
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX))
@@ -1055,6 +1058,41 @@ async def duplicate_delete_confirm_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer('Дубликат удален.')
+    rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
+    summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
+    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX))
+async def duplicate_delete_source_prompt_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+    except ValueError:
+        await callback.answer('Некорректные данные дубля.', show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer('Подтвердить удаление исходной записи?', reply_markup=build_duplicate_delete_source_confirm_keyboard(period, duplicate_id))
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX))
+async def duplicate_delete_source_confirm_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+        await document_service.delete_source_duplicate_document(callback.from_user.id, duplicate_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные дубля.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer('Исходная запись удалена.')
     rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
     summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
     await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
