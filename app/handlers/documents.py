@@ -21,7 +21,6 @@ from app.state.pending_documents import (
     get_pending_document,
     has_active_document_flow,
     pop_pending_document,
-    release_document_flow,
     store_pending_document,
 )
 from app.ui.main_menu import build_main_menu_keyboard
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 project_service = ProjectService()
 document_service = DocumentService()
 company_service = CompanyService()
-OCR_TIMEOUT_SECONDS = 60
+OCR_TIMEOUT_SECONDS = 120
 NORMALIZE_TIMEOUT_SECONDS = 60
 EXTRACT_TIMEOUT_SECONDS = 120
 
@@ -99,23 +98,23 @@ async def process_photo(message: Message) -> None:
             async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
                 ocr_text = await ocr_service.extract_text(file_path)
     except TimeoutError:
-        release_document_flow(message.from_user.id)
+        clear_document_flow(message.from_user.id)
         logger.exception('OCR timed out')
         await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except OCRSpaceError as exc:
-        release_document_flow(message.from_user.id)
+        clear_document_flow(message.from_user.id)
         logger.exception('OCR failed')
         await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
-        release_document_flow(message.from_user.id)
+        clear_document_flow(message.from_user.id)
         logger.exception('Unexpected error while processing photo')
         await message.answer(f'Не удалось обработать фото: {exc}', reply_markup=menu_markup)
         return
 
     if not ocr_text.strip():
-        release_document_flow(message.from_user.id)
+        clear_document_flow(message.from_user.id)
         await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
         return
 
@@ -125,17 +124,17 @@ async def process_photo(message: Message) -> None:
             async with asyncio.timeout(NORMALIZE_TIMEOUT_SECONDS):
                 normalized_text = await deepseek_service.normalize_document_text(ocr_text)
     except TimeoutError:
-        release_document_flow(message.from_user.id)
+        clear_document_flow(message.from_user.id)
         logger.exception('Normalization timed out')
         await message.answer('Подготовка документа заняла слишком много времени. Попробуй еще раз.', reply_markup=menu_markup)
         return
     except DeepSeekError as exc:
-        release_document_flow(message.from_user.id)
+        clear_document_flow(message.from_user.id)
         logger.exception('DeepSeek normalization failed')
         await message.answer(f'Не удалось нормализовать документ: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
-        release_document_flow(message.from_user.id)
+        clear_document_flow(message.from_user.id)
         logger.exception('Normalization failed')
         await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
         return
