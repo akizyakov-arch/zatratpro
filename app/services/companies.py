@@ -572,7 +572,7 @@ class CompanyService:
                 await connection.execute(
                     """
                     INSERT INTO company_invites (company_id, role, code, status, created_by_user_id, expires_at)
-                    VALUES ($1, $2, $3, 'active', $4, NOW() + ($5 || ' hours')::interval)
+                    VALUES ($1, $2, $3, 'active', $4, NOW() + make_interval(hours => $5))
                     """,
                     company_id,
                     role,
