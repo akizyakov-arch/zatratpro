@@ -99,7 +99,6 @@ def format_report_documents(title: str, period: str, documents) -> str:
     total_amount = sum((document.total_amount or 0) for document in documents)
     lines = [
         title,
-        f'Период: {report_period_label(period)}',
         f'Общая сумма затрат: {format_amount(total_amount)}',
         f'Документов: {len(documents)}',
         '',
@@ -113,12 +112,6 @@ def format_report_documents(title: str, period: str, documents) -> str:
         date_line = format_date(document.document_date)
         executor = document.uploaded_by_name or 'не указан'
         first_item = document.first_item_name or 'позиция не распознана'
-        duplicate_label = {
-            'exact': 'точный дубль',
-            'probable': 'вероятный дубль',
-            'none': 'без дубля',
-            'not_checked': 'не проверен',
-        }.get(document.duplicate_status, document.duplicate_status)
         lines.extend([
             f'{index}. {counterparty}',
             f'Дата: {date_line}',
@@ -126,11 +119,11 @@ def format_report_documents(title: str, period: str, documents) -> str:
             f'Сумма: {format_amount(document.total_amount)}',
             f'Позиция: {first_item}',
             f'Исполнитель: {executor}',
-            f'Статус: {duplicate_label}',
             '',
         ])
     if len(documents) > 20:
         lines.append('Показаны только первые 20 документов за период.')
+    lines.extend(['', 'Документы 👇'])
     return NL.join(lines).strip()
 
 
@@ -139,21 +132,13 @@ def format_report_document_items(title: str, period: str, document, items) -> st
     date_line = format_date(document.document_date)
     vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
     executor = document.uploaded_by_name or 'не указан'
-    duplicate_label = {
-        'exact': 'точный дубль',
-        'probable': 'вероятный дубль',
-        'none': 'без дубля',
-        'not_checked': 'не проверен',
-    }.get(document.duplicate_status, document.duplicate_status)
     lines = [
         title,
-        f'Период: {report_period_label(period)}',
         f'Контрагент: {vendor}',
         f'Дата: {date_line}',
         f'Номер: {number}',
         f'Сумма: {format_amount(document.total_amount)}',
         f'Исполнитель: {executor}',
-        f'Статус: {duplicate_label}',
         '',
         'Позиции:',
     ]

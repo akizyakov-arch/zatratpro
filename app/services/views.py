@@ -1036,7 +1036,7 @@ class ViewService:
                 LIMIT 1
             ) first_item ON TRUE
             WHERE {' AND '.join(conditions)}
-            ORDER BY d.created_at DESC, d.id DESC
+            ORDER BY d.document_date DESC NULLS LAST, d.created_at DESC, d.id DESC
             LIMIT 50
         """
         async with pool.acquire() as connection:

@@ -159,10 +159,10 @@ def _employee_row_text(row: Any) -> str:
     return f"{employee_name} | {row.document_count} док. | {total_amount}"
 def _document_row_text(document: Any) -> str:
     number = getattr(document, 'document_number', None) or 'без номера'
-    vendor = getattr(document, 'vendor_inn', None) or getattr(document, 'vendor', None) or 'без продавца'
     date_value = getattr(document, 'document_date', None)
-    date_line = date_value.isoformat() if date_value else 'без даты'
-    return f"#{document.id} | {number} | {date_line} | {vendor}"
+    date_line = date_value.strftime('%d.%m.%Y') if hasattr(date_value, 'strftime') else 'без даты'
+    total_amount = getattr(document, 'total_amount', 0) or 0
+    return f"{date_line} | {number} | {total_amount:,.2f}".replace(',', ' ')
 
 
 def _back_to_report_callback(report_kind: str, period: str) -> str:
