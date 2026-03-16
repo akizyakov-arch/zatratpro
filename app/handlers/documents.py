@@ -32,7 +32,7 @@ async def _main_menu_markup(message: Message) -> object:
     return build_main_menu_keyboard(
         menu_kind=context.menu_kind,
         has_company=context.has_company,
-        can_view_reports=context.member_role == "company_owner",
+        can_view_reports=context.can_manage_company,
     )
 
 
@@ -203,3 +203,5 @@ async def unsupported_message(message: Message) -> None:
         "Поддерживаются кнопки главного меню, управление компанией, команды /start, /help, /join и фото документов.",
         reply_markup=await _main_menu_markup(message),
     )
+
+

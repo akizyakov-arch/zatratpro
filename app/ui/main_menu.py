@@ -19,8 +19,9 @@ MENU_BUTTONS = {
     "create_company": "Создать компанию",
     "create_project": "Создать проект",
     "archive_project": "Архивировать проект",
+    "restore_project": "Деархивировать проект",
     "invite_employee": "Пригласить сотрудника",
-    "invite_admin": "Пригласить админа",
+    "invite_manager": "Пригласить руководителя",
     "members": "Участники",
     "join_company": "Ввести invite-код",
     "back": "Назад",
@@ -40,7 +41,7 @@ def build_main_menu_keyboard(
         else:
             keyboard.append([KeyboardButton(text=MENU_BUTTONS["join_company"])])
             keyboard.append([KeyboardButton(text=MENU_BUTTONS["help"])])
-    elif menu_kind in {"platform_owner", "company_owner", "company_admin"}:
+    elif menu_kind in {"platform_owner", "manager"}:
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["recognize"])],
             [KeyboardButton(text=MENU_BUTTONS["projects"]), KeyboardButton(text=MENU_BUTTONS["company"])],
@@ -78,9 +79,10 @@ def build_company_menu_keyboard(
             KeyboardButton(text=MENU_BUTTONS["create_project"]),
             KeyboardButton(text=MENU_BUTTONS["archive_project"]),
         ])
+        keyboard.append([KeyboardButton(text=MENU_BUTTONS["restore_project"])])
         keyboard.append([
             KeyboardButton(text=MENU_BUTTONS["invite_employee"]),
-            KeyboardButton(text=MENU_BUTTONS["invite_admin"]),
+            KeyboardButton(text=MENU_BUTTONS["invite_manager"]),
         ])
         keyboard.append([KeyboardButton(text=MENU_BUTTONS["members"])])
 

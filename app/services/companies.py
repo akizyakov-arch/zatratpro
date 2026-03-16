@@ -9,8 +9,10 @@ from app.config import get_settings
 from app.services.database import get_pool
 
 
-ADMIN_ROLES = {"company_owner", "company_admin"}
-VALID_MEMBER_ROLES = {"company_owner", "company_admin", "employee"}
+MANAGER_ROLE = "manager"
+LEGACY_MANAGER_ROLES = {"company_owner", "company_admin"}
+ADMIN_ROLES = {MANAGER_ROLE, *LEGACY_MANAGER_ROLES}
+VALID_MEMBER_ROLES = {MANAGER_ROLE, "employee"}
 
 
 class CompanyAccessError(RuntimeError):
@@ -46,7 +48,7 @@ class UserContext:
         if self.platform_role == "owner":
             return "platform_owner"
         if self.member_role in ADMIN_ROLES:
-            return self.member_role
+            return MANAGER_ROLE
         return "employee"
 
     @property
@@ -158,14 +160,15 @@ class CompanyService:
                 await connection.execute(
                     """
                     INSERT INTO company_members (company_id, user_id, role, is_active, invited_by_user_id, joined_at)
-                    VALUES ($1, $2, 'company_owner', TRUE, $2, NOW())
+                    VALUES ($1, $2, $3, TRUE, $2, NOW())
                     ON CONFLICT (company_id, user_id) DO UPDATE
-                    SET role = 'company_owner',
+                    SET role = EXCLUDED.role,
                         is_active = TRUE,
                         joined_at = COALESCE(company_members.joined_at, NOW())
                     """,
                     row["id"],
                     user_id,
+                    MANAGER_ROLE,
                 )
                 await self._seed_default_projects(connection, row["id"])
         return Company(id=row["id"], name=row["name"], slug=row["slug"], is_active=row["is_active"])
@@ -184,13 +187,13 @@ class CompanyService:
 
     async def create_invite(self, telegram_user: User, role: str) -> str:
         await self.ensure_platform_user(telegram_user)
-        if role not in VALID_MEMBER_ROLES - {"company_owner"}:
-            raise CompanyAccessError("Для invite доступны только роли company_admin и employee.")
+        if role not in VALID_MEMBER_ROLES:
+            raise CompanyAccessError("Для invite доступны только роли manager и employee.")
 
         company = await self.get_active_company_for_user(telegram_user.id)
         member_role = await self.ensure_member_role(telegram_user.id)
         if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError("Создавать invite может только owner или admin компании.")
+            raise CompanyAccessError("Создавать invite может только руководитель компании.")
 
         code = _generate_invite_code()
         pool = get_pool()
@@ -236,6 +239,24 @@ class CompanyService:
                     "SELECT id FROM users WHERE telegram_user_id = $1",
                     telegram_user.id,
                 )
+                if invite["role"] == MANAGER_ROLE and not await self.is_platform_owner(telegram_user.id):
+                    already_manager = await connection.fetchval(
+                        """
+                        SELECT 1
+                        FROM company_members AS cm
+                        WHERE cm.user_id = $1
+                          AND cm.company_id <> $2
+                          AND cm.role = ANY($3::text[])
+                          AND cm.is_active = TRUE
+                        LIMIT 1
+                        """,
+                        user_id,
+                        invite["company_id"],
+                        list(ADMIN_ROLES),
+                    )
+                    if already_manager:
+                        raise CompanyAccessError("Пользователь уже является руководителем в другой компании.")
+
                 await connection.execute(
                     """
                     INSERT INTO company_members (company_id, user_id, role, is_active, joined_at)
@@ -266,7 +287,7 @@ class CompanyService:
         company = await self.get_active_company_for_user(telegram_user_id)
         member_role = await self.ensure_member_role(telegram_user_id)
         if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError("Просматривать участников может только owner или admin компании.")
+            raise CompanyAccessError("Просматривать участников может только руководитель компании.")
 
         pool = get_pool()
         query = """

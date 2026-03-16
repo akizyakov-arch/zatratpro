@@ -26,7 +26,7 @@ HELP_TEXT = (
     "Раздел \"Компания\" открывает управление компанией по твоей роли: создание и архивация проектов, приглашения и участники.\n\n"
     "Команды fallback:\n"
     "/create_company Название компании\n"
-    "/invite employee|company_admin\n"
+    "/invite employee|manager\n"
     "/join КОД"
 )
 
@@ -45,7 +45,7 @@ async def _main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
     return build_main_menu_keyboard(
         menu_kind=context.menu_kind,
         has_company=context.has_company,
-        can_view_reports=context.member_role == "company_owner",
+        can_view_reports=context.can_manage_company,
     )
 
 
@@ -119,7 +119,7 @@ async def create_company_command(message: Message, command: CommandObject) -> No
         return
 
     await message.answer(
-        f"Компания создана: {company.name} ({company.slug}). Ты назначен company_owner.",
+        f"Компания создана: {company.name} ({company.slug}). Ты назначен руководителем компании.",
         reply_markup=await _main_menu_markup(message),
     )
 
@@ -131,9 +131,9 @@ async def create_invite_command(message: Message, command: CommandObject) -> Non
         return
 
     role = (command.args or "employee").strip()
-    if role not in {"employee", "company_admin"}:
+    if role not in {"employee", "manager"}:
         await message.answer(
-            "Использование: /invite employee или /invite company_admin",
+            "Использование: /invite employee или /invite manager",
             reply_markup=await _main_menu_markup(message),
         )
         return
@@ -280,7 +280,7 @@ async def create_company_button(message: Message) -> None:
 async def create_project_button(message: Message) -> None:
     context = await _ensure_context(message)
     if context is None or not context.can_manage_company:
-        await message.answer("Создавать проекты может только owner или admin компании.", reply_markup=await _main_menu_markup(message))
+        await message.answer("Создавать проекты может только руководитель компании.", reply_markup=await _main_menu_markup(message))
         return
 
     set_pending_action(message.from_user.id, "create_project")
@@ -291,7 +291,7 @@ async def create_project_button(message: Message) -> None:
 async def archive_project_button(message: Message) -> None:
     context = await _ensure_context(message)
     if context is None or not context.can_manage_company:
-        await message.answer("Архивировать проекты может только owner или admin компании.", reply_markup=await _main_menu_markup(message))
+        await message.answer("Архивировать проекты может только руководитель компании.", reply_markup=await _main_menu_markup(message))
         return
 
     projects = await project_service.list_active_projects(message.from_user.id)
@@ -306,6 +306,24 @@ async def archive_project_button(message: Message) -> None:
         reply_markup=await _company_menu_markup(message),
     )
 
+@router.message(F.text == MENU_BUTTONS["restore_project"])
+async def restore_project_button(message: Message) -> None:
+    context = await _ensure_context(message)
+    if context is None or not context.can_manage_company:
+        await message.answer("Деархивировать проекты может только руководитель компании.", reply_markup=await _main_menu_markup(message))
+        return
+
+    projects = await project_service.list_archived_projects(message.from_user.id)
+    if not projects:
+        await message.answer("В архиве текущей компании нет проектов.", reply_markup=await _company_menu_markup(message))
+        return
+
+    set_pending_action(message.from_user.id, "restore_project")
+    project_lines = [f"ID {project.id} — {project.name}" for project in projects]
+    await message.answer(
+        "Проекты в архиве:\n\n" + "\n".join(project_lines) + "\n\nОтправь ID проекта для возврата из архива.",
+        reply_markup=await _company_menu_markup(message),
+    )
 
 @router.message(F.text == MENU_BUTTONS["invite_employee"])
 async def invite_employee_button(message: Message) -> None:
@@ -325,20 +343,20 @@ async def invite_employee_button(message: Message) -> None:
     )
 
 
-@router.message(F.text == MENU_BUTTONS["invite_admin"])
-async def invite_admin_button(message: Message) -> None:
+@router.message(F.text == MENU_BUTTONS["invite_manager"])
+async def invite_manager_button(message: Message) -> None:
     if message.from_user is None:
         await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
         return
 
     try:
-        code = await company_service.create_invite(message.from_user, "company_admin")
+        code = await company_service.create_invite(message.from_user, "manager")
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
 
     await message.answer(
-        f"Invite-код для admin: {code}\n\nПользователь должен отправить: /join {code}",
+        f"Invite-код для руководителя: {code}\n\nПользователь должен отправить: /join {code}",
         reply_markup=await _company_menu_markup(message),
     )
 
@@ -365,8 +383,8 @@ async def members_button(message: Message) -> None:
 @router.message(F.text == MENU_BUTTONS["reports"])
 async def reports_button(message: Message) -> None:
     context = await _ensure_context(message)
-    if context is None or context.member_role != "company_owner":
-        await message.answer("Отчеты доступны только owner компании.", reply_markup=await _main_menu_markup(message))
+    if context is None or not context.can_manage_company:
+        await message.answer("Отчеты доступны только руководителю компании.", reply_markup=await _main_menu_markup(message))
         return
 
     await message.answer(
@@ -396,7 +414,7 @@ async def handle_pending_text(message: Message) -> None:
     pending_action = get_pending_action(message.from_user.id)
     if pending_action is None:
         await message.answer(
-            "Поддерживаются кнопки главного меню, управление компанией, команды /start, /help, /join и фото документов.",
+            "Поддерживаются кнопки главного меню, управление компанией, команды /start, /help, /invite, /join и фото документов.",
             reply_markup=await _main_menu_markup(message),
         )
         return
@@ -407,7 +425,7 @@ async def handle_pending_text(message: Message) -> None:
         if pending_action.action == "create_company":
             company = await company_service.create_company(message.from_user, message.text.strip())
             await message.answer(
-                f"Компания создана: {company.name} ({company.slug}). Ты назначен company_owner.",
+                f"Компания создана: {company.name} ({company.slug}). Ты назначен руководителем компании.",
                 reply_markup=await _main_menu_markup(message),
             )
             return
@@ -433,6 +451,19 @@ async def handle_pending_text(message: Message) -> None:
                 reply_markup=await _company_menu_markup(message),
             )
             return
+        if pending_action.action == "restore_project":
+            if not await _require_company_access(message):
+                return
+            try:
+                project_id = int(message.text.strip())
+            except ValueError as exc:
+                raise CompanyAccessError("Отправь числовой ID проекта для возврата из архива.") from exc
+            project = await project_service.restore_project(message.from_user.id, project_id)
+            await message.answer(
+                f"Проект возвращен из архива: {project.name}.",
+                reply_markup=await _company_menu_markup(message),
+            )
+            return
         if pending_action.action == "join_company":
             await join_company(message, message.text.strip())
             return
@@ -441,5 +472,7 @@ async def handle_pending_text(message: Message) -> None:
         return
 
     await message.answer("Неизвестное действие. Попробуй снова.", reply_markup=await _main_menu_markup(message))
+
+
 
 
