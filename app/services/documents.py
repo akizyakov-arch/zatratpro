@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
+import logging
+import re
 from decimal import Decimal
 
 from aiogram.types import User
@@ -8,6 +10,9 @@ from app.schemas.document import ALLOWED_DOCUMENT_TYPES, DocumentItem, DocumentS
 from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyService, EMPLOYEE_ROLE
 from app.services.database import get_pool
 from app.services.projects import Project
+
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentValidationError(RuntimeError):
@@ -152,13 +157,23 @@ class DocumentService:
         if active_company.id != project.company_id:
             raise CompanyAccessError("Нельзя проверять документ в проекте другой компании.")
 
-        document_date = _parse_document_datetime(document.date)
-        document_number = _document_number(document)
-        total_amount = _as_decimal(document.total, "0.01")
-        vendor_key = _normalize_vendor_key(document)
+        document_date = _resolve_document_date(document)
+        document_number = _resolve_document_number(document)
+        total_amount = _resolve_total_amount(document)
+        vendor_key = _resolve_vendor_key(document)
         is_exact_check_complete = all(
             value is not None
             for value in (document_number, document_date, total_amount, vendor_key)
+        )
+        logger.info(
+            "Duplicate check key: company_id=%s type=%s number=%s date=%s total=%s vendor=%s complete=%s",
+            project.company_id,
+            document.document_type,
+            document_number,
+            document_date.isoformat() if document_date is not None else None,
+            str(total_amount) if total_amount is not None else None,
+            vendor_key,
+            is_exact_check_complete,
         )
         if not is_exact_check_complete:
             return DuplicateCheckResult(duplicate_document_id=None, is_exact_check_complete=False)
@@ -229,6 +244,68 @@ class DocumentService:
             total_amount,
             vendor_key,
         )
+
+
+def _resolve_document_number(document: DocumentSchema) -> str | None:
+    direct = _document_number(document)
+    if direct is not None:
+        return direct
+    text = document.raw_text or ""
+    patterns = (
+        r"(?:чек|продажа|номер|№)\s*№?\s*([A-Za-zА-Яа-я0-9\-/]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return _normalize_text_key(match.group(1))
+    return None
+
+
+def _resolve_vendor_key(document: DocumentSchema) -> str | None:
+    direct = _normalize_vendor_key(document)
+    if direct is not None:
+        return direct
+    text = document.raw_text or ""
+    inn_match = re.search(r"(?:инн)\s*[:№]?\s*(\d{10,12})", text, flags=re.IGNORECASE)
+    if inn_match:
+        return _normalize_text_key(inn_match.group(1))
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if lowered.startswith(("ип ", 'ооо ', 'ао ', 'пао ', 'зао ', 'оао ')):
+            return _normalize_text_key(stripped)
+    return None
+
+
+def _resolve_document_date(document: DocumentSchema) -> datetime | None:
+    direct = _parse_document_datetime(document.date)
+    if direct is not None:
+        return direct
+    text = document.raw_text or ""
+    match = re.search(r"(\d{2}\.\d{2}\.\d{4})(?:\s+\d{2}:\d{2})?", text)
+    if not match:
+        return None
+    try:
+        parsed_date = datetime.strptime(match.group(1), "%d.%m.%Y").date()
+    except ValueError:
+        return None
+    return datetime.combine(parsed_date, time.min, tzinfo=timezone.utc)
+
+
+def _resolve_total_amount(document: DocumentSchema) -> Decimal | None:
+    direct = _as_decimal(document.total, "0.01")
+    if direct is not None:
+        return direct
+    text = document.raw_text or ""
+    matches = re.findall(r"\d+[\.,]\d{2}", text)
+    if not matches:
+        return None
+    try:
+        return max(Decimal(value.replace(',', '.')) for value in matches).quantize(Decimal("0.01"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _parse_document_datetime(value: str | None) -> datetime | None:
