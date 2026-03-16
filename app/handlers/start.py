@@ -938,18 +938,18 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         if report_kind == REPORT_KIND_PROJECTS:
             rows = await view_service.list_report_projects(callback.from_user.id, period)
             await callback.answer()
-            await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows))
+            await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_EMPLOYEES:
             rows = await view_service.list_report_employees(callback.from_user.id, period)
             await callback.answer()
-            await callback.message.answer(format_employee_report(summary, rows), reply_markup=build_employee_report_keyboard(period, rows))
+            await callback.message.answer(format_employee_report(summary, rows), reply_markup=build_employee_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_DUPLICATES:
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
             duplicate_summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
             await callback.answer()
-            await callback.message.answer(format_duplicate_report(duplicate_summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+            await callback.message.answer(format_duplicate_report(duplicate_summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_EXPORT:
             projects = await view_service.list_report_projects(callback.from_user.id, period)
@@ -983,6 +983,7 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
     await callback.message.answer(
         format_report_documents(f'Проект: {project.name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_PROJECTS, period, project.id, documents),
+        parse_mode='HTML',
     )
 
 
@@ -1004,6 +1005,7 @@ async def report_employee_detail_callback(callback: CallbackQuery) -> None:
     await callback.message.answer(
         format_report_documents(f'Сотрудник: {employee_name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
+        parse_mode='HTML',
     )
 
 
@@ -1146,6 +1148,7 @@ async def report_document_detail_callback(callback: CallbackQuery) -> None:
     await callback.message.answer(
         format_report_document_items('Позиции документа', period, document, items),
         reply_markup=build_report_document_back_keyboard(report_kind, period, target_id),
+        parse_mode='HTML',
     )
 
 

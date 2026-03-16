@@ -27,7 +27,7 @@ def report_period_label(period: str) -> str:
 
 def format_report_overview(summary, title: str) -> str:
     return NL.join([
-        title,
+        f'<b>{title}</b>',
         f'Период: {report_period_label(summary.period)}',
         f'С даты: {summary.start_at:%Y-%m-%d}',
         f'Документов: {summary.documents}',
@@ -39,7 +39,7 @@ def format_report_overview(summary, title: str) -> str:
 
 def format_project_report(summary, rows) -> str:
     lines = [
-        'Отчет по проектам',
+        '<b>Отчет по проектам</b>',
         f'Документов: {summary.documents}',
         f'Сумма: {format_amount(summary.total_amount)}',
         f'Точных дублей: {summary.exact_duplicates}',
@@ -83,7 +83,7 @@ def format_employee_report(summary, rows) -> str:
 
 def format_duplicate_report(summary, rows) -> str:
     lines = [
-        'Отчет по дублям документов',
+        '<b>Отчет по дублям документов</b>',
         f'С даты: {summary.start_at:%Y-%m-%d}',
         f'Документов: {summary.documents}',
         f'Сумма: {format_amount(summary.total_amount)}',
@@ -98,7 +98,7 @@ def format_duplicate_report(summary, rows) -> str:
 def format_report_documents(title: str, period: str, documents) -> str:
     total_amount = sum((document.total_amount or 0) for document in documents)
     lines = [
-        title,
+        f'<b>{title}</b>',
         f'Общая сумма затрат: {format_amount(total_amount)}',
         f'Документов: {len(documents)}',
         '',
@@ -116,7 +116,7 @@ def format_report_document_items(title: str, period: str, document, items) -> st
     vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
     executor = document.uploaded_by_name or 'не указан'
     lines = [
-        title,
+        f'<b>{title}</b>',
         f'Контрагент: {vendor}',
         f'Дата: {date_line}',
         f'Номер: {number}',
