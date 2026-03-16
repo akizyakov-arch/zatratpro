@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.schemas.document import DocumentSchema
-from app.services.companies import CompanyAccessError
+from app.services.companies import CompanyAccessError, CompanyService
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService
 from app.services.json_formatter import chunk_message
@@ -21,16 +21,31 @@ router = Router()
 logger = logging.getLogger(__name__)
 project_service = ProjectService()
 document_service = DocumentService()
+company_service = CompanyService()
+
+
+async def _main_menu_markup(message: Message) -> object:
+    if message.from_user is None:
+        return build_main_menu_keyboard()
+    await company_service.ensure_platform_user(message.from_user)
+    context = await company_service.get_user_context(message.from_user.id)
+    return build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.member_role == "company_owner",
+    )
 
 
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
+    menu_markup = await _main_menu_markup(message)
+
     if not message.photo:
-        await message.answer("Фото не найдено в сообщении.", reply_markup=build_main_menu_keyboard())
+        await message.answer("Фото не найдено в сообщении.", reply_markup=menu_markup)
         return
 
     if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=build_main_menu_keyboard())
+        await message.answer("Не удалось определить пользователя.", reply_markup=menu_markup)
         return
 
     bot = message.bot
@@ -38,7 +53,7 @@ async def process_photo(message: Message) -> None:
     ocr_service = OCRSpaceService()
     deepseek_service = DeepSeekService()
 
-    await message.answer("Фото получено. Начинаю распознавание.", reply_markup=build_main_menu_keyboard())
+    await message.answer("Фото получено. Начинаю распознавание.", reply_markup=menu_markup)
 
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
@@ -46,29 +61,29 @@ async def process_photo(message: Message) -> None:
             ocr_text = await ocr_service.extract_text(file_path)
     except OCRSpaceError as exc:
         logger.exception("OCR failed")
-        await message.answer(f"OCR не удался: {exc}", reply_markup=build_main_menu_keyboard())
+        await message.answer(f"OCR не удался: {exc}", reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error while processing photo")
-        await message.answer(f"Не удалось обработать фото: {exc}", reply_markup=build_main_menu_keyboard())
+        await message.answer(f"Не удалось обработать фото: {exc}", reply_markup=menu_markup)
         return
 
     if not ocr_text.strip():
-        await message.answer("OCR не вернул текст. Попробуй более четкое фото.", reply_markup=build_main_menu_keyboard())
+        await message.answer("OCR не вернул текст. Попробуй более четкое фото.", reply_markup=menu_markup)
         return
 
-    await message.answer("OCR завершен. Нормализую документ.", reply_markup=build_main_menu_keyboard())
+    await message.answer("OCR завершен. Нормализую документ.", reply_markup=menu_markup)
 
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             normalized_text = await deepseek_service.normalize_document_text(ocr_text)
     except DeepSeekError as exc:
         logger.exception("DeepSeek normalization failed")
-        await message.answer(f"Не удалось нормализовать документ: {exc}", reply_markup=build_main_menu_keyboard())
+        await message.answer(f"Не удалось нормализовать документ: {exc}", reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("Normalization failed")
-        await message.answer(f"Не удалось подготовить документ: {exc}", reply_markup=build_main_menu_keyboard())
+        await message.answer(f"Не удалось подготовить документ: {exc}", reply_markup=menu_markup)
         return
 
     store_pending_document(
@@ -77,18 +92,18 @@ async def process_photo(message: Message) -> None:
     )
 
     for chunk in chunk_message(normalized_text):
-        await message.answer(chunk, reply_markup=build_main_menu_keyboard())
+        await message.answer(chunk, reply_markup=menu_markup)
 
     try:
         projects = await project_service.list_active_projects(message.from_user.id)
     except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=build_main_menu_keyboard())
+        await message.answer(str(exc), reply_markup=menu_markup)
         return
 
     if not projects:
         await message.answer(
             "В текущей компании пока нет активных проектов. Добавь проекты и повтори выбор.",
-            reply_markup=build_main_menu_keyboard(),
+            reply_markup=menu_markup,
         )
         return
 
@@ -108,6 +123,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         await callback.answer("Сообщение недоступно.", show_alert=True)
         return
 
+    menu_markup = await _main_menu_markup(callback.message)
     pending_document = get_pending_document(callback.from_user.id)
     if pending_document is None:
         await callback.answer("Нет подготовленного документа. Отправь фото заново.", show_alert=True)
@@ -127,7 +143,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
     deepseek_service = DeepSeekService()
 
     await callback.answer()
-    await callback.message.answer("Проверяю документ...")
+    await callback.message.answer("Проверяю документ...", reply_markup=menu_markup)
 
     try:
         async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=callback.bot):
@@ -144,14 +160,14 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         logger.exception("DeepSeek extraction failed")
         await callback.message.answer(
             f"Не удалось собрать JSON документа: {exc}",
-            reply_markup=build_main_menu_keyboard(),
+            reply_markup=menu_markup,
         )
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("Document save failed")
         await callback.message.answer(
             f"Не удалось сохранить документ: {exc}",
-            reply_markup=build_main_menu_keyboard(),
+            reply_markup=menu_markup,
         )
         return
 
@@ -159,13 +175,13 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 
     await callback.message.answer(
         f"Документ сохранен в проект \"{project.name}\". ID записи: {document_id}.",
-        reply_markup=build_main_menu_keyboard(),
+        reply_markup=menu_markup,
     )
 
 
 @router.message()
 async def unsupported_message(message: Message) -> None:
     await message.answer(
-        "Поддерживаются команды /start, /help, кнопки главного меню, команды компаний и фото документов.",
-        reply_markup=build_main_menu_keyboard(),
+        "Поддерживаются кнопки главного меню, управление компанией, команды /start, /help, /join и фото документов.",
+        reply_markup=await _main_menu_markup(message),
     )
