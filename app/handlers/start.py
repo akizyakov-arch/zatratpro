@@ -934,8 +934,9 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             return
         if report_kind == REPORT_KIND_DUPLICATES:
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
+            duplicate_summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
             await callback.answer()
-            await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+            await callback.message.answer(format_duplicate_report(duplicate_summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
             return
         if report_kind == REPORT_KIND_EXPORT:
             projects = await view_service.list_report_projects(callback.from_user.id, period)
