@@ -196,6 +196,7 @@ class ReportDocumentDetail:
     total_amount: Decimal | None
     duplicate_status: str
     uploaded_by_name: str | None
+    first_item_name: str | None
     created_at: datetime
 
 
@@ -531,6 +532,13 @@ class ViewService:
                 FROM documents d
                 JOIN projects p ON p.id = d.project_id
                 LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            LEFT JOIN LATERAL (
+                SELECT di.name
+                FROM document_items di
+                WHERE di.document_id = d.id
+                ORDER BY di.line_no ASC
+                LIMIT 1
+            ) first_item ON TRUE
                 WHERE d.company_id = $1
                   AND d.project_id = $2
                 ORDER BY d.created_at DESC
@@ -571,6 +579,13 @@ class ViewService:
                 FROM documents d
                 JOIN projects p ON p.id = d.project_id
                 LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            LEFT JOIN LATERAL (
+                SELECT di.name
+                FROM document_items di
+                WHERE di.document_id = d.id
+                ORDER BY di.line_no ASC
+                LIMIT 1
+            ) first_item ON TRUE
                 WHERE d.company_id = $1
                   AND d.uploaded_by_user_id = $2
                 ORDER BY d.created_at DESC
@@ -819,6 +834,13 @@ class ViewService:
                 FROM documents d
                 JOIN projects p ON p.id = d.project_id
                 LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            LEFT JOIN LATERAL (
+                SELECT di.name
+                FROM document_items di
+                WHERE di.document_id = d.id
+                ORDER BY di.line_no ASC
+                LIMIT 1
+            ) first_item ON TRUE
                 WHERE d.company_id = $1
                   AND d.created_at >= $2
                   AND d.duplicate_status IN ('exact', 'probable')
@@ -890,6 +912,7 @@ class ViewService:
                    d.document_date,
                    d.total_amount,
                    d.duplicate_status,
+                   first_item.name AS first_item_name,
                    d.created_at,
                    uploader.username AS uploader_username,
                    uploader.first_name AS uploader_first_name,
@@ -897,6 +920,13 @@ class ViewService:
             FROM documents d
             JOIN projects p ON p.id = d.project_id
             LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            LEFT JOIN LATERAL (
+                SELECT di.name
+                FROM document_items di
+                WHERE di.document_id = d.id
+                ORDER BY di.line_no ASC
+                LIMIT 1
+            ) first_item ON TRUE
             WHERE {' AND '.join(conditions)}
             ORDER BY d.created_at DESC, d.id DESC
             LIMIT 50
@@ -914,6 +944,7 @@ class ViewService:
                 total_amount=row['total_amount'],
                 duplicate_status=row['duplicate_status'],
                 uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+                first_item_name=row['first_item_name'],
                 created_at=row['created_at'],
             )
             for row in rows
@@ -947,6 +978,7 @@ class ViewService:
                    d.document_date,
                    d.total_amount,
                    d.duplicate_status,
+                   first_item.name AS first_item_name,
                    d.created_at,
                    uploader.username AS uploader_username,
                    uploader.first_name AS uploader_first_name,
@@ -954,6 +986,13 @@ class ViewService:
             FROM documents d
             JOIN projects p ON p.id = d.project_id
             LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            LEFT JOIN LATERAL (
+                SELECT di.name
+                FROM document_items di
+                WHERE di.document_id = d.id
+                ORDER BY di.line_no ASC
+                LIMIT 1
+            ) first_item ON TRUE
             WHERE {' AND '.join(conditions)}
             LIMIT 1
         """

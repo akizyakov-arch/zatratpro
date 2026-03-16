@@ -6,7 +6,19 @@ NL = chr(10)
 
 
 def format_amount(value) -> str:
-    return str(value or 0)
+    amount = value or 0
+    try:
+        return f'{amount:,.2f}'.replace(',', ' ')
+    except Exception:
+        return str(amount)
+
+
+def format_date(value) -> str:
+    if value is None:
+        return 'без даты'
+    if hasattr(value, 'strftime'):
+        return value.strftime('%d.%m.%Y')
+    return str(value)
 
 
 def report_period_label(period: str) -> str:
@@ -69,18 +81,39 @@ def format_duplicate_report(summary, rows) -> str:
 
 
 def format_report_documents(title: str, period: str, documents) -> str:
-    lines = [title, f'Период: {report_period_label(period)}', '']
+    total_amount = sum((document.total_amount or 0) for document in documents)
+    lines = [
+        title,
+        f'Период: {report_period_label(period)}',
+        f'Общая сумма затрат: {format_amount(total_amount)}',
+        f'Документов: {len(documents)}',
+        '',
+    ]
     if not documents:
         lines.append('Документов за период нет.')
         return NL.join(lines)
     for index, document in enumerate(documents[:20], start=1):
+        counterparty = document.vendor or document.vendor_inn or 'Контрагент не указан'
         number = document.document_number or 'без номера'
-        date_line = document.document_date.isoformat() if document.document_date else 'без даты'
-        vendor = document.vendor_inn or document.vendor or 'без продавца'
-        executor = document.uploaded_by_name or 'исполнитель не определен'
-        lines.append(
-            f"{index}. #{document.id} | {number} | {date_line} | {vendor} | {format_amount(document.total_amount)} | исполнитель: {executor} | {document.duplicate_status}"
-        )
+        date_line = format_date(document.document_date)
+        executor = document.uploaded_by_name or 'не указан'
+        first_item = document.first_item_name or 'позиция не распознана'
+        duplicate_label = {
+            'exact': 'точный дубль',
+            'probable': 'вероятный дубль',
+            'none': 'без дубля',
+            'not_checked': 'не проверен',
+        }.get(document.duplicate_status, document.duplicate_status)
+        lines.extend([
+            f'{index}. {counterparty}',
+            f'Дата: {date_line}',
+            f'Номер: {number}',
+            f'Сумма: {format_amount(document.total_amount)}',
+            f'Позиция: {first_item}',
+            f'Исполнитель: {executor}',
+            f'Статус: {duplicate_label}',
+            '',
+        ])
     if len(documents) > 20:
         lines.append('Показаны только первые 20 документов за период.')
     return NL.join(lines).strip()
@@ -88,19 +121,24 @@ def format_report_documents(title: str, period: str, documents) -> str:
 
 def format_report_document_items(title: str, period: str, document, items) -> str:
     number = document.document_number or 'без номера'
-    date_line = document.document_date.isoformat() if document.document_date else 'без даты'
-    vendor = document.vendor_inn or document.vendor or 'без продавца'
-    executor = document.uploaded_by_name or 'исполнитель не определен'
+    date_line = format_date(document.document_date)
+    vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
+    executor = document.uploaded_by_name or 'не указан'
+    duplicate_label = {
+        'exact': 'точный дубль',
+        'probable': 'вероятный дубль',
+        'none': 'без дубля',
+        'not_checked': 'не проверен',
+    }.get(document.duplicate_status, document.duplicate_status)
     lines = [
         title,
         f'Период: {report_period_label(period)}',
-        f'Документ: #{document.id}',
-        f'Номер: {number}',
+        f'Контрагент: {vendor}',
         f'Дата: {date_line}',
-        f'Продавец: {vendor}',
+        f'Номер: {number}',
         f'Сумма: {format_amount(document.total_amount)}',
         f'Исполнитель: {executor}',
-        f'Статус дубля: {document.duplicate_status}',
+        f'Статус: {duplicate_label}',
         '',
         'Позиции:',
     ]
