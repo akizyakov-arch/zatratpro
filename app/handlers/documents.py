@@ -218,21 +218,25 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             source_type='photo',
         )
     except TimeoutError:
+        clear_document_flow(callback.from_user.id)
         logger.exception('DeepSeek extraction timed out')
-        await callback.message.answer('Формирование JSON заняло слишком много времени. Попробуй снова выбрать проект для текущего документа.', reply_markup=menu_markup)
+        await callback.message.answer('Формирование JSON заняло слишком много времени. Отправь документ заново.', reply_markup=menu_markup)
         return
     except DeepSeekError as exc:
+        clear_document_flow(callback.from_user.id)
         logger.exception('DeepSeek extraction failed')
-        await callback.message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
+        await callback.message.answer(f'Не удалось собрать JSON документа: {exc}. Отправь документ заново.', reply_markup=menu_markup)
         return
     except DocumentValidationError as exc:
-        pop_pending_document(callback.from_user.id)
+        clear_document_flow(callback.from_user.id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
     except CompanyAccessError as exc:
+        clear_document_flow(callback.from_user.id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
+        clear_document_flow(callback.from_user.id)
         logger.exception('Document save failed')
         await callback.message.answer(f'Не удалось сохранить документ: {exc}', reply_markup=menu_markup)
         return
