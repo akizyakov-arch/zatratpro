@@ -1118,6 +1118,7 @@ class ViewService:
             total_amount=row['total_amount'],
             duplicate_status=row['duplicate_status'],
             uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+            first_item_name=row['first_item_name'],
             created_at=row['created_at'],
         )
 

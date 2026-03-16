@@ -934,7 +934,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
         return
     try:
-        summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
+        summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
         if report_kind == REPORT_KIND_PROJECTS:
             rows = await view_service.list_report_projects(callback.from_user.id, period)
             await callback.answer()
