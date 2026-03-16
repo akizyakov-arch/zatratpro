@@ -83,7 +83,7 @@ async def start_command(message: Message, command: CommandObject | None = None) 
     if context is not None and context.has_company:
         company_line = f"Текущая компания: {context.company.name}"
     elif context is not None and context.platform_role == "owner":
-        company_line = "У тебя пока нет компании. Нажми \"Создать компанию\" или открой раздел Компания."
+        company_line = "У тебя нет роли ни в одной компании. Нажми \"Создать компанию\", чтобы создать компанию и получить invite для первого руководителя."
     else:
         company_line = "Сначала нужен доступ к компании. Нажми \"Ввести invite-код\" или выполни /join КОД."
 
@@ -114,12 +114,13 @@ async def create_company_command(message: Message, command: CommandObject) -> No
 
     try:
         company = await company_service.create_company(message.from_user, company_name)
+        invite_code = await company_service.create_initial_manager_invite(message.from_user, company.id)
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
 
     await message.answer(
-        f"Компания создана: {company.name} ({company.slug}). Ты назначен руководителем компании.",
+        f"Компания создана: {company.name} ({company.slug}).\n\nПередай этот invite-код первому руководителю: {invite_code}\n\nОн должен отправить: /join {invite_code}",
         reply_markup=await _main_menu_markup(message),
     )
 
@@ -249,7 +250,7 @@ async def company_entry(message: Message) -> None:
 
     if context.company is None and context.platform_role != "owner":
         await message.answer(
-            "У тебя пока нет доступа к компании. Нужен invite от администратора.",
+            "У тебя пока нет доступа к компании. Нужен invite от руководителя или владельца бота.",
             reply_markup=await _main_menu_markup(message),
         )
         return
@@ -259,8 +260,8 @@ async def company_entry(message: Message) -> None:
         lines.append(f"Компания: {context.company.name}")
         lines.append(f"Роль: {context.member_role}")
     else:
-        lines.append("Компания еще не создана.")
-        lines.append("Как owner бота ты можешь создать первую компанию.")
+        lines.append("У тебя нет роли ни в одной компании.")
+        lines.append("Как владелец бота ты можешь создать компанию и выдать invite первому руководителю.")
 
     await message.answer("\n".join(lines), reply_markup=await _company_menu_markup(message))
 
@@ -424,8 +425,9 @@ async def handle_pending_text(message: Message) -> None:
     try:
         if pending_action.action == "create_company":
             company = await company_service.create_company(message.from_user, message.text.strip())
+            invite_code = await company_service.create_initial_manager_invite(message.from_user, company.id)
             await message.answer(
-                f"Компания создана: {company.name} ({company.slug}). Ты назначен руководителем компании.",
+                f"Компания создана: {company.name} ({company.slug}).\n\nПередай этот invite-код первому руководителю: {invite_code}\n\nОн должен отправить: /join {invite_code}",
                 reply_markup=await _main_menu_markup(message),
             )
             return
@@ -472,6 +474,9 @@ async def handle_pending_text(message: Message) -> None:
         return
 
     await message.answer("Неизвестное действие. Попробуй снова.", reply_markup=await _main_menu_markup(message))
+
+
+
 
 
 

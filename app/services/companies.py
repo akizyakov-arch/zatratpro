@@ -143,10 +143,6 @@ class CompanyService:
 
         async with pool.acquire() as connection:
             async with connection.transaction():
-                user_id = await connection.fetchval(
-                    "SELECT id FROM users WHERE telegram_user_id = $1",
-                    telegram_user.id,
-                )
                 row = await connection.fetchrow(
                     """
                     INSERT INTO companies (name, slug)
@@ -156,21 +152,29 @@ class CompanyService:
                     name,
                     slug,
                 )
-                await connection.execute(
-                    """
-                    INSERT INTO company_members (company_id, user_id, role, is_active, invited_by_user_id, joined_at)
-                    VALUES ($1, $2, $3, TRUE, $2, NOW())
-                    ON CONFLICT (company_id, user_id) DO UPDATE
-                    SET role = EXCLUDED.role,
-                        is_active = TRUE,
-                        joined_at = COALESCE(company_members.joined_at, NOW())
-                    """,
-                    row["id"],
-                    user_id,
-                    MANAGER_ROLE,
-                )
                 await self._seed_default_projects(connection, row["id"])
         return Company(id=row["id"], name=row["name"], slug=row["slug"], is_active=row["is_active"])
+
+    async def create_initial_manager_invite(self, telegram_user: User, company_id: int) -> str:
+        await self.ensure_platform_user(telegram_user)
+        if not await self.is_platform_owner(telegram_user.id):
+            raise CompanyAccessError("Выдавать первый invite руководителю может только владелец бота.")
+
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                exists = await connection.fetchval(
+                    "SELECT 1 FROM companies WHERE id = $1 AND is_active = TRUE",
+                    company_id,
+                )
+                if not exists:
+                    raise CompanyAccessError("Компания не найдена или уже архивирована.")
+
+                inviter_id = await connection.fetchval(
+                    "SELECT id FROM users WHERE telegram_user_id = $1",
+                    telegram_user.id,
+                )
+                return await self._insert_invite(connection, company_id, MANAGER_ROLE, inviter_id)
 
     async def get_active_company_for_user(self, telegram_user_id: int) -> Company:
         context = await self.get_user_context(telegram_user_id)
@@ -194,24 +198,13 @@ class CompanyService:
         if member_role not in ADMIN_ROLES:
             raise CompanyAccessError("Создавать invite может только руководитель компании.")
 
-        code = _generate_invite_code()
         pool = get_pool()
         async with pool.acquire() as connection:
             inviter_id = await connection.fetchval(
                 "SELECT id FROM users WHERE telegram_user_id = $1",
                 telegram_user.id,
             )
-            await connection.execute(
-                """
-                INSERT INTO company_invites (company_id, code, role, created_by_user_id, is_active)
-                VALUES ($1, $2, $3, $4, TRUE)
-                """,
-                company.id,
-                code,
-                role,
-                inviter_id,
-            )
-        return code
+            return await self._insert_invite(connection, company.id, role, inviter_id)
 
     async def join_company(self, telegram_user: User, code: str) -> Company:
         await self.ensure_platform_user(telegram_user)
@@ -339,6 +332,20 @@ class CompanyService:
                 name,
             )
 
+    async def _insert_invite(self, connection, company_id: int, role: str, inviter_id: int | None) -> str:
+        code = _generate_invite_code()
+        await connection.execute(
+            """
+            INSERT INTO company_invites (company_id, code, role, created_by_user_id, is_active)
+            VALUES ($1, $2, $3, $4, TRUE)
+            """,
+            company_id,
+            code,
+            role,
+            inviter_id,
+        )
+        return code
+
 
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
@@ -350,5 +357,3 @@ def _slugify(value: str) -> str:
 def _generate_invite_code(length: int = 10) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
-
-
