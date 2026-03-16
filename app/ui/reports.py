@@ -11,6 +11,7 @@ MANAGER_REPORTS_EXPORT_CALLBACK = "manager:reports:export"
 MANAGER_REPORTS_PERIOD_PREFIX = "manager:reports:period:"
 MANAGER_REPORTS_PROJECT_DETAIL_PREFIX = "manager:reports:project_detail:"
 MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX = "manager:reports:employee_detail:"
+MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX = "manager:reports:document_detail:"
 
 REPORT_KIND_PROJECTS = "projects"
 REPORT_KIND_EMPLOYEES = "employees"
@@ -83,10 +84,26 @@ def build_duplicate_report_keyboard(period: str) -> InlineKeyboardMarkup:
     )
 
 
-def build_report_detail_back_keyboard(report_kind: str, period: str) -> InlineKeyboardMarkup:
+def build_report_documents_keyboard(report_kind: str, period: str, target_id: int, documents: list[Any]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=_document_row_text(document),
+                callback_data=f"{MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX}{report_kind}:{period}:{target_id}:{document.id}",
+            )
+        ]
+        for document in documents[:20]
+    ]
+    rows.append([InlineKeyboardButton(text="Назад к отчету", callback_data=_back_to_report_callback(report_kind, period))])
+    rows.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_report_document_back_keyboard(report_kind: str, period: str, target_id: int) -> InlineKeyboardMarkup:
+    detail_prefix = MANAGER_REPORTS_PROJECT_DETAIL_PREFIX if report_kind == REPORT_KIND_PROJECTS else MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Назад к отчету", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{report_kind}:{period}")],
+            [InlineKeyboardButton(text="Назад к документам", callback_data=f"{detail_prefix}{period}:{target_id}")],
             [InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)],
         ]
     )
@@ -101,3 +118,15 @@ def _employee_row_text(row: Any) -> str:
     employee_name = getattr(row, "employee_name", None) or getattr(row, "username", None) or f"user:{getattr(row, 'user_id', '?')}"
     total_amount = getattr(row, "total_amount", 0) or 0
     return f"{employee_name} | {row.document_count} док. | {total_amount}"
+def _document_row_text(document: Any) -> str:
+    number = getattr(document, 'document_number', None) or 'без номера'
+    vendor = getattr(document, 'vendor_inn', None) or getattr(document, 'vendor', None) or 'без продавца'
+    date_value = getattr(document, 'document_date', None)
+    date_line = date_value.isoformat() if date_value else 'без даты'
+    return f"#{document.id} | {number} | {date_line} | {vendor}"
+
+
+def _back_to_report_callback(report_kind: str, period: str) -> str:
+    return f"{MANAGER_REPORTS_PERIOD_PREFIX}{report_kind}:{period}"
+
+

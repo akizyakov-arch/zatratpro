@@ -772,19 +772,30 @@ class ViewService:
             ))
         return result
 
-    async def get_project_report_detail(self, telegram_user_id: int, period: str, project_id: int) -> tuple[ProjectCard, list[ReportDocumentDetail], list[ReportItemDetail]]:
+    async def get_project_report_detail(self, telegram_user_id: int, period: str, project_id: int) -> tuple[ProjectCard, list[ReportDocumentDetail]]:
         project = await self.get_project_card(telegram_user_id, project_id)
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         documents = await self._list_report_documents(company.id, start_at, project_id=project_id)
-        items = await self._list_report_items(company.id, start_at, project_id=project_id)
-        return project, documents, items
+        return project, documents
 
-    async def get_employee_report_detail(self, telegram_user_id: int, period: str, member_user_id: int) -> tuple[MemberCard, list[ReportDocumentDetail], list[ReportItemDetail]]:
+    async def get_employee_report_detail(self, telegram_user_id: int, period: str, member_user_id: int) -> tuple[MemberCard, list[ReportDocumentDetail]]:
         member = await self.get_employee_card(telegram_user_id, member_user_id)
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         documents = await self._list_report_documents(company.id, start_at, uploaded_by_user_id=member_user_id)
-        items = await self._list_report_items(company.id, start_at, uploaded_by_user_id=member_user_id)
-        return member, documents, items
+        return member, documents
+
+    async def get_report_document_items(
+        self,
+        telegram_user_id: int,
+        period: str,
+        document_id: int,
+        project_id: int | None = None,
+        uploaded_by_user_id: int | None = None,
+    ) -> tuple[ReportDocumentDetail, list[ReportItemDetail]]:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        document = await self._get_report_document(company.id, start_at, document_id, project_id=project_id, uploaded_by_user_id=uploaded_by_user_id)
+        items = await self._list_report_items(company.id, start_at, document_id=document_id, project_id=project_id, uploaded_by_user_id=uploaded_by_user_id)
+        return document, items
 
     async def list_duplicate_report_rows(self, telegram_user_id: int, period: str) -> list[DuplicateReportRow]:
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
@@ -859,6 +870,10 @@ class ViewService:
         conditions = ['d.company_id = $1', 'd.created_at >= $2']
         params: list[object] = [company_id, start_at]
         index = 3
+        if document_id is not None:
+            conditions.append(f'd.id = ${index}')
+            params.append(document_id)
+            index += 1
         if project_id is not None:
             conditions.append(f'd.project_id = ${index}')
             params.append(project_id)
@@ -904,10 +919,66 @@ class ViewService:
             for row in rows
         ]
 
+    async def _get_report_document(
+        self,
+        company_id: int,
+        start_at: datetime,
+        document_id: int,
+        project_id: int | None = None,
+        uploaded_by_user_id: int | None = None,
+    ) -> ReportDocumentDetail:
+        pool = get_pool()
+        conditions = ['d.company_id = $1', 'd.created_at >= $2', 'd.id = $3']
+        params: list[object] = [company_id, start_at, document_id]
+        index = 4
+        if project_id is not None:
+            conditions.append(f'd.project_id = ${index}')
+            params.append(project_id)
+            index += 1
+        if uploaded_by_user_id is not None:
+            conditions.append(f'd.uploaded_by_user_id = ${index}')
+            params.append(uploaded_by_user_id)
+        query = f"""
+            SELECT d.id,
+                   p.name AS project_name,
+                   d.vendor,
+                   d.vendor_inn,
+                   COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
+                   d.document_date,
+                   d.total_amount,
+                   d.duplicate_status,
+                   d.created_at,
+                   uploader.username AS uploader_username,
+                   uploader.first_name AS uploader_first_name,
+                   uploader.last_name AS uploader_last_name
+            FROM documents d
+            JOIN projects p ON p.id = d.project_id
+            LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            WHERE {' AND '.join(conditions)}
+            LIMIT 1
+        """
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(query, *params)
+        if row is None:
+            raise CompanyAccessError('Документ отчета не найден.')
+        return ReportDocumentDetail(
+            id=row['id'],
+            project_name=row['project_name'],
+            vendor=row['vendor'],
+            vendor_inn=row['vendor_inn'],
+            document_number=row['document_number'],
+            document_date=row['document_date'],
+            total_amount=row['total_amount'],
+            duplicate_status=row['duplicate_status'],
+            uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+            created_at=row['created_at'],
+        )
+
     async def _list_report_items(
         self,
         company_id: int,
         start_at: datetime,
+        document_id: int | None = None,
         project_id: int | None = None,
         uploaded_by_user_id: int | None = None,
     ) -> list[ReportItemDetail]:
@@ -915,6 +986,10 @@ class ViewService:
         conditions = ['d.company_id = $1', 'd.created_at >= $2']
         params: list[object] = [company_id, start_at]
         index = 3
+        if document_id is not None:
+            conditions.append(f'd.id = ${index}')
+            params.append(document_id)
+            index += 1
         if project_id is not None:
             conditions.append(f'd.project_id = ${index}')
             params.append(project_id)

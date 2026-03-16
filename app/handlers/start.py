@@ -6,10 +6,11 @@ from app.services.companies import CompanyAccessError, CompanyService
 from app.services.projects import ProjectService
 from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
-    format_documents_with_items,
     format_duplicate_report,
     format_employee_report,
     format_project_report,
+    format_report_document_items,
+    format_report_documents,
     report_period_label,
 )
 from app.services.views import ViewService
@@ -71,6 +72,7 @@ from app.ui.help import (
 )
 from app.ui.main_menu import MAIN_MENU_TEXT, MENU_BUTTONS, build_main_menu_keyboard
 from app.ui.reports import (
+    MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
     MANAGER_REPORTS_EMPLOYEES_CALLBACK,
     MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX,
@@ -86,7 +88,8 @@ from app.ui.reports import (
     build_duplicate_report_keyboard,
     build_employee_report_keyboard,
     build_project_report_keyboard,
-    build_report_detail_back_keyboard,
+    build_report_document_back_keyboard,
+    build_report_documents_keyboard,
     build_report_period_keyboard,
     build_reports_menu_keyboard,
 )
@@ -915,7 +918,7 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
     try:
         period, project_id_text = payload.split(':', 1)
         project_id = int(project_id_text)
-        project, documents, items = await view_service.get_project_report_detail(callback.from_user.id, period, project_id)
+        project, documents = await view_service.get_project_report_detail(callback.from_user.id, period, project_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные проекта.'
         await callback.answer(message, show_alert=True)
@@ -935,7 +938,7 @@ async def report_employee_detail_callback(callback: CallbackQuery) -> None:
     try:
         period, user_id_text = payload.split(':', 1)
         user_id = int(user_id_text)
-        member, documents, items = await view_service.get_employee_report_detail(callback.from_user.id, period, user_id)
+        member, documents = await view_service.get_employee_report_detail(callback.from_user.id, period, user_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
         await callback.answer(message, show_alert=True)
@@ -945,6 +948,43 @@ async def report_employee_detail_callback(callback: CallbackQuery) -> None:
     await callback.message.answer(
         format_documents_with_items(f'Сотрудник: {employee_name}', period, documents, items),
         reply_markup=build_report_detail_back_keyboard(REPORT_KIND_EMPLOYEES, period),
+    )
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX))
+async def report_document_detail_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX)
+    try:
+        report_kind, period, target_id_text, document_id_text = payload.split(':', 3)
+        target_id = int(target_id_text)
+        document_id = int(document_id_text)
+        if report_kind == REPORT_KIND_PROJECTS:
+            document, items = await view_service.get_report_document_items(
+                callback.from_user.id,
+                period,
+                document_id,
+                project_id=target_id,
+            )
+        elif report_kind == REPORT_KIND_EMPLOYEES:
+            document, items = await view_service.get_report_document_items(
+                callback.from_user.id,
+                period,
+                document_id,
+                uploaded_by_user_id=target_id,
+            )
+        else:
+            await callback.answer('Некорректный источник отчета.', show_alert=True)
+            return
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        format_report_document_items('Позиции документа', period, document, items),
+        reply_markup=build_report_document_back_keyboard(report_kind, period, target_id),
     )
 
 

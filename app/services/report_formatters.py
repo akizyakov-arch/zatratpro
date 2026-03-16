@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
 from app.ui.reports import REPORT_PERIOD_LABELS
 
 NL = chr(10)
@@ -70,30 +68,51 @@ def format_duplicate_report(summary, rows) -> str:
     return NL.join(lines)
 
 
-def format_documents_with_items(title: str, period: str, documents, items) -> str:
+def format_report_documents(title: str, period: str, documents) -> str:
     lines = [title, f'Период: {report_period_label(period)}', '']
     if not documents:
         lines.append('Документов за период нет.')
         return NL.join(lines)
-    items_by_document = defaultdict(list)
-    for item in items:
-        items_by_document[item.document_id].append(item)
-    for index, document in enumerate(documents[:10], start=1):
+    for index, document in enumerate(documents[:20], start=1):
         number = document.document_number or 'без номера'
         date_line = document.document_date.isoformat() if document.document_date else 'без даты'
         vendor = document.vendor_inn or document.vendor or 'без продавца'
+        executor = document.uploaded_by_name or 'исполнитель не определен'
         lines.append(
-            f"{index}. Документ #{document.id} | {document.project_name} | {number} | {date_line} | {vendor} | {format_amount(document.total_amount)} | {document.duplicate_status}"
+            f"{index}. #{document.id} | {number} | {date_line} | {vendor} | {format_amount(document.total_amount)} | исполнитель: {executor} | {document.duplicate_status}"
         )
-        for item in items_by_document.get(document.id, [])[:10]:
-            item_name = item.name or 'Без наименования'
-            qty = item.quantity if item.quantity is not None else '—'
-            price = item.price if item.price is not None else '—'
-            line_total = item.line_total if item.line_total is not None else '—'
-            lines.append(f"  {item.line_no}. {item_name} | {qty} x {price} = {line_total}")
-        if len(items_by_document.get(document.id, [])) > 10:
-            lines.append('  ... позиции обрезаны')
-        lines.append('')
-    if len(documents) > 10:
-        lines.append('Показаны только первые 10 документов за период.')
+    if len(documents) > 20:
+        lines.append('Показаны только первые 20 документов за период.')
     return NL.join(lines).strip()
+
+
+def format_report_document_items(title: str, period: str, document, items) -> str:
+    number = document.document_number or 'без номера'
+    date_line = document.document_date.isoformat() if document.document_date else 'без даты'
+    vendor = document.vendor_inn or document.vendor or 'без продавца'
+    executor = document.uploaded_by_name or 'исполнитель не определен'
+    lines = [
+        title,
+        f'Период: {report_period_label(period)}',
+        f'Документ: #{document.id}',
+        f'Номер: {number}',
+        f'Дата: {date_line}',
+        f'Продавец: {vendor}',
+        f'Сумма: {format_amount(document.total_amount)}',
+        f'Исполнитель: {executor}',
+        f'Статус дубля: {document.duplicate_status}',
+        '',
+        'Позиции:',
+    ]
+    if not items:
+        lines.append('Позиции не найдены.')
+        return NL.join(lines)
+    for item in items[:50]:
+        item_name = item.name or 'Без наименования'
+        qty = item.quantity if item.quantity is not None else '—'
+        price = item.price if item.price is not None else '—'
+        line_total = item.line_total if item.line_total is not None else '—'
+        lines.append(f"{item.line_no}. {item_name} | {qty} x {price} = {line_total}")
+    if len(items) > 50:
+        lines.append('Показаны только первые 50 позиций документа.')
+    return NL.join(lines)
