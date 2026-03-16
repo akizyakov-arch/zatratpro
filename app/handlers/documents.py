@@ -8,7 +8,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from app.schemas.document import DocumentSchema
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.deepseek import DeepSeekError, DeepSeekService
-from app.services.documents import DocumentService
+from app.services.documents import DocumentService, DocumentValidationError
 from app.services.json_formatter import chunk_message
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
@@ -204,6 +204,11 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
                 extracted_document = await deepseek_service.extract_document(pending_document.ocr_text)
         document = DocumentSchema.model_validate({**extracted_document, 'raw_text': pending_document.ocr_text})
+        duplicate_check = await document_service.find_company_duplicate_document(
+            telegram_user=callback.from_user,
+            project=project,
+            document=document,
+        )
         document_id = await document_service.save_document(
             telegram_user=callback.from_user,
             project=project,
@@ -219,6 +224,10 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         logger.exception('DeepSeek extraction failed')
         await callback.message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
         return
+    except DocumentValidationError as exc:
+        pop_pending_document(callback.from_user.id)
+        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        return
     except CompanyAccessError as exc:
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
@@ -228,7 +237,21 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         return
 
     pop_pending_document(callback.from_user.id)
-    await callback.message.answer(f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.', reply_markup=menu_markup)
+    await callback.message.answer(
+        (
+            f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.'
+            + (
+                f'\n\nНайден точный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Загрузка не заблокирована.'
+                if duplicate_check.duplicate_document_id is not None
+                else (
+                    '\n\nТочная проверка на дубль выполнена: совпадений не найдено.'
+                    if duplicate_check.is_exact_check_complete
+                    else '\n\nТочная проверка на дубль не выполнена: нужны сумма, номер документа, дата и продавец.'
+                )
+            )
+        ),
+        reply_markup=menu_markup,
+    )
 
 
 @router.message(~F.text)

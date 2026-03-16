@@ -97,7 +97,18 @@ CREATE TABLE IF NOT EXISTS documents (
     source_file_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_documents_document_type CHECK (document_type IN ('receipt', 'invoice', 'act', 'manual_expense')),
+    CONSTRAINT chk_documents_document_type CHECK (
+        document_type IN (
+            'goods_invoice',
+            'service_act',
+            'upd',
+            'vat_invoice',
+            'cash_receipt',
+            'bso',
+            'transport_invoice',
+            'cash_out_order'
+        )
+    ),
     CONSTRAINT chk_documents_source_type CHECK (source_type IN ('photo', 'pdf', 'excel', 'word', 'manual')),
     CONSTRAINT fk_documents_project_company
         FOREIGN KEY (project_id, company_id)

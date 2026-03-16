@@ -6,9 +6,14 @@ from app.schemas.document import DocumentItem, DocumentSchema
 
 
 DOCUMENT_TYPE_TITLES = {
-    "receipt": "КАССОВЫЙ ЧЕК",
-    "invoice": "НАКЛАДНАЯ",
-    "act": "АКТ",
+    "goods_invoice": "ТОВАРНАЯ НАКЛАДНАЯ",
+    "service_act": "АКТ",
+    "upd": "УПД",
+    "vat_invoice": "СЧЕТ-ФАКТУРА",
+    "cash_receipt": "КАССОВЫЙ ЧЕК",
+    "bso": "БСО",
+    "transport_invoice": "ТРАНСПОРТНАЯ НАКЛАДНАЯ",
+    "cash_out_order": "РАСХОДНЫЙ КАССОВЫЙ ОРДЕР",
 }
 
 CURRENCY_SYMBOLS = {
