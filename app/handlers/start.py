@@ -22,11 +22,11 @@ company_service = CompanyService()
 HELP_TEXT = (
     "Я работаю с фото чеков, актов и накладных.\n\n"
     "Кнопка \"Распознать документ\" запускает текущий основной сценарий.\n"
-    "Кнопка \"Проекты\" показывает проекты текущей компании.\n"
+    "Кнопка \"Проекты\" показывает проекты текущей компании. Проекты привязаны к компании, а не к конкретному руководителю.\n"
     "Раздел \"Компания\" открывает управление компанией по твоей роли: создание и архивация проектов, приглашения и участники.\n\n"
     "Команды fallback:\n"
     "/create_company Название компании\n"
-    "/invite employee|manager\n"
+    "/invite employee\n"
     "/join КОД"
 )
 
@@ -132,9 +132,9 @@ async def create_invite_command(message: Message, command: CommandObject) -> Non
         return
 
     role = (command.args or "employee").strip()
-    if role not in {"employee", "manager"}:
+    if role != "employee":
         await message.answer(
-            "Использование: /invite employee или /invite manager",
+            "Использование: /invite employee",
             reply_markup=await _main_menu_markup(message),
         )
         return
@@ -146,7 +146,7 @@ async def create_invite_command(message: Message, command: CommandObject) -> Non
         return
 
     await message.answer(
-        f"Invite-код для роли {role}: {code}\n\nСотрудник должен отправить: /join {code}",
+        f"Invite-код для сотрудника: {code}\n\nСотрудник должен отправить: /join {code}",
         reply_markup=await _company_menu_markup(message),
     )
 
@@ -344,24 +344,6 @@ async def invite_employee_button(message: Message) -> None:
     )
 
 
-@router.message(F.text == MENU_BUTTONS["invite_manager"])
-async def invite_manager_button(message: Message) -> None:
-    if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
-        return
-
-    try:
-        code = await company_service.create_invite(message.from_user, "manager")
-    except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
-        return
-
-    await message.answer(
-        f"Invite-код для руководителя: {code}\n\nПользователь должен отправить: /join {code}",
-        reply_markup=await _company_menu_markup(message),
-    )
-
-
 @router.message(F.text == MENU_BUTTONS["members"])
 async def members_button(message: Message) -> None:
     if message.from_user is None:
@@ -474,6 +456,7 @@ async def handle_pending_text(message: Message) -> None:
         return
 
     await message.answer("Неизвестное действие. Попробуй снова.", reply_markup=await _main_menu_markup(message))
+
 
 
 

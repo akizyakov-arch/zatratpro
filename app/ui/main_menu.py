@@ -21,7 +21,6 @@ MENU_BUTTONS = {
     "archive_project": "Архивировать проект",
     "restore_project": "Деархивировать проект",
     "invite_employee": "Пригласить сотрудника",
-    "invite_manager": "Пригласить руководителя",
     "members": "Участники",
     "join_company": "Ввести invite-код",
     "back": "Назад",
@@ -80,10 +79,7 @@ def build_company_menu_keyboard(
             KeyboardButton(text=MENU_BUTTONS["archive_project"]),
         ])
         keyboard.append([KeyboardButton(text=MENU_BUTTONS["restore_project"])])
-        keyboard.append([
-            KeyboardButton(text=MENU_BUTTONS["invite_employee"]),
-            KeyboardButton(text=MENU_BUTTONS["invite_manager"]),
-        ])
+        keyboard.append([KeyboardButton(text=MENU_BUTTONS["invite_employee"])])
         keyboard.append([KeyboardButton(text=MENU_BUTTONS["members"])])
 
     keyboard.append([KeyboardButton(text=MENU_BUTTONS["back"])])
