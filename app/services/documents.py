@@ -64,6 +64,17 @@ class DuplicateCheckResult:
         )
 
 
+@dataclass(slots=True)
+class DuplicateDocumentInfo:
+    document_id: int
+    project_name: str
+    uploaded_by_name: str | None
+    vendor_name: str | None
+    document_number: str | None
+    document_date: datetime | None
+    total_amount: Decimal | None
+
+
 class DocumentService:
     def __init__(self) -> None:
         self.company_service = CompanyService()
@@ -277,6 +288,46 @@ class DocumentService:
             status=DUPLICATE_STATUS_NOT_CHECKED,
             duplicate_document_id=None,
             fields=fields,
+        )
+
+    async def get_duplicate_document_info(self, telegram_user_id: int, duplicate_document_id: int) -> DuplicateDocumentInfo:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        member_role = await self.company_service.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES | {EMPLOYEE_ROLE}:
+            raise CompanyAccessError('Недостаточно прав для просмотра дубля.')
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT d.id AS document_id,
+                       p.name AS project_name,
+                       d.vendor AS vendor_name,
+                       COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
+                       d.document_date,
+                       d.total_amount,
+                       uploader.username AS uploader_username,
+                       uploader.first_name AS uploader_first_name,
+                       uploader.last_name AS uploader_last_name
+                FROM documents d
+                JOIN projects p ON p.id = d.project_id
+                LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+                WHERE d.company_id = $1
+                  AND d.id = $2
+                LIMIT 1
+                """,
+                company.id,
+                duplicate_document_id,
+            )
+        if row is None:
+            raise CompanyAccessError('Дубликат не найден.')
+        return DuplicateDocumentInfo(
+            document_id=row['document_id'],
+            project_name=row['project_name'],
+            uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+            vendor_name=row['vendor_name'],
+            document_number=row['document_number'],
+            document_date=row['document_date'],
+            total_amount=row['total_amount'],
         )
 
     def _ensure_expense_document(self, document: DocumentSchema) -> None:
@@ -496,4 +547,13 @@ def _document_number(document: DocumentSchema) -> str | None:
         normalized = _normalize_text_key(value)
         if normalized is not None and any(ch.isdigit() for ch in normalized):
             return normalized
+    return None
+
+
+def _display_name(first_name: str | None, last_name: str | None, username: str | None) -> str | None:
+    parts = [part for part in (first_name, last_name) if part]
+    if parts:
+        return " ".join(parts)
+    if username:
+        return f"@{username}"
     return None

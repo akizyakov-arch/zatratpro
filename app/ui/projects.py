@@ -5,6 +5,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 PROJECT_CALLBACK_PREFIX = "document:project:"
 PROJECT_CREATE_CALLBACK = "document:project:create"
+DOCUMENT_DUPLICATE_CANCEL_CALLBACK = "document:duplicate:cancel"
+DOCUMENT_DUPLICATE_SAVE_CALLBACK = "document:duplicate:save"
 
 
 def build_projects_keyboard(projects: list[Any], allow_create_project: bool = False) -> InlineKeyboardMarkup:
@@ -15,3 +17,12 @@ def build_projects_keyboard(projects: list[Any], allow_create_project: bool = Fa
     if allow_create_project:
         rows.append([InlineKeyboardButton(text="Создать новый проект", callback_data=PROJECT_CREATE_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_duplicate_confirmation_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Отменить", callback_data=DOCUMENT_DUPLICATE_CANCEL_CALLBACK)],
+            [InlineKeyboardButton(text="Все равно добавить", callback_data=DOCUMENT_DUPLICATE_SAVE_CALLBACK)],
+        ]
+    )

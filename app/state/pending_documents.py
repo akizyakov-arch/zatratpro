@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 from datetime import datetime, timedelta, timezone
 
 
@@ -9,6 +10,9 @@ PENDING_DOCUMENT_TTL = timedelta(minutes=15)
 class PendingDocument:
     ocr_text: str
     normalized_text: str
+    extracted_document: Any | None = None
+    duplicate_check: Any | None = None
+    selected_project_id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 

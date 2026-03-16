@@ -24,7 +24,14 @@ from app.state.pending_documents import (
     store_pending_document,
 )
 from app.ui.main_menu import build_main_menu_keyboard
-from app.ui.projects import PROJECT_CALLBACK_PREFIX, PROJECT_CREATE_CALLBACK, build_projects_keyboard
+from app.ui.projects import (
+    DOCUMENT_DUPLICATE_CANCEL_CALLBACK,
+    DOCUMENT_DUPLICATE_SAVE_CALLBACK,
+    PROJECT_CALLBACK_PREFIX,
+    PROJECT_CREATE_CALLBACK,
+    build_duplicate_confirmation_keyboard,
+    build_projects_keyboard,
+)
 
 
 router = Router()
@@ -53,6 +60,84 @@ def _person_name(user) -> str:
     if user is None:
         return 'коллега'
     return user.first_name or user.full_name or user.username or 'коллега'
+
+
+def _duplicate_status_label(status: str) -> str:
+    return {
+        'exact': 'Точный дубль',
+        'probable': 'Вероятный дубль',
+    }.get(status, status)
+
+
+def _format_duplicate_warning(duplicate_info, duplicate_status: str) -> str:
+    date_line = duplicate_info.document_date.strftime('%d.%m.%Y') if duplicate_info.document_date else 'без даты'
+    number = duplicate_info.document_number or 'без номера'
+    vendor = duplicate_info.vendor_name or 'контрагент не указан'
+    uploader = duplicate_info.uploaded_by_name or 'исполнитель не указан'
+    total_amount = duplicate_info.total_amount or 0
+    return (
+        f"{_duplicate_status_label(duplicate_status)}. В компании эти затраты уже учтены.\n\n"
+        f"Проект: {duplicate_info.project_name}\n"
+        f"Контрагент: {vendor}\n"
+        f"Дата: {date_line}\n"
+        f"Номер: {number}\n"
+        f"Сумма: {total_amount}\n"
+        f"Внес: {uploader}\n\n"
+        "Отменить загрузку или все равно добавить документ?"
+    )
+
+
+async def _save_pending_document(callback: CallbackQuery, pending_document: PendingDocument, menu_markup) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    if pending_document.extracted_document is None or pending_document.selected_project_id is None:
+        clear_document_flow(callback.from_user.id)
+        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
+        return
+    try:
+        project = await project_service.get_active_project(callback.from_user.id, pending_document.selected_project_id)
+    except CompanyAccessError as exc:
+        clear_document_flow(callback.from_user.id)
+        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        return
+    if project is None:
+        clear_document_flow(callback.from_user.id)
+        await callback.message.answer('Проект больше недоступен. Отправь документ заново.', reply_markup=menu_markup)
+        return
+    try:
+        document_id = await document_service.save_document(
+            telegram_user=callback.from_user,
+            project=project,
+            normalized_text=pending_document.normalized_text,
+            document=pending_document.extracted_document,
+            duplicate_check=pending_document.duplicate_check,
+            source_type='photo',
+        )
+    except DocumentValidationError as exc:
+        clear_document_flow(callback.from_user.id)
+        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        return
+    except CompanyAccessError as exc:
+        clear_document_flow(callback.from_user.id)
+        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        return
+    except Exception as exc:  # noqa: BLE001
+        clear_document_flow(callback.from_user.id)
+        logger.exception('Document save failed after duplicate confirmation')
+        await callback.message.answer(f'Не удалось сохранить документ: {exc}', reply_markup=menu_markup)
+        return
+    duplicate_check = pending_document.duplicate_check
+    clear_document_flow(callback.from_user.id)
+    duplicate_message = {
+        'exact': f"\n\nДокумент сохранен принудительно. Точный дубль уже был в записи ID {duplicate_check.duplicate_document_id}.",
+        'probable': f"\n\nДокумент сохранен принудительно. Возможный дубль уже был в записи ID {duplicate_check.duplicate_document_id}.",
+        'none': '',
+        'not_checked': '',
+    }[duplicate_check.status]
+    await callback.message.answer(
+        f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.{duplicate_message}',
+        reply_markup=menu_markup,
+    )
 
 
 async def _ensure_company_access(message: Message) -> bool:
@@ -209,6 +294,19 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             document=document,
             normalized_text=pending_document.normalized_text,
         )
+        pending_document.extracted_document = document
+        pending_document.duplicate_check = duplicate_check
+        pending_document.selected_project_id = project.id
+        if duplicate_check.status in {'exact', 'probable'}:
+            duplicate_info = await document_service.get_duplicate_document_info(
+                callback.from_user.id,
+                duplicate_check.duplicate_document_id,
+            )
+            await callback.message.answer(
+                _format_duplicate_warning(duplicate_info, duplicate_check.status),
+                reply_markup=build_duplicate_confirmation_keyboard(),
+            )
+            return
         document_id = await document_service.save_document(
             telegram_user=callback.from_user,
             project=project,
@@ -252,6 +350,27 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         f"Документ сохранен в проект \"{project.name}\". ID записи: {document_id}.{duplicate_message}",
         reply_markup=menu_markup,
     )
+
+
+@router.callback_query(F.data == DOCUMENT_DUPLICATE_CANCEL_CALLBACK)
+async def duplicate_cancel_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    clear_document_flow(callback.from_user.id)
+    await callback.answer('Загрузка отменена.')
+    await callback.message.answer('Документ не сохранен. Можно отправить новый файл.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
+
+
+@router.callback_query(F.data == DOCUMENT_DUPLICATE_SAVE_CALLBACK)
+async def duplicate_save_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    pending_document = get_pending_document(callback.from_user.id)
+    if pending_document is None or pending_document.duplicate_check is None:
+        await callback.answer('Нет документа для подтверждения. Отправь фото заново.', show_alert=True)
+        return
+    await callback.answer()
+    await _save_pending_document(callback, pending_document, await _main_menu_markup_for_user(callback.from_user))
 
 
 @router.message(~F.text)
