@@ -38,7 +38,15 @@ def format_report_overview(summary, title: str) -> str:
 
 
 def format_project_report(summary, rows) -> str:
-    lines = [format_report_overview(summary, 'Отчет по проектам'), '']
+    lines = [
+        'Отчет по проектам',
+        f'С даты: {summary.start_at:%Y-%m-%d}',
+        f'Документов: {summary.documents}',
+        f'Сумма: {format_amount(summary.total_amount)}',
+        f'Точных дублей: {summary.exact_duplicates}',
+        f'Вероятных дублей: {summary.probable_duplicates}',
+        '',
+    ]
     if not rows:
         lines.append('За период документов по проектам нет.')
         return NL.join(lines)
@@ -75,7 +83,14 @@ def format_employee_report(summary, rows) -> str:
 
 
 def format_duplicate_report(summary, rows) -> str:
-    lines = [format_report_overview(summary, 'Отчет по дублям документов')]
+    lines = [
+        'Отчет по дублям документов',
+        f'С даты: {summary.start_at:%Y-%m-%d}',
+        f'Документов: {summary.documents}',
+        f'Сумма: {format_amount(summary.total_amount)}',
+        f'Точных дублей: {summary.exact_duplicates}',
+        f'Вероятных дублей: {summary.probable_duplicates}',
+    ]
     if not rows:
         lines.extend(['', 'За период дублей не найдено.'])
     return NL.join(lines).strip()

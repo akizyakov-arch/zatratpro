@@ -29,6 +29,7 @@ REPORT_PERIOD_MONTH = "month"
 REPORT_PERIOD_QUARTER = "quarter"
 REPORT_PERIOD_HALF_YEAR = "half_year"
 REPORT_PERIOD_YEAR = "year"
+REPORT_PERIOD_ALL = "all_time"
 
 REPORT_PERIOD_LABELS = {
     REPORT_PERIOD_WEEK: "Неделя",
@@ -65,7 +66,8 @@ def build_project_report_keyboard(period: str, rows: list[Any]) -> InlineKeyboar
         [InlineKeyboardButton(text=_project_row_text(row), callback_data=f"{MANAGER_REPORTS_PROJECT_DETAIL_PREFIX}{period}:{row.project_id}")]
         for row in rows[:20]
     ]
-    buttons.append([InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_PROJECTS}:_back")])
+    if period != REPORT_PERIOD_ALL:
+        buttons.append([InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_PROJECTS}:_back")])
     buttons.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -86,7 +88,8 @@ def build_duplicate_report_keyboard(period: str, rows: list[Any]) -> InlineKeybo
         for row in rows[:20]
     ]
     inline_rows.append([InlineKeyboardButton(text="Excel выгрузка за период", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_EXPORT}:{period}")])
-    inline_rows.append([InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:_back")])
+    if period != REPORT_PERIOD_ALL:
+        inline_rows.append([InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:_back")])
     inline_rows.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=inline_rows)
 

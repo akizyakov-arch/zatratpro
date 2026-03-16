@@ -92,6 +92,7 @@ from app.ui.reports import (
     REPORT_KIND_EMPLOYEES,
     REPORT_KIND_EXPORT,
     REPORT_KIND_PROJECTS,
+    REPORT_PERIOD_ALL,
     build_duplicate_card_keyboard,
     build_duplicate_delete_confirm_keyboard,
     build_duplicate_delete_source_confirm_keyboard,
@@ -894,7 +895,7 @@ async def reports_menu_callback(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
 async def report_kind_callback(callback: CallbackQuery) -> None:
-    if callback.message is None:
+    if callback.from_user is None or callback.message is None:
         return
     report_kind = {
         MANAGER_REPORTS_PROJECTS_CALLBACK: REPORT_KIND_PROJECTS,
@@ -902,6 +903,18 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
         MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
     }[callback.data]
+    if report_kind == REPORT_KIND_PROJECTS:
+        summary = await view_service.get_manager_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
+        rows = await view_service.list_report_projects(callback.from_user.id, REPORT_PERIOD_ALL)
+        await callback.answer()
+        await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(REPORT_PERIOD_ALL, rows))
+        return
+    if report_kind == REPORT_KIND_DUPLICATES:
+        rows = await view_service.list_duplicate_report_rows(callback.from_user.id, REPORT_PERIOD_ALL)
+        summary = await view_service.get_duplicate_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
+        await callback.answer()
+        await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(REPORT_PERIOD_ALL, rows))
+        return
     await callback.answer()
     await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
 

@@ -1261,7 +1261,9 @@ class ViewService:
 
 def _report_period_start(period: str) -> datetime:
     now = datetime.now(timezone.utc)
-    if period == 'week':
+    if period == 'all_time':
+        start_date = date(2000, 1, 1)
+    elif period == 'week':
         start_date = (now - timedelta(days=now.weekday())).date()
     elif period == 'month':
         start_date = date(now.year, now.month, 1)
