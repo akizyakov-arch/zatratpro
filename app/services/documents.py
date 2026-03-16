@@ -148,6 +148,7 @@ class DocumentService:
         telegram_user: User,
         project: Project,
         document: DocumentSchema,
+        normalized_text: str | None = None,
     ) -> DuplicateCheckResult:
         member_role = await self.company_service.ensure_member_role(telegram_user.id)
         if member_role not in ADMIN_ROLES | {EMPLOYEE_ROLE}:
@@ -157,13 +158,22 @@ class DocumentService:
         if active_company.id != project.company_id:
             raise CompanyAccessError("Нельзя проверять документ в проекте другой компании.")
 
-        document_date = _resolve_document_date(document)
-        document_number = _resolve_document_number(document)
-        total_amount = _resolve_total_amount(document)
-        vendor_key = _resolve_vendor_key(document)
+        document_date = _resolve_document_date(document, normalized_text)
+        document_number = _resolve_document_number(document, normalized_text)
+        total_amount = _resolve_total_amount(document, normalized_text)
+        vendor_key = _resolve_vendor_key(document, normalized_text)
         is_exact_check_complete = all(
             value is not None
             for value in (document_number, document_date, total_amount, vendor_key)
+        )
+        logger.info(
+            "Duplicate check source: ext=%s incoming=%s vendor=%s inn=%s raw_snippet=%s normalized_snippet=%s",
+            document.external_document_number,
+            document.incoming_number,
+            document.vendor,
+            document.vendor_inn,
+            (document.raw_text or '')[:160],
+            (normalized_text or '')[:160],
         )
         logger.info(
             "Duplicate check key: company_id=%s type=%s number=%s date=%s total=%s vendor=%s complete=%s",
@@ -246,11 +256,11 @@ class DocumentService:
         )
 
 
-def _resolve_document_number(document: DocumentSchema) -> str | None:
+def _resolve_document_number(document: DocumentSchema, normalized_text: str | None = None) -> str | None:
     direct = _document_number(document)
     if direct is not None:
         return direct
-    text = document.raw_text or ""
+    text = "\n".join(part for part in (normalized_text, document.raw_text) if part)
     patterns = (
         r"(?:продажа|чек|номер)\s*№?\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
         r"№\s*(\d+[A-Za-zА-Яа-я0-9\-/]*)",
@@ -264,11 +274,11 @@ def _resolve_document_number(document: DocumentSchema) -> str | None:
     return None
 
 
-def _resolve_vendor_key(document: DocumentSchema) -> str | None:
+def _resolve_vendor_key(document: DocumentSchema, normalized_text: str | None = None) -> str | None:
     direct = _normalize_vendor_key(document)
     if direct is not None:
         return direct
-    text = document.raw_text or ""
+    text = "\n".join(part for part in (normalized_text, document.raw_text) if part)
     inn_match = re.search(r"(?:инн)\s*[:№]?\s*(\d{10,12})", text, flags=re.IGNORECASE)
     if inn_match:
         return _normalize_text_key(inn_match.group(1))
@@ -282,11 +292,11 @@ def _resolve_vendor_key(document: DocumentSchema) -> str | None:
     return None
 
 
-def _resolve_document_date(document: DocumentSchema) -> datetime | None:
+def _resolve_document_date(document: DocumentSchema, normalized_text: str | None = None) -> datetime | None:
     direct = _parse_document_datetime(document.date)
     if direct is not None:
         return direct
-    text = document.raw_text or ""
+    text = "\n".join(part for part in (normalized_text, document.raw_text) if part)
     match = re.search(r"(\d{2}\.\d{2}\.\d{4})(?:\s+\d{2}:\d{2})?", text)
     if not match:
         return None
@@ -297,11 +307,11 @@ def _resolve_document_date(document: DocumentSchema) -> datetime | None:
     return datetime.combine(parsed_date, time.min, tzinfo=timezone.utc)
 
 
-def _resolve_total_amount(document: DocumentSchema) -> Decimal | None:
+def _resolve_total_amount(document: DocumentSchema, normalized_text: str | None = None) -> Decimal | None:
     direct = _as_decimal(document.total, "0.01")
     if direct is not None:
         return direct
-    text = document.raw_text or ""
+    text = "\n".join(part for part in (normalized_text, document.raw_text) if part)
     matches = re.findall(r"\d+[\.,]\d{2}", text)
     if not matches:
         return None

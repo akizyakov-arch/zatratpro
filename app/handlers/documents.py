@@ -207,6 +207,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             telegram_user=callback.from_user,
             project=project,
             document=document,
+            normalized_text=pending_document.normalized_text,
         )
         document_id = await document_service.save_document(
             telegram_user=callback.from_user,
