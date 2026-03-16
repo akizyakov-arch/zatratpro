@@ -10,8 +10,7 @@ from app.services.database import get_pool
 
 
 MANAGER_ROLE = "manager"
-LEGACY_MANAGER_ROLES = {"company_owner", "company_admin"}
-ADMIN_ROLES = {MANAGER_ROLE, *LEGACY_MANAGER_ROLES}
+ADMIN_ROLES = {MANAGER_ROLE}
 VALID_MEMBER_ROLES = {MANAGER_ROLE, "employee"}
 
 
@@ -252,7 +251,7 @@ class CompanyService:
                         """,
                         user_id,
                         invite["company_id"],
-                        list(ADMIN_ROLES),
+                        [MANAGER_ROLE],
                     )
                     if already_manager:
                         raise CompanyAccessError("Пользователь уже является руководителем в другой компании.")
@@ -351,3 +350,5 @@ def _slugify(value: str) -> str:
 def _generate_invite_code(length: int = 10) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
