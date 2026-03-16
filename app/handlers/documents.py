@@ -33,7 +33,7 @@ project_service = ProjectService()
 document_service = DocumentService()
 company_service = CompanyService()
 OCR_TIMEOUT_SECONDS = 120
-NORMALIZE_TIMEOUT_SECONDS = 60
+NORMALIZE_TIMEOUT_SECONDS = 240
 EXTRACT_TIMEOUT_SECONDS = 120
 
 
