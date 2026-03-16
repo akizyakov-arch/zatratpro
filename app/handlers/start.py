@@ -23,7 +23,7 @@ HELP_TEXT = (
     "Я работаю с фото чеков, актов и накладных.\n\n"
     "Кнопка \"Распознать документ\" запускает текущий основной сценарий.\n"
     "Кнопка \"Проекты\" показывает проекты текущей компании.\n"
-    "Раздел \"Компания\" открывает управление компанией по твоей роли.\n\n"
+    "Раздел \"Компания\" открывает управление компанией по твоей роли: создание и архивация проектов, приглашения и участники.\n\n"
     "Команды fallback:\n"
     "/create_company Название компании\n"
     "/invite employee|company_admin\n"
@@ -228,8 +228,12 @@ async def projects_entry(message: Message) -> None:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
 
+    context = await _ensure_context(message)
     if not projects:
         text = "В текущей компании пока нет активных проектов."
+    elif context is not None and context.can_manage_company:
+        project_lines = [f"ID {project.id} — {project.name}" for project in projects]
+        text = "Активные проекты текущей компании:\n\n" + "\n".join(project_lines)
     else:
         project_lines = [f"{index}. {project.name}" for index, project in enumerate(projects, start=1)]
         text = "Доступные проекты:\n\n" + "\n".join(project_lines)
@@ -281,6 +285,26 @@ async def create_project_button(message: Message) -> None:
 
     set_pending_action(message.from_user.id, "create_project")
     await message.answer("Отправь название нового проекта.", reply_markup=await _company_menu_markup(message))
+
+
+@router.message(F.text == MENU_BUTTONS["archive_project"])
+async def archive_project_button(message: Message) -> None:
+    context = await _ensure_context(message)
+    if context is None or not context.can_manage_company:
+        await message.answer("Архивировать проекты может только owner или admin компании.", reply_markup=await _main_menu_markup(message))
+        return
+
+    projects = await project_service.list_active_projects(message.from_user.id)
+    if not projects:
+        await message.answer("В текущей компании нет активных проектов для архивации.", reply_markup=await _company_menu_markup(message))
+        return
+
+    set_pending_action(message.from_user.id, "archive_project")
+    project_lines = [f"ID {project.id} — {project.name}" for project in projects]
+    await message.answer(
+        "Активные проекты:\n\n" + "\n".join(project_lines) + "\n\nОтправь ID проекта для архивации.",
+        reply_markup=await _company_menu_markup(message),
+    )
 
 
 @router.message(F.text == MENU_BUTTONS["invite_employee"])
@@ -396,6 +420,19 @@ async def handle_pending_text(message: Message) -> None:
                 reply_markup=await _company_menu_markup(message),
             )
             return
+        if pending_action.action == "archive_project":
+            if not await _require_company_access(message):
+                return
+            try:
+                project_id = int(message.text.strip())
+            except ValueError as exc:
+                raise CompanyAccessError("Отправь числовой ID проекта для архивации.") from exc
+            project = await project_service.archive_project(message.from_user.id, project_id)
+            await message.answer(
+                f"Проект архивирован: {project.name}.",
+                reply_markup=await _company_menu_markup(message),
+            )
+            return
         if pending_action.action == "join_company":
             await join_company(message, message.text.strip())
             return
@@ -404,4 +441,5 @@ async def handle_pending_text(message: Message) -> None:
         return
 
     await message.answer("Неизвестное действие. Попробуй снова.", reply_markup=await _main_menu_markup(message))
+
 

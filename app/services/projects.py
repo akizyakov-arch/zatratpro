@@ -83,3 +83,30 @@ class ProjectService:
             name=row["name"],
             is_archived=row["is_archived"],
         )
+
+    async def archive_project(self, telegram_user_id: int, project_id: int) -> Project:
+        member_role = await self.company_service.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES:
+            raise CompanyAccessError("Архивировать проекты может только owner или admin компании.")
+
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        pool = get_pool()
+        query = """
+            UPDATE projects
+            SET is_archived = TRUE
+            WHERE id = $1
+              AND company_id = $2
+              AND is_archived = FALSE
+            RETURNING id, company_id, name, is_archived
+        """
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(query, project_id, company.id)
+        if row is None:
+            raise CompanyAccessError("Проект не найден в текущей компании или уже архивирован.")
+
+        return Project(
+            id=row["id"],
+            company_id=row["company_id"],
+            name=row["name"],
+            is_archived=row["is_archived"],
+        )

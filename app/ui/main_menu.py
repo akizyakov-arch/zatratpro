@@ -18,6 +18,7 @@ MENU_BUTTONS = {
     "help": "Помощь",
     "create_company": "Создать компанию",
     "create_project": "Создать проект",
+    "archive_project": "Архивировать проект",
     "invite_employee": "Пригласить сотрудника",
     "invite_admin": "Пригласить админа",
     "members": "Участники",
@@ -73,7 +74,10 @@ def build_company_menu_keyboard(
         keyboard.append([KeyboardButton(text=MENU_BUTTONS["create_company"])])
 
     if can_manage_company:
-        keyboard.append([KeyboardButton(text=MENU_BUTTONS["create_project"])])
+        keyboard.append([
+            KeyboardButton(text=MENU_BUTTONS["create_project"]),
+            KeyboardButton(text=MENU_BUTTONS["archive_project"]),
+        ])
         keyboard.append([
             KeyboardButton(text=MENU_BUTTONS["invite_employee"]),
             KeyboardButton(text=MENU_BUTTONS["invite_admin"]),

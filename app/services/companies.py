@@ -1,7 +1,7 @@
+import re
 import secrets
 import string
 from dataclasses import dataclass
-import re
 
 from aiogram.types import User
 
@@ -107,7 +107,7 @@ class CompanyService:
             LEFT JOIN companies AS c
                 ON c.id = cm.company_id AND c.is_active = TRUE
             WHERE u.telegram_user_id = $1
-            ORDER BY cm.joined_at NULLS LAST, cm.id
+            ORDER BY cm.joined_at DESC NULLS LAST, cm.id DESC
         """
         async with pool.acquire() as connection:
             rows = await connection.fetch(query, telegram_user_id)
@@ -115,8 +115,6 @@ class CompanyService:
             return UserContext(platform_role="user", company=None, member_role=None)
 
         active_rows = [row for row in rows if row["company_id"] is not None]
-        if len(active_rows) > 1:
-            raise CompanyAccessError("Пока поддерживается одна активная компания на пользователя. Следующий шаг — явный выбор компании.")
 
         row = rows[0]
         if active_rows:
