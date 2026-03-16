@@ -21,6 +21,7 @@ MENU_BUTTONS = {
     "invite_employee": "Пригласить сотрудника",
     "invite_admin": "Пригласить админа",
     "members": "Участники",
+    "join_company": "Ввести invite-код",
     "back": "Назад",
 }
 
@@ -33,8 +34,11 @@ def build_main_menu_keyboard(
     if not has_company:
         keyboard = []
         if menu_kind == "platform_owner":
-            keyboard.append([KeyboardButton(text=MENU_BUTTONS["company"])])
-        keyboard.append([KeyboardButton(text=MENU_BUTTONS["help"])])
+            keyboard.append([KeyboardButton(text=MENU_BUTTONS["create_company"])])
+            keyboard.append([KeyboardButton(text=MENU_BUTTONS["company"]), KeyboardButton(text=MENU_BUTTONS["help"])])
+        else:
+            keyboard.append([KeyboardButton(text=MENU_BUTTONS["join_company"])])
+            keyboard.append([KeyboardButton(text=MENU_BUTTONS["help"])])
     elif menu_kind in {"platform_owner", "company_owner", "company_admin"}:
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["recognize"])],

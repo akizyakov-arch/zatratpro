@@ -83,9 +83,9 @@ async def start_command(message: Message, command: CommandObject | None = None) 
     if context is not None and context.has_company:
         company_line = f"Текущая компания: {context.company.name}"
     elif context is not None and context.platform_role == "owner":
-        company_line = "У тебя пока нет компании. Открой раздел Компания и создай первую компанию."
+        company_line = "У тебя пока нет компании. Нажми \"Создать компанию\" или открой раздел Компания."
     else:
-        company_line = "Сначала нужен доступ к компании. Получи invite-код от администратора и выполни /join КОД."
+        company_line = "Сначала нужен доступ к компании. Нажми \"Ввести invite-код\" или выполни /join КОД."
 
     await message.answer(
         f"{MAIN_MENU_TEXT}\n\n{company_line}",
@@ -176,6 +176,19 @@ async def join_company(message: Message, invite_code: str) -> None:
 
     await message.answer(
         f"Доступ к компании \"{company.name}\" подключен.",
+        reply_markup=await _main_menu_markup(message),
+    )
+
+
+@router.message(F.text == MENU_BUTTONS["join_company"])
+async def join_company_button(message: Message) -> None:
+    if message.from_user is None:
+        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
+        return
+
+    set_pending_action(message.from_user.id, "join_company")
+    await message.answer(
+        "Отправь invite-код следующим сообщением.",
         reply_markup=await _main_menu_markup(message),
     )
 
@@ -370,7 +383,7 @@ async def handle_pending_text(message: Message) -> None:
         if pending_action.action == "create_company":
             company = await company_service.create_company(message.from_user, message.text.strip())
             await message.answer(
-                f"Компания создана: {company.name} ({company.slug}).",
+                f"Компания создана: {company.name} ({company.slug}). Ты назначен company_owner.",
                 reply_markup=await _main_menu_markup(message),
             )
             return
@@ -383,8 +396,12 @@ async def handle_pending_text(message: Message) -> None:
                 reply_markup=await _company_menu_markup(message),
             )
             return
+        if pending_action.action == "join_company":
+            await join_company(message, message.text.strip())
+            return
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await _main_menu_markup(message))
         return
 
     await message.answer("Неизвестное действие. Попробуй снова.", reply_markup=await _main_menu_markup(message))
+
