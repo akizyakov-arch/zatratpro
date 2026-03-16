@@ -30,11 +30,11 @@ def build_main_menu_keyboard(
     has_company: bool = True,
     can_view_reports: bool = False,
 ) -> ReplyKeyboardMarkup:
-    if menu_kind == "platform_owner" and not has_company:
-        keyboard = [
-            [KeyboardButton(text=MENU_BUTTONS["company"])],
-            [KeyboardButton(text=MENU_BUTTONS["help"])],
-        ]
+    if not has_company:
+        keyboard = []
+        if menu_kind == "platform_owner":
+            keyboard.append([KeyboardButton(text=MENU_BUTTONS["company"])])
+        keyboard.append([KeyboardButton(text=MENU_BUTTONS["help"])])
     elif menu_kind in {"platform_owner", "company_owner", "company_admin"}:
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["recognize"])],

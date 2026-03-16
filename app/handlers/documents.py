@@ -26,7 +26,7 @@ company_service = CompanyService()
 
 async def _main_menu_markup(message: Message) -> object:
     if message.from_user is None:
-        return build_main_menu_keyboard()
+        return build_main_menu_keyboard(has_company=False)
     await company_service.ensure_platform_user(message.from_user)
     context = await company_service.get_user_context(message.from_user.id)
     return build_main_menu_keyboard(
@@ -36,9 +36,27 @@ async def _main_menu_markup(message: Message) -> object:
     )
 
 
+async def _ensure_company_access(message: Message) -> bool:
+    if message.from_user is None:
+        await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
+        return False
+    try:
+        await company_service.get_active_company_for_user(message.from_user.id)
+    except CompanyAccessError:
+        await message.answer(
+            "Сначала нужно получить доступ к компании. Используй invite-код администратора и выполни /join КОД.",
+            reply_markup=await _main_menu_markup(message),
+        )
+        return False
+    return True
+
+
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
     menu_markup = await _main_menu_markup(message)
+
+    if not await _ensure_company_access(message):
+        return
 
     if not message.photo:
         await message.answer("Фото не найдено в сообщении.", reply_markup=menu_markup)

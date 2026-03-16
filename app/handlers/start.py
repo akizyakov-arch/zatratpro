@@ -41,7 +41,7 @@ async def _ensure_context(message: Message):
 async def _main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
     context = await _ensure_context(message)
     if context is None:
-        return build_main_menu_keyboard()
+        return build_main_menu_keyboard(has_company=False)
     return build_main_menu_keyboard(
         menu_kind=context.menu_kind,
         has_company=context.has_company,
@@ -59,6 +59,17 @@ async def _company_menu_markup(message: Message) -> ReplyKeyboardMarkup:
     )
 
 
+async def _require_company_access(message: Message) -> bool:
+    context = await _ensure_context(message)
+    if context is None or not context.has_company:
+        await message.answer(
+            "Сначала нужно получить доступ к компании. Используй invite-код администратора или открой раздел Компания, если ты owner бота.",
+            reply_markup=await _main_menu_markup(message),
+        )
+        return False
+    return True
+
+
 @router.message(CommandStart())
 async def start_command(message: Message, command: CommandObject | None = None) -> None:
     context = await _ensure_context(message)
@@ -74,7 +85,7 @@ async def start_command(message: Message, command: CommandObject | None = None) 
     elif context is not None and context.platform_role == "owner":
         company_line = "У тебя пока нет компании. Открой раздел Компания и создай первую компанию."
     else:
-        company_line = "У тебя пока нет доступа к компании. Нужен invite от администратора."
+        company_line = "Сначала нужен доступ к компании. Получи invite-код от администратора и выполни /join КОД."
 
     await message.answer(
         f"{MAIN_MENU_TEXT}\n\n{company_line}",
@@ -171,6 +182,8 @@ async def join_company(message: Message, invite_code: str) -> None:
 
 @router.message(F.text == MENU_BUTTONS["recognize"])
 async def recognize_document_entry(message: Message) -> None:
+    if not await _require_company_access(message):
+        return
     await message.answer(
         "Отправь фото чека, акта или накладной. После распознавания я покажу выжимку и подготовлю следующий шаг с выбором проекта.",
         reply_markup=await _main_menu_markup(message),
@@ -179,6 +192,8 @@ async def recognize_document_entry(message: Message) -> None:
 
 @router.message(F.text == MENU_BUTTONS["manual"])
 async def manual_expense_entry(message: Message) -> None:
+    if not await _require_company_access(message):
+        return
     await message.answer(
         "Ручной ввод расходов будет следующим шагом MVP. Сначала доводим сценарий документа и привязку к проекту.",
         reply_markup=await _main_menu_markup(message),
@@ -189,6 +204,9 @@ async def manual_expense_entry(message: Message) -> None:
 async def projects_entry(message: Message) -> None:
     if message.from_user is None:
         await message.answer("Не удалось определить пользователя.", reply_markup=await _main_menu_markup(message))
+        return
+
+    if not await _require_company_access(message):
         return
 
     try:
@@ -341,7 +359,7 @@ async def handle_pending_text(message: Message) -> None:
     pending_action = get_pending_action(message.from_user.id)
     if pending_action is None:
         await message.answer(
-            "Поддерживаются кнопки главного меню, команды /start, /help, /join и фото документов.",
+            "Поддерживаются кнопки главного меню, управление компанией, команды /start, /help, /join и фото документов.",
             reply_markup=await _main_menu_markup(message),
         )
         return
@@ -357,6 +375,8 @@ async def handle_pending_text(message: Message) -> None:
             )
             return
         if pending_action.action == "create_project":
+            if not await _require_company_access(message):
+                return
             project = await project_service.create_project(message.from_user.id, message.text.strip())
             await message.answer(
                 f"Проект создан: {project.name}.",
