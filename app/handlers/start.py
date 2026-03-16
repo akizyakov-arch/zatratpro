@@ -1,9 +1,17 @@
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboardMarkup
 
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.projects import ProjectService
+from app.services.report_exports import build_manager_report_workbook
+from app.services.report_formatters import (
+    format_documents_with_items,
+    format_duplicate_report,
+    format_employee_report,
+    format_project_report,
+    report_period_label,
+)
 from app.services.views import ViewService
 from app.state.pending_actions import get_pending_action, pop_pending_action, set_pending_action
 from app.state.pending_documents import get_pending_document
@@ -62,6 +70,26 @@ from app.ui.help import (
     get_help_topic_text,
 )
 from app.ui.main_menu import MAIN_MENU_TEXT, MENU_BUTTONS, build_main_menu_keyboard
+from app.ui.reports import (
+    MANAGER_REPORTS_DUPLICATES_CALLBACK,
+    MANAGER_REPORTS_EMPLOYEES_CALLBACK,
+    MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX,
+    MANAGER_REPORTS_EXPORT_CALLBACK,
+    MANAGER_REPORTS_MENU_CALLBACK,
+    MANAGER_REPORTS_PERIOD_PREFIX,
+    MANAGER_REPORTS_PROJECTS_CALLBACK,
+    MANAGER_REPORTS_PROJECT_DETAIL_PREFIX,
+    REPORT_KIND_DUPLICATES,
+    REPORT_KIND_EMPLOYEES,
+    REPORT_KIND_EXPORT,
+    REPORT_KIND_PROJECTS,
+    build_duplicate_report_keyboard,
+    build_employee_report_keyboard,
+    build_project_report_keyboard,
+    build_report_detail_back_keyboard,
+    build_report_period_keyboard,
+    build_reports_menu_keyboard,
+)
 from app.ui.projects import build_projects_keyboard as build_document_projects_keyboard
 
 
@@ -187,6 +215,7 @@ def _person_identity(user) -> str:
     if username:
         return f'{name} ({username})'
     return name
+
 
 
 @router.message(CommandStart())
@@ -797,6 +826,126 @@ async def employee_remove_confirm(callback: CallbackQuery) -> None:
         return
     await callback.answer('Сотрудник исключен.')
     await callback.message.answer(f'Сотрудник исключен: {member.full_name or member.username or member.telegram_user_id}.')
+
+
+@router.message(F.text == MENU_BUTTONS['reports'])
+async def reports_menu_entry(message: Message) -> None:
+    if message.from_user is None:
+        return
+    context = await _ensure_context(message)
+    if context is None or not context.can_manage_company:
+        await message.answer('Раздел отчетов доступен только manager.', reply_markup=await _main_menu_markup(message))
+        return
+    await message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
+
+
+@router.callback_query(F.data == MANAGER_REPORTS_MENU_CALLBACK)
+async def reports_menu_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await callback.answer()
+    await callback.message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
+
+
+@router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
+async def report_kind_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    report_kind = {
+        MANAGER_REPORTS_PROJECTS_CALLBACK: REPORT_KIND_PROJECTS,
+        MANAGER_REPORTS_EMPLOYEES_CALLBACK: REPORT_KIND_EMPLOYEES,
+        MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
+        MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
+    }[callback.data]
+    await callback.answer()
+    await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_PREFIX))
+async def report_period_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_PERIOD_PREFIX)
+    try:
+        report_kind, period = payload.split(':', 1)
+    except ValueError:
+        await callback.answer('Некорректный период отчета.', show_alert=True)
+        return
+    if period == '_back':
+        await callback.answer()
+        await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
+        return
+    try:
+        summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
+        if report_kind == REPORT_KIND_PROJECTS:
+            rows = await view_service.list_report_projects(callback.from_user.id, period)
+            await callback.answer()
+            await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows))
+            return
+        if report_kind == REPORT_KIND_EMPLOYEES:
+            rows = await view_service.list_report_employees(callback.from_user.id, period)
+            await callback.answer()
+            await callback.message.answer(format_employee_report(summary, rows), reply_markup=build_employee_report_keyboard(period, rows))
+            return
+        if report_kind == REPORT_KIND_DUPLICATES:
+            rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
+            await callback.answer()
+            await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period))
+            return
+        if report_kind == REPORT_KIND_EXPORT:
+            projects = await view_service.list_report_projects(callback.from_user.id, period)
+            employees = await view_service.list_report_employees(callback.from_user.id, period)
+            duplicates = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
+            documents = await view_service.list_report_documents_for_company(callback.from_user.id, period)
+            items = await view_service.list_report_items_for_company(callback.from_user.id, period)
+            filename, payload_bytes = build_manager_report_workbook(period, summary, projects, employees, duplicates, documents, items)
+            await callback.answer()
+            await callback.message.answer_document(BufferedInputFile(payload_bytes, filename=filename), caption=f'Выгрузка отчетов за период: {report_period_label(period)}')
+            return
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_PROJECT_DETAIL_PREFIX))
+async def report_project_detail_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_PROJECT_DETAIL_PREFIX)
+    try:
+        period, project_id_text = payload.split(':', 1)
+        project_id = int(project_id_text)
+        project, documents, items = await view_service.get_project_report_detail(callback.from_user.id, period, project_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные проекта.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        format_documents_with_items(f'Проект: {project.name}', period, documents, items),
+        reply_markup=build_report_detail_back_keyboard(REPORT_KIND_PROJECTS, period),
+    )
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX))
+async def report_employee_detail_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX)
+    try:
+        period, user_id_text = payload.split(':', 1)
+        user_id = int(user_id_text)
+        member, documents, items = await view_service.get_employee_report_detail(callback.from_user.id, period, user_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
+        await callback.answer(message, show_alert=True)
+        return
+    employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
+    await callback.answer()
+    await callback.message.answer(
+        format_documents_with_items(f'Сотрудник: {employee_name}', period, documents, items),
+        reply_markup=build_report_detail_back_keyboard(REPORT_KIND_EMPLOYEES, period),
+    )
 
 
 @router.message(F.text == MENU_BUTTONS['my_company'])

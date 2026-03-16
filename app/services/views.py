@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.services.companies import CompanyAccessError, CompanyService
@@ -152,6 +152,76 @@ class SystemStats:
     employees: int
     projects: int
     documents: int
+
+
+@dataclass(slots=True)
+class ReportSummary:
+    period: str
+    start_at: datetime
+    documents: int
+    total_amount: Decimal
+    exact_duplicates: int
+    probable_duplicates: int
+
+
+@dataclass(slots=True)
+class ProjectReportRow:
+    project_id: int
+    project_name: str
+    document_count: int
+    total_amount: Decimal
+    exact_duplicate_count: int
+    probable_duplicate_count: int
+
+
+@dataclass(slots=True)
+class EmployeeReportRow:
+    user_id: int
+    employee_name: str | None
+    username: str | None
+    document_count: int
+    total_amount: Decimal
+    exact_duplicate_count: int
+    probable_duplicate_count: int
+
+
+@dataclass(slots=True)
+class ReportDocumentDetail:
+    id: int
+    project_name: str
+    vendor: str | None
+    vendor_inn: str | None
+    document_number: str | None
+    document_date: date | datetime | None
+    total_amount: Decimal | None
+    duplicate_status: str
+    uploaded_by_name: str | None
+    created_at: datetime
+
+
+@dataclass(slots=True)
+class ReportItemDetail:
+    document_id: int
+    line_no: int
+    name: str | None
+    quantity: Decimal | None
+    price: Decimal | None
+    line_total: Decimal | None
+
+
+@dataclass(slots=True)
+class DuplicateReportRow:
+    id: int
+    project_name: str
+    vendor: str | None
+    vendor_inn: str | None
+    document_number: str | None
+    document_date: date | datetime | None
+    total_amount: Decimal | None
+    duplicate_status: str
+    duplicate_of_document_id: int | None
+    uploaded_by_name: str | None
+    created_at: datetime
 
 
 class ViewService:
@@ -606,6 +676,269 @@ class ViewService:
             )
         return SystemStats(**dict(row))
 
+    async def get_manager_report_summary(self, telegram_user_id: int, period: str) -> ReportSummary:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT COUNT(*) AS documents,
+                       COALESCE(SUM(d.total_amount), 0) AS total_amount,
+                       COUNT(*) FILTER (WHERE d.duplicate_status = 'exact') AS exact_duplicates,
+                       COUNT(*) FILTER (WHERE d.duplicate_status = 'probable') AS probable_duplicates
+                FROM documents d
+                WHERE d.company_id = $1
+                  AND d.created_at >= $2
+                """,
+                company.id,
+                start_at,
+            )
+        return ReportSummary(
+            period=period,
+            start_at=start_at,
+            documents=row['documents'],
+            total_amount=row['total_amount'],
+            exact_duplicates=row['exact_duplicates'],
+            probable_duplicates=row['probable_duplicates'],
+        )
+
+    async def list_report_projects(self, telegram_user_id: int, period: str) -> list[ProjectReportRow]:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT p.id AS project_id,
+                       p.name AS project_name,
+                       COUNT(d.id) AS document_count,
+                       COALESCE(SUM(d.total_amount), 0) AS total_amount,
+                       COUNT(*) FILTER (WHERE d.duplicate_status = 'exact') AS exact_duplicate_count,
+                       COUNT(*) FILTER (WHERE d.duplicate_status = 'probable') AS probable_duplicate_count
+                FROM projects p
+                LEFT JOIN documents d
+                    ON d.project_id = p.id
+                   AND d.company_id = $1
+                   AND d.created_at >= $2
+                WHERE p.company_id = $1
+                GROUP BY p.id, p.name
+                HAVING COUNT(d.id) > 0
+                ORDER BY total_amount DESC, document_count DESC, p.name
+                """,
+                company.id,
+                start_at,
+            )
+        return [ProjectReportRow(**dict(row)) for row in rows]
+
+    async def list_report_employees(self, telegram_user_id: int, period: str) -> list[EmployeeReportRow]:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT u.id AS user_id,
+                       u.username,
+                       u.first_name,
+                       u.last_name,
+                       COUNT(d.id) AS document_count,
+                       COALESCE(SUM(d.total_amount), 0) AS total_amount,
+                       COUNT(*) FILTER (WHERE d.duplicate_status = 'exact') AS exact_duplicate_count,
+                       COUNT(*) FILTER (WHERE d.duplicate_status = 'probable') AS probable_duplicate_count
+                FROM company_members cm
+                JOIN users u ON u.id = cm.user_id
+                LEFT JOIN documents d
+                    ON d.uploaded_by_user_id = u.id
+                   AND d.company_id = $1
+                   AND d.created_at >= $2
+                WHERE cm.company_id = $1
+                  AND cm.role = 'employee'
+                  AND cm.status = 'active'
+                GROUP BY u.id, u.username, u.first_name, u.last_name
+                HAVING COUNT(d.id) > 0
+                ORDER BY total_amount DESC, document_count DESC, u.id
+                """,
+                company.id,
+                start_at,
+            )
+        result: list[EmployeeReportRow] = []
+        for row in rows:
+            result.append(EmployeeReportRow(
+                user_id=row['user_id'],
+                employee_name=_display_name(row['first_name'], row['last_name'], row['username']),
+                username=row['username'],
+                document_count=row['document_count'],
+                total_amount=row['total_amount'],
+                exact_duplicate_count=row['exact_duplicate_count'],
+                probable_duplicate_count=row['probable_duplicate_count'],
+            ))
+        return result
+
+    async def get_project_report_detail(self, telegram_user_id: int, period: str, project_id: int) -> tuple[ProjectCard, list[ReportDocumentDetail], list[ReportItemDetail]]:
+        project = await self.get_project_card(telegram_user_id, project_id)
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        documents = await self._list_report_documents(company.id, start_at, project_id=project_id)
+        items = await self._list_report_items(company.id, start_at, project_id=project_id)
+        return project, documents, items
+
+    async def get_employee_report_detail(self, telegram_user_id: int, period: str, member_user_id: int) -> tuple[MemberCard, list[ReportDocumentDetail], list[ReportItemDetail]]:
+        member = await self.get_employee_card(telegram_user_id, member_user_id)
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        documents = await self._list_report_documents(company.id, start_at, uploaded_by_user_id=member_user_id)
+        items = await self._list_report_items(company.id, start_at, uploaded_by_user_id=member_user_id)
+        return member, documents, items
+
+    async def list_duplicate_report_rows(self, telegram_user_id: int, period: str) -> list[DuplicateReportRow]:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT d.id,
+                       p.name AS project_name,
+                       d.vendor,
+                       d.vendor_inn,
+                       COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
+                       d.document_date,
+                       d.total_amount,
+                       d.duplicate_status,
+                       d.duplicate_of_document_id,
+                       d.created_at,
+                       uploader.username AS uploader_username,
+                       uploader.first_name AS uploader_first_name,
+                       uploader.last_name AS uploader_last_name
+                FROM documents d
+                JOIN projects p ON p.id = d.project_id
+                LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+                WHERE d.company_id = $1
+                  AND d.created_at >= $2
+                  AND d.duplicate_status IN ('exact', 'probable')
+                ORDER BY d.created_at DESC, d.id DESC
+                """,
+                company.id,
+                start_at,
+            )
+        return [
+            DuplicateReportRow(
+                id=row['id'],
+                project_name=row['project_name'],
+                vendor=row['vendor'],
+                vendor_inn=row['vendor_inn'],
+                document_number=row['document_number'],
+                document_date=row['document_date'],
+                total_amount=row['total_amount'],
+                duplicate_status=row['duplicate_status'],
+                duplicate_of_document_id=row['duplicate_of_document_id'],
+                uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+                created_at=row['created_at'],
+            )
+            for row in rows
+        ]
+
+    async def list_report_documents_for_company(self, telegram_user_id: int, period: str) -> list[ReportDocumentDetail]:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        return await self._list_report_documents(company.id, start_at)
+
+    async def list_report_items_for_company(self, telegram_user_id: int, period: str) -> list[ReportItemDetail]:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        return await self._list_report_items(company.id, start_at)
+
+    async def _get_manager_company_and_period(self, telegram_user_id: int, period: str):
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        role = await self.company_service.ensure_member_role(telegram_user_id)
+        if role != 'manager':
+            raise CompanyAccessError('Действие доступно только manager.')
+        return company, _report_period_start(period)
+
+    async def _list_report_documents(
+        self,
+        company_id: int,
+        start_at: datetime,
+        project_id: int | None = None,
+        uploaded_by_user_id: int | None = None,
+    ) -> list[ReportDocumentDetail]:
+        pool = get_pool()
+        conditions = ['d.company_id = $1', 'd.created_at >= $2']
+        params: list[object] = [company_id, start_at]
+        index = 3
+        if project_id is not None:
+            conditions.append(f'd.project_id = ${index}')
+            params.append(project_id)
+            index += 1
+        if uploaded_by_user_id is not None:
+            conditions.append(f'd.uploaded_by_user_id = ${index}')
+            params.append(uploaded_by_user_id)
+        query = f"""
+            SELECT d.id,
+                   p.name AS project_name,
+                   d.vendor,
+                   d.vendor_inn,
+                   COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
+                   d.document_date,
+                   d.total_amount,
+                   d.duplicate_status,
+                   d.created_at,
+                   uploader.username AS uploader_username,
+                   uploader.first_name AS uploader_first_name,
+                   uploader.last_name AS uploader_last_name
+            FROM documents d
+            JOIN projects p ON p.id = d.project_id
+            LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            WHERE {' AND '.join(conditions)}
+            ORDER BY d.created_at DESC, d.id DESC
+            LIMIT 50
+        """
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(query, *params)
+        return [
+            ReportDocumentDetail(
+                id=row['id'],
+                project_name=row['project_name'],
+                vendor=row['vendor'],
+                vendor_inn=row['vendor_inn'],
+                document_number=row['document_number'],
+                document_date=row['document_date'],
+                total_amount=row['total_amount'],
+                duplicate_status=row['duplicate_status'],
+                uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+                created_at=row['created_at'],
+            )
+            for row in rows
+        ]
+
+    async def _list_report_items(
+        self,
+        company_id: int,
+        start_at: datetime,
+        project_id: int | None = None,
+        uploaded_by_user_id: int | None = None,
+    ) -> list[ReportItemDetail]:
+        pool = get_pool()
+        conditions = ['d.company_id = $1', 'd.created_at >= $2']
+        params: list[object] = [company_id, start_at]
+        index = 3
+        if project_id is not None:
+            conditions.append(f'd.project_id = ${index}')
+            params.append(project_id)
+            index += 1
+        if uploaded_by_user_id is not None:
+            conditions.append(f'd.uploaded_by_user_id = ${index}')
+            params.append(uploaded_by_user_id)
+        query = f"""
+            SELECT di.document_id,
+                   di.line_no,
+                   di.name,
+                   di.quantity,
+                   di.price,
+                   di.line_total
+            FROM document_items di
+            JOIN documents d ON d.id = di.document_id
+            WHERE {' AND '.join(conditions)}
+            ORDER BY di.document_id DESC, di.line_no ASC
+            LIMIT 300
+        """
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(query, *params)
+        return [ReportItemDetail(**dict(row)) for row in rows]
+
     async def archive_company(self, telegram_user_id: int, company_id: int) -> None:
         context = await self.company_service.get_user_context(telegram_user_id)
         if context.platform_role != "owner":
@@ -752,6 +1085,26 @@ class ViewService:
             )
             for row in rows
         ]
+
+
+def _report_period_start(period: str) -> datetime:
+    now = datetime.now(timezone.utc)
+    if period == 'week':
+        start_date = (now - timedelta(days=now.weekday())).date()
+    elif period == 'month':
+        start_date = date(now.year, now.month, 1)
+    elif period == 'quarter':
+        quarter_month = ((now.month - 1) // 3) * 3 + 1
+        start_date = date(now.year, quarter_month, 1)
+    elif period == 'half_year':
+        half_year_month = 1 if now.month <= 6 else 7
+        start_date = date(now.year, half_year_month, 1)
+    elif period == 'year':
+        start_date = date(now.year, 1, 1)
+    else:
+        raise CompanyAccessError('Неизвестный период отчета.')
+    return datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+
 
 
 def _display_name(first_name: str | None, last_name: str | None, username: str | None) -> str | None:

@@ -13,6 +13,7 @@ MENU_BUTTONS = {
     "projects": "Проекты",
     "employees": "Сотрудники",
     "my_company": "Моя компания",
+    "reports": "Отчеты",
     "my_documents": "Мои документы",
     "join_company": "Ввести invite-код",
     "help": "Помощь",
@@ -40,7 +41,8 @@ def build_main_menu_keyboard(
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["upload_document"])],
             [KeyboardButton(text=MENU_BUTTONS["projects"]), KeyboardButton(text=MENU_BUTTONS["employees"])],
-            [KeyboardButton(text=MENU_BUTTONS["my_company"]), KeyboardButton(text=MENU_BUTTONS["help"])],
+            [KeyboardButton(text=MENU_BUTTONS["my_company"]), KeyboardButton(text=MENU_BUTTONS["reports"])],
+            [KeyboardButton(text=MENU_BUTTONS["help"])],
         ]
     else:
         keyboard = [
