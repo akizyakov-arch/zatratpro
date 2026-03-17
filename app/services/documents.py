@@ -440,8 +440,8 @@ class DocumentService:
     async def cleanup_broken_duplicate_links(self, telegram_user_id: int) -> int:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         member_role = await self.company_service.ensure_member_role(telegram_user_id)
-        if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError('Действие доступно только manager.')
+        if member_role not in ADMIN_ROLES | WORKER_ROLES:
+            raise CompanyAccessError('Действие доступно только manager и master.')
         pool = get_pool()
         async with pool.acquire() as connection:
             result = await connection.execute(

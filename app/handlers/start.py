@@ -953,7 +953,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_EMPLOYEES:
-            summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
+            summary = await view_service.get_employee_report_summary(callback.from_user.id, period)
             rows = await view_service.list_report_employees(callback.from_user.id, period)
             await callback.answer()
             await callback.message.answer(format_employee_report(summary, rows), reply_markup=build_employee_report_keyboard(period, rows), parse_mode='HTML')

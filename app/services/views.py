@@ -775,6 +775,55 @@ class ViewService:
             probable_duplicates=row['probable_duplicates'],
         )
 
+    async def get_employee_report_summary(self, telegram_user_id: int, period: str) -> ReportSummary:
+        await self.document_service.cleanup_broken_duplicate_links(telegram_user_id)
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT COUNT(d.id) AS documents,
+                       COALESCE(SUM(d.total_amount), 0) AS total_amount,
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'exact'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS exact_duplicates,
+                       COUNT(*) FILTER (
+                           WHERE d.duplicate_status = 'probable'
+                             AND d.duplicate_of_document_id IS NOT NULL
+                             AND EXISTS (
+                                 SELECT 1 FROM documents base_doc
+                                 WHERE base_doc.id = d.duplicate_of_document_id
+                                   AND base_doc.company_id = d.company_id
+                             )
+                       ) AS probable_duplicates
+                FROM company_members cm
+                JOIN users u ON u.id = cm.user_id
+                LEFT JOIN documents d
+                    ON d.uploaded_by_user_id = u.id
+                   AND d.company_id = $1
+                   AND d.created_at >= $2
+                WHERE cm.company_id = $1
+                  AND cm.role IN ('employee', 'master')
+                  AND cm.status = 'active'
+                """,
+                company.id,
+                start_at,
+            )
+        return ReportSummary(
+            period=period,
+            start_at=start_at,
+            documents=row['documents'],
+            total_amount=row['total_amount'],
+            exact_duplicates=row['exact_duplicates'],
+            probable_duplicates=row['probable_duplicates'],
+        )
+
     async def list_report_projects(self, telegram_user_id: int, period: str) -> list[ProjectReportRow]:
         await self.document_service.cleanup_broken_duplicate_links(telegram_user_id)
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
