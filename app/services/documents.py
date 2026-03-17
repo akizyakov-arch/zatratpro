@@ -7,7 +7,7 @@ import re
 from aiogram.types import User
 
 from app.schemas.document import ALLOWED_DOCUMENT_TYPES, DocumentItem, DocumentSchema
-from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyService, EMPLOYEE_ROLE
+from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyService, WORKER_ROLES
 from app.services.database import get_pool
 from app.services.projects import Project
 
@@ -89,7 +89,7 @@ class DocumentService:
         source_type: str = "photo",
     ) -> int:
         member_role = await self.company_service.ensure_member_role(telegram_user.id)
-        if member_role not in ADMIN_ROLES | {EMPLOYEE_ROLE}:
+        if member_role not in ADMIN_ROLES | WORKER_ROLES:
             raise CompanyAccessError("Недостаточно прав для сохранения документа.")
 
         active_company = await self.company_service.get_active_company_for_user(telegram_user.id)
@@ -215,7 +215,7 @@ class DocumentService:
         normalized_text: str | None = None,
     ) -> DuplicateCheckResult:
         member_role = await self.company_service.ensure_member_role(telegram_user.id)
-        if member_role not in ADMIN_ROLES | {EMPLOYEE_ROLE}:
+        if member_role not in ADMIN_ROLES | WORKER_ROLES:
             raise CompanyAccessError("Недостаточно прав для проверки документа.")
 
         active_company = await self.company_service.get_active_company_for_user(telegram_user.id)
@@ -293,7 +293,7 @@ class DocumentService:
     async def get_duplicate_document_info(self, telegram_user_id: int, duplicate_document_id: int) -> DuplicateDocumentInfo:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         member_role = await self.company_service.ensure_member_role(telegram_user_id)
-        if member_role not in ADMIN_ROLES | {EMPLOYEE_ROLE}:
+        if member_role not in ADMIN_ROLES | WORKER_ROLES:
             raise CompanyAccessError('Недостаточно прав для просмотра дубля.')
         pool = get_pool()
         async with pool.acquire() as connection:

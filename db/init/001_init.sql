@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS company_members (
     removed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_company_members_company_user UNIQUE (company_id, user_id),
-    CONSTRAINT chk_company_members_role CHECK (role IN ('manager', 'employee')),
+    CONSTRAINT chk_company_members_role CHECK (role IN ('manager', 'employee', 'master')),
     CONSTRAINT chk_company_members_status CHECK (status IN ('active', 'removed'))
 );
 
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS company_invites (
     expires_at TIMESTAMPTZ,
     used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_company_invites_role CHECK (role IN ('manager', 'employee')),
+    CONSTRAINT chk_company_invites_role CHECK (role IN ('manager', 'employee', 'master')),
     CONSTRAINT chk_company_invites_status CHECK (status IN ('active', 'used', 'expired', 'revoked'))
 );
 
@@ -161,7 +161,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_manager_per_company
     WHERE status = 'active' AND role = 'manager';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_employee_per_company
     ON company_invites(company_id)
-    WHERE status = 'active' AND role = 'employee';
+    WHERE status = 'active' AND role IN ('employee', 'master');
 
 CREATE INDEX IF NOT EXISTS idx_projects_company_status ON projects(company_id, status);
 CREATE INDEX IF NOT EXISTS idx_projects_created_by_user_id ON projects(created_by_user_id);

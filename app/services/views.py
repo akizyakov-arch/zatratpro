@@ -265,7 +265,7 @@ class ViewService:
                 LEFT JOIN (
                     SELECT company_id, COUNT(*) AS employee_count
                     FROM company_members
-                    WHERE role = 'employee' AND status = 'active'
+                    WHERE role IN ('employee', 'master') AND status = 'active'
                     GROUP BY company_id
                 ) emp ON emp.company_id = c.id
                 LEFT JOIN (
@@ -367,7 +367,7 @@ class ViewService:
                 LEFT JOIN (
                     SELECT company_id, COUNT(*) AS employee_count
                     FROM company_members
-                    WHERE role = 'employee' AND status = 'active'
+                    WHERE role IN ('employee', 'master') AND status = 'active'
                     GROUP BY company_id
                 ) emp ON emp.company_id = c.id
                 LEFT JOIN (
@@ -426,7 +426,7 @@ class ViewService:
         role = await self.company_service.ensure_member_role(telegram_user_id)
         if role != "manager":
             raise CompanyAccessError("Действие доступно только manager.")
-        return [member for member in await self._list_members(company.id) if member.role == "employee"]
+        return [member for member in await self._list_members(company.id) if member.role in {"employee", "master"}]
 
     async def get_employee_card(self, telegram_user_id: int, member_user_id: int) -> MemberCard:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
@@ -435,7 +435,7 @@ class ViewService:
             raise CompanyAccessError("Действие доступно только manager.")
         members = await self._list_members(company.id)
         for member in members:
-            if member.user_id == member_user_id and member.role == "employee":
+            if member.user_id == member_user_id and member.role in {"employee", "master"}:
                 return member
         raise CompanyAccessError("Сотрудник не найден.")
 
@@ -645,7 +645,7 @@ class ViewService:
                 LEFT JOIN (
                     SELECT company_id, COUNT(*) AS employee_count
                     FROM company_members
-                    WHERE role = 'employee' AND status = 'active'
+                    WHERE role IN ('employee', 'master') AND status = 'active'
                     GROUP BY company_id
                 ) emp ON emp.company_id = c.id
                 LEFT JOIN (
@@ -693,7 +693,7 @@ class ViewService:
                     (SELECT COUNT(*) FROM companies) AS companies,
                     (SELECT COUNT(*) FROM companies WHERE status = 'active') AS active_companies,
                     (SELECT COUNT(*) FROM company_members WHERE role = 'manager' AND status = 'active') AS managers,
-                    (SELECT COUNT(*) FROM company_members WHERE role = 'employee' AND status = 'active') AS employees,
+                    (SELECT COUNT(*) FROM company_members WHERE role IN ('employee', 'master') AND status = 'active') AS employees,
                     (SELECT COUNT(*) FROM projects) AS projects,
                     (SELECT COUNT(*) FROM documents) AS documents
                 """
@@ -856,7 +856,7 @@ class ViewService:
                    AND d.company_id = $1
                    AND d.created_at >= $2
                 WHERE cm.company_id = $1
-                  AND cm.role = 'employee'
+                  AND cm.role IN ('employee', 'master')
                   AND cm.status = 'active'
                 GROUP BY u.id, u.username, u.first_name, u.last_name
                 HAVING COUNT(d.id) > 0

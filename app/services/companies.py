@@ -11,8 +11,10 @@ from app.services.database import get_pool
 
 MANAGER_ROLE = "manager"
 EMPLOYEE_ROLE = "employee"
+MASTER_ROLE = "master"
 ADMIN_ROLES = {MANAGER_ROLE}
-VALID_MEMBER_ROLES = {MANAGER_ROLE, EMPLOYEE_ROLE}
+WORKER_ROLES = {EMPLOYEE_ROLE, MASTER_ROLE}
+VALID_MEMBER_ROLES = {MANAGER_ROLE, EMPLOYEE_ROLE, MASTER_ROLE}
 EMPLOYEE_LIMIT = 10
 INVITE_TTL_HOURS = 72
 
@@ -192,8 +194,8 @@ class CompanyService:
 
     async def create_invite(self, telegram_user: User, role: str) -> str:
         await self.ensure_platform_user(telegram_user)
-        if role != EMPLOYEE_ROLE:
-            raise CompanyAccessError("Для invite сотрудников доступна только роль employee.")
+        if role not in WORKER_ROLES:
+            raise CompanyAccessError("Для invite сотрудников доступны только роли employee и master.")
 
         company = await self.get_active_company_for_user(telegram_user.id)
         member_role = await self.ensure_member_role(telegram_user.id)
@@ -203,12 +205,13 @@ class CompanyService:
         pool = get_pool()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                employee_count = await self._count_active_employees(connection, company.id)
+                employee_count = await self._count_active_workers(connection, company.id)
                 if employee_count >= EMPLOYEE_LIMIT:
                     raise CompanyAccessError(f"В компании уже максимальное число сотрудников: {EMPLOYEE_LIMIT}.")
 
                 inviter_id = await self._get_user_id_by_telegram_id(connection, telegram_user.id)
-                await self._revoke_active_invites(connection, company.id, EMPLOYEE_ROLE)
+                for worker_role in WORKER_ROLES:
+                    await self._revoke_active_invites(connection, company.id, worker_role)
                 return await self._insert_invite(connection, company.id, role, inviter_id)
 
     async def join_company(self, telegram_user: User, code: str) -> Company:
@@ -264,12 +267,12 @@ class CompanyService:
                     if current_manager_id is not None and current_manager_id != user_id:
                         raise CompanyAccessError("У компании уже есть активный руководитель.")
                 else:
-                    same_company_employee = any(
-                        row["company_id"] == invite["company_id"] and row["role"] == EMPLOYEE_ROLE
+                    same_company_worker = any(
+                        row["company_id"] == invite["company_id"] and row["role"] in WORKER_ROLES
                         for row in active_memberships
                     )
-                    employee_count = await self._count_active_employees(connection, invite["company_id"])
-                    if employee_count >= EMPLOYEE_LIMIT and not same_company_employee:
+                    employee_count = await self._count_active_workers(connection, invite["company_id"])
+                    if employee_count >= EMPLOYEE_LIMIT and not same_company_worker:
                         raise CompanyAccessError(f"В компании уже максимальное число сотрудников: {EMPLOYEE_LIMIT}.")
 
                 await connection.execute(
@@ -371,7 +374,7 @@ class CompanyService:
                 WHERE cm.user_id = u.id
                   AND cm.company_id = $1
                   AND cm.user_id = $2
-                  AND cm.role = 'employee'
+                  AND cm.role = ANY($3::text[])
                   AND cm.status = 'active'
                 RETURNING cm.company_id,
                           cm.user_id,
@@ -384,6 +387,7 @@ class CompanyService:
                 """,
                 company.id,
                 member_user_id,
+                list(WORKER_ROLES),
             )
         if row is None:
             raise CompanyAccessError("Сотрудник не найден в текущей компании или уже исключен.")
@@ -441,14 +445,14 @@ class CompanyService:
                 if active_membership is not None and active_membership["company_id"] != company_id:
                     raise CompanyAccessError("Пользователь уже привязан к другой компании. Сначала исключи его из текущей компании.")
 
-                if role == EMPLOYEE_ROLE:
-                    is_same_active_employee = (
+                if role in WORKER_ROLES:
+                    is_same_active_worker = (
                         active_membership is not None
                         and active_membership["company_id"] == company_id
-                        and active_membership["role"] == EMPLOYEE_ROLE
+                        and active_membership["role"] in WORKER_ROLES
                     )
-                    employee_count = await self._count_active_employees(connection, company_id)
-                    if employee_count >= EMPLOYEE_LIMIT and not is_same_active_employee:
+                    employee_count = await self._count_active_workers(connection, company_id)
+                    if employee_count >= EMPLOYEE_LIMIT and not is_same_active_worker:
                         raise CompanyAccessError(f"В компании уже максимальное число сотрудников: {EMPLOYEE_LIMIT}.")
                     if company["manager_user_id"] == target_user_id:
                         await connection.execute(
@@ -643,17 +647,17 @@ class CompanyService:
             telegram_user_id,
         )
 
-    async def _count_active_employees(self, connection, company_id: int) -> int:
+    async def _count_active_workers(self, connection, company_id: int) -> int:
         return await connection.fetchval(
             """
             SELECT COUNT(*)
             FROM company_members
             WHERE company_id = $1
-              AND role = $2
+              AND role = ANY($2::text[])
               AND status = 'active'
             """,
             company_id,
-            EMPLOYEE_ROLE,
+            list(WORKER_ROLES),
         )
 
     async def _company_has_active_manager(self, connection, company_id: int) -> bool:
