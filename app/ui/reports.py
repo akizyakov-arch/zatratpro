@@ -150,10 +150,13 @@ def build_report_documents_keyboard(report_kind: str, period: str, target_id: in
 
 
 def build_report_document_back_keyboard(report_kind: str, period: str, target_id: int) -> InlineKeyboardMarkup:
-    detail_prefix = MANAGER_REPORTS_PROJECT_DETAIL_PREFIX if report_kind == REPORT_KIND_PROJECTS else MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX
+    if report_kind == REPORT_KIND_PROJECTS:
+        back_callback = f"{MANAGER_REPORTS_PROJECT_DETAIL_PREFIX}{period}:{target_id}"
+    else:
+        back_callback = f"{MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX}{target_id}:{period}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Назад к документам", callback_data=f"{detail_prefix}{period}:{target_id}")],
+            [InlineKeyboardButton(text="Назад к документам", callback_data=back_callback)],
             [InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)],
         ]
     )
