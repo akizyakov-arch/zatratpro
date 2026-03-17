@@ -861,7 +861,6 @@ class ViewService:
                   AND cm.role IN ('employee', 'master')
                   AND cm.status = 'active'
                 GROUP BY u.id, cm.role, u.username, u.first_name, u.last_name
-                HAVING COUNT(d.id) > 0
                 ORDER BY total_amount DESC, document_count DESC, u.id
                 """,
                 company.id,
