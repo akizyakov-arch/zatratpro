@@ -69,8 +69,6 @@ def format_employee_report(summary, rows) -> str:
         return NL.join(lines)
     for index, row in enumerate(rows[:20], start=1):
         employee_name = row.employee_name or (f'@{row.username}' if row.username else f'user:{row.user_id}')
-        if getattr(row, 'role', None) == 'master':
-            employee_name = f'<b>{employee_name}</b> (мастер)'
         duplicate_parts = []
         if row.exact_duplicate_count:
             duplicate_parts.append(f'точные дубли: {row.exact_duplicate_count}')

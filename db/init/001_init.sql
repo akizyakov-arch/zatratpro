@@ -161,7 +161,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_manager_per_company
     WHERE status = 'active' AND role = 'manager';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_employee_per_company
     ON company_invites(company_id)
-    WHERE status = 'active' AND role IN ('employee', 'master');
+    WHERE status = 'active' AND role = 'employee';
 
 CREATE INDEX IF NOT EXISTS idx_projects_company_status ON projects(company_id, status);
 CREATE INDEX IF NOT EXISTS idx_projects_created_by_user_id ON projects(created_by_user_id);

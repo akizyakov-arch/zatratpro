@@ -155,8 +155,6 @@ def _project_row_text(row: Any) -> str:
 
 def _employee_row_text(row: Any) -> str:
     employee_name = getattr(row, "employee_name", None) or getattr(row, "username", None) or f"user:{getattr(row, 'user_id', '?')}"
-    if getattr(row, 'role', None) == 'master':
-        employee_name = f"Мастер: {employee_name}"
     total_amount = getattr(row, "total_amount", 0) or 0
     return f"{employee_name} | {row.document_count} док. | {total_amount}"
 def _document_row_text(document: Any) -> str:

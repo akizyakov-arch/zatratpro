@@ -884,7 +884,7 @@ async def reports_menu_entry(message: Message) -> None:
         return
     context = await _ensure_context(message)
     if context is None or not context.can_view_reports:
-        await message.answer('Раздел отчетов доступен только manager и master.', reply_markup=await _main_menu_markup(message))
+        await message.answer('Раздел отчетов доступен только manager.', reply_markup=await _main_menu_markup(message))
         return
     await message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
 
@@ -953,7 +953,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_EMPLOYEES:
-            summary = await view_service.get_employee_report_summary(callback.from_user.id, period)
+            summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
             rows = await view_service.list_report_employees(callback.from_user.id, period)
             await callback.answer()
             await callback.message.answer(format_employee_report(summary, rows), reply_markup=build_employee_report_keyboard(period, rows), parse_mode='HTML')
@@ -1015,7 +1015,7 @@ async def report_employee_detail_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
-    title_prefix = 'Мастер' if member.role == 'master' else 'Сотрудник'
+    title_prefix = 'Сотрудник'
     await callback.answer()
     await callback.message.answer(
         format_report_documents(f'{title_prefix}: {employee_name}', period, documents),

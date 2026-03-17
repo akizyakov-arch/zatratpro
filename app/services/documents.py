@@ -441,7 +441,7 @@ class DocumentService:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         member_role = await self.company_service.ensure_member_role(telegram_user_id)
         if member_role not in ADMIN_ROLES | WORKER_ROLES:
-            raise CompanyAccessError('Действие доступно только manager и master.')
+            raise CompanyAccessError('Действие доступно только manager.')
         pool = get_pool()
         async with pool.acquire() as connection:
             result = await connection.execute(

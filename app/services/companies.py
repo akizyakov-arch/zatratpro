@@ -13,7 +13,7 @@ MANAGER_ROLE = "manager"
 EMPLOYEE_ROLE = "employee"
 MASTER_ROLE = "master"
 ADMIN_ROLES = {MANAGER_ROLE}
-WORKER_ROLES = {EMPLOYEE_ROLE, MASTER_ROLE}
+WORKER_ROLES = {EMPLOYEE_ROLE}
 VALID_MEMBER_ROLES = {MANAGER_ROLE, EMPLOYEE_ROLE, MASTER_ROLE}
 EMPLOYEE_LIMIT = 10
 INVITE_TTL_HOURS = 72
@@ -81,7 +81,7 @@ class UserContext:
 
     @property
     def can_view_reports(self) -> bool:
-        return self.member_role in (ADMIN_ROLES | {MASTER_ROLE})
+        return self.member_role in ADMIN_ROLES
 
 
 class CompanyService:
@@ -199,7 +199,7 @@ class CompanyService:
     async def create_invite(self, telegram_user: User, role: str) -> str:
         await self.ensure_platform_user(telegram_user)
         if role not in WORKER_ROLES:
-            raise CompanyAccessError("Для invite сотрудников доступны только роли employee и master.")
+            raise CompanyAccessError("Для invite сотрудников доступна только роль employee.")
 
         company = await self.get_active_company_for_user(telegram_user.id)
         member_role = await self.ensure_member_role(telegram_user.id)
@@ -404,7 +404,7 @@ class CompanyService:
         company_id: int,
         role: str,
     ) -> CompanyMember:
-        if role not in VALID_MEMBER_ROLES:
+        if role not in {MANAGER_ROLE, EMPLOYEE_ROLE}:
             raise CompanyAccessError("Недопустимая роль для привязки пользователя.")
         await self._ensure_platform_owner(owner_telegram_user_id)
 
