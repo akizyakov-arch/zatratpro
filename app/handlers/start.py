@@ -927,6 +927,14 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
             parse_mode='HTML',
         )
         return
+    if report_kind == REPORT_KIND_EMPLOYEES:
+        rows = await view_service.list_report_employees(callback.from_user.id, REPORT_PERIOD_ALL)
+        await callback.answer()
+        if not rows:
+            await callback.message.answer('Сотрудников с затратами пока нет.', reply_markup=build_reports_menu_keyboard())
+            return
+        await callback.message.answer('Выбери сотрудника.', reply_markup=build_employee_report_selector_keyboard(rows))
+        return
     await callback.answer()
     await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
 
@@ -951,12 +959,6 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             rows = await view_service.list_report_projects(callback.from_user.id, period)
             await callback.answer()
             await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
-            return
-        if report_kind == REPORT_KIND_EMPLOYEES:
-            summary = await view_service.get_employee_report_summary(callback.from_user.id, period)
-            rows = await view_service.list_report_employees(callback.from_user.id, period)
-            await callback.answer()
-            await callback.message.answer(format_employee_report(summary, rows), reply_markup=build_employee_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_DUPLICATES:
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
@@ -997,6 +999,47 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
     await callback.message.answer(
         format_report_documents(f'Проект: {project.name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_PROJECTS, period, project.id, documents),
+        parse_mode='HTML',
+    )
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX))
+async def report_employee_select_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    user_id_text = callback.data.removeprefix(MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX)
+    try:
+        user_id = int(user_id_text)
+        member = await view_service.get_employee_card(callback.from_user.id, user_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
+        await callback.answer(message, show_alert=True)
+        return
+    employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
+    title_prefix = 'Руководитель' if member.role == 'manager' else 'Сотрудник'
+    await callback.answer()
+    await callback.message.answer(f'Выбери период для {title_prefix.lower()}: {employee_name}.', reply_markup=build_employee_report_period_keyboard(member.user_id))
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX))
+async def report_employee_period_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX)
+    try:
+        user_id_text, period = payload.split(':', 1)
+        user_id = int(user_id_text)
+        member, documents = await view_service.get_employee_report_detail(callback.from_user.id, period, user_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
+        await callback.answer(message, show_alert=True)
+        return
+    employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
+    title_prefix = 'Руководитель' if member.role == 'manager' else 'Сотрудник'
+    await callback.answer()
+    await callback.message.answer(
+        format_report_documents(f'{title_prefix}: {employee_name}', period, documents),
+        reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
         parse_mode='HTML',
     )
 

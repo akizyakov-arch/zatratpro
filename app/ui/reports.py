@@ -10,6 +10,8 @@ MANAGER_REPORTS_DUPLICATES_CALLBACK = "manager:reports:duplicates"
 MANAGER_REPORTS_EXPORT_CALLBACK = "manager:reports:export"
 MANAGER_REPORTS_PERIOD_PREFIX = "manager:reports:period:"
 MANAGER_REPORTS_PROJECT_DETAIL_PREFIX = "manager:reports:project_detail:"
+MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX = "manager:reports:employee_select:"
+MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX = "manager:reports:employee_period:"
 MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX = "manager:reports:employee_detail:"
 MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX = "manager:reports:document_detail:"
 MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX = "manager:reports:duplicate:view:"
@@ -61,6 +63,25 @@ def build_report_period_keyboard(report_kind: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_employee_report_selector_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=_employee_row_text(row), callback_data=f"{MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX}{row.user_id}")]
+        for row in rows[:20]
+    ]
+    buttons.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_employee_report_period_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"{MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX}{user_id}:{period}")]
+        for period, label in REPORT_PERIOD_LABELS.items()
+    ]
+    rows.append([InlineKeyboardButton(text="Назад к сотрудникам", callback_data=MANAGER_REPORTS_EMPLOYEES_CALLBACK)])
+    rows.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def build_project_report_keyboard(period: str, rows: list[Any]) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=_project_row_text(row), callback_data=f"{MANAGER_REPORTS_PROJECT_DETAIL_PREFIX}{period}:{row.project_id}")]
@@ -68,16 +89,6 @@ def build_project_report_keyboard(period: str, rows: list[Any]) -> InlineKeyboar
     ]
     if period != REPORT_PERIOD_ALL:
         buttons.append([InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_PROJECTS}:_back")])
-    buttons.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def build_employee_report_keyboard(period: str, rows: list[Any]) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=_employee_row_text(row), callback_data=f"{MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX}{period}:{row.user_id}")]
-        for row in rows[:20]
-    ]
-    buttons.append([InlineKeyboardButton(text="Назад к периодам", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_EMPLOYEES}:_back")])
     buttons.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
