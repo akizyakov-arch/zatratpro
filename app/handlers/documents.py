@@ -42,6 +42,7 @@ document_service = DocumentService()
 company_service = CompanyService()
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
+OCR_RETRY_DELAY_SECONDS = 3
 
 
 async def _main_menu_markup_for_user(user) -> object:
@@ -184,8 +185,21 @@ async def process_photo(message: Message) -> None:
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             file_path = await file_service.download_best_photo(message.photo)
-            async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                ocr_text = await ocr_service.extract_text(file_path)
+            try:
+                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                    ocr_text = await ocr_service.extract_text(file_path)
+            except TimeoutError:
+                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
+                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
+                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                    ocr_text = await ocr_service.extract_text(file_path)
+            except OCRSpaceError as exc:
+                if 'E101' not in str(exc):
+                    raise
+                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
+                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
+                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                    ocr_text = await ocr_service.extract_text(file_path)
     except TimeoutError:
         clear_document_flow(message.from_user.id)
         logger.exception('OCR timed out')
