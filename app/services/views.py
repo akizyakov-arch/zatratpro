@@ -427,7 +427,7 @@ class ViewService:
         role = await self.company_service.ensure_member_role(telegram_user_id)
         if role != "manager":
             raise CompanyAccessError("Действие доступно только manager.")
-        return [member for member in await self._list_members(company.id) if member.role == "employee"]
+        return [member for member in await self._list_members(company.id) if member.role in {"employee", "manager"}]
 
     async def get_employee_card(self, telegram_user_id: int, member_user_id: int) -> MemberCard:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
@@ -436,7 +436,7 @@ class ViewService:
             raise CompanyAccessError("Действие доступно только manager.")
         members = await self._list_members(company.id)
         for member in members:
-            if member.user_id == member_user_id and member.role == "employee":
+            if member.user_id == member_user_id and member.role in {"employee", "manager"}:
                 return member
         raise CompanyAccessError("Сотрудник не найден.")
 
@@ -809,7 +809,7 @@ class ViewService:
                    AND d.company_id = $1
                    AND d.created_at >= $2
                 WHERE cm.company_id = $1
-                  AND cm.role = 'employee'
+                  AND cm.role IN ('employee', 'manager')
                   AND cm.status = 'active'
                 """,
                 company.id,
@@ -907,7 +907,7 @@ class ViewService:
                    AND d.company_id = $1
                    AND d.created_at >= $2
                 WHERE cm.company_id = $1
-                  AND cm.role = 'employee'
+                  AND cm.role IN ('employee', 'manager')
                   AND cm.status = 'active'
                 GROUP BY u.id, cm.role, u.username, u.first_name, u.last_name
                 ORDER BY total_amount DESC, document_count DESC, u.id
