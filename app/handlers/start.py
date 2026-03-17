@@ -1009,9 +1009,10 @@ async def report_employee_detail_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
+    title_prefix = 'Мастер' if member.role == 'master' else 'Сотрудник'
     await callback.answer()
     await callback.message.answer(
-        format_report_documents(f'Сотрудник: {employee_name}', period, documents),
+        format_report_documents(f'{title_prefix}: {employee_name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
         parse_mode='HTML',
     )

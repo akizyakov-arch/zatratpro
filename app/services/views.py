@@ -178,6 +178,7 @@ class ProjectReportRow:
 @dataclass(slots=True)
 class EmployeeReportRow:
     user_id: int
+    role: str
     employee_name: str | None
     username: str | None
     document_count: int
@@ -826,6 +827,7 @@ class ViewService:
             rows = await connection.fetch(
                 """
                 SELECT u.id AS user_id,
+                       cm.role AS member_role,
                        u.username,
                        u.first_name,
                        u.last_name,
@@ -858,7 +860,7 @@ class ViewService:
                 WHERE cm.company_id = $1
                   AND cm.role IN ('employee', 'master')
                   AND cm.status = 'active'
-                GROUP BY u.id, u.username, u.first_name, u.last_name
+                GROUP BY u.id, cm.role, u.username, u.first_name, u.last_name
                 HAVING COUNT(d.id) > 0
                 ORDER BY total_amount DESC, document_count DESC, u.id
                 """,
@@ -869,6 +871,7 @@ class ViewService:
         for row in rows:
             result.append(EmployeeReportRow(
                 user_id=row['user_id'],
+                role=row['member_role'],
                 employee_name=_display_name(row['first_name'], row['last_name'], row['username']),
                 username=row['username'],
                 document_count=row['document_count'],
