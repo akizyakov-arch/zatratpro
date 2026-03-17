@@ -992,8 +992,8 @@ class ViewService:
     async def _get_manager_company_and_period(self, telegram_user_id: int, period: str):
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         role = await self.company_service.ensure_member_role(telegram_user_id)
-        if role != 'manager':
-            raise CompanyAccessError('Действие доступно только manager.')
+        if role not in ('manager', 'master'):
+            raise CompanyAccessError('Действие доступно только manager и master.')
         return company, _report_period_start(period)
 
     async def _list_report_documents(

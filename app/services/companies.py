@@ -79,6 +79,10 @@ class UserContext:
     def can_manage_company(self) -> bool:
         return self.member_role in ADMIN_ROLES
 
+    @property
+    def can_view_reports(self) -> bool:
+        return self.member_role in (ADMIN_ROLES | {MASTER_ROLE})
+
 
 class CompanyService:
     async def ensure_platform_user(self, telegram_user: User) -> int:

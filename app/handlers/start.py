@@ -127,7 +127,11 @@ async def _main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
         return build_main_menu_keyboard(has_company=False)
     await company_service.ensure_platform_user(user)
     context = await company_service.get_user_context(user.id)
-    return build_main_menu_keyboard(menu_kind=context.menu_kind, has_company=context.has_company)
+    return build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.can_view_reports,
+    )
 
 
 async def _main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
@@ -879,8 +883,8 @@ async def reports_menu_entry(message: Message) -> None:
     if message.from_user is None:
         return
     context = await _ensure_context(message)
-    if context is None or not context.can_manage_company:
-        await message.answer('Раздел отчетов доступен только manager.', reply_markup=await _main_menu_markup(message))
+    if context is None or not context.can_view_reports:
+        await message.answer('Раздел отчетов доступен только manager и master.', reply_markup=await _main_menu_markup(message))
         return
     await message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
 

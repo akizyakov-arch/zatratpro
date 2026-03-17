@@ -45,9 +45,12 @@ def build_main_menu_keyboard(
             [KeyboardButton(text=MENU_BUTTONS["help"])],
         ]
     else:
+        second_row = [KeyboardButton(text=MENU_BUTTONS["my_documents"])]
+        if can_view_reports:
+            second_row.append(KeyboardButton(text=MENU_BUTTONS["reports"]))
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["upload_document"])],
-            [KeyboardButton(text=MENU_BUTTONS["my_documents"])],
+            second_row,
             [KeyboardButton(text=MENU_BUTTONS["help"])],
         ]
 

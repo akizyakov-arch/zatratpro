@@ -48,7 +48,11 @@ async def _main_menu_markup_for_user(user) -> object:
         return build_main_menu_keyboard(has_company=False)
     await company_service.ensure_platform_user(user)
     context = await company_service.get_user_context(user.id)
-    return build_main_menu_keyboard(menu_kind=context.menu_kind, has_company=context.has_company)
+    return build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.can_view_reports,
+    )
 
 
 async def _main_menu_markup(message: Message) -> object:
