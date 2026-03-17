@@ -28,6 +28,7 @@ from app.ui.projects import (
     DOCUMENT_DUPLICATE_CANCEL_CALLBACK,
     DOCUMENT_DUPLICATE_SAVE_CALLBACK,
     PROJECT_CALLBACK_PREFIX,
+    PROJECT_CANCEL_CALLBACK,
     PROJECT_CREATE_CALLBACK,
     build_duplicate_confirmation_keyboard,
     build_projects_keyboard,
@@ -261,6 +262,15 @@ async def process_photo(message: Message) -> None:
         f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
         reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
     )
+
+
+@router.callback_query(F.data == PROJECT_CANCEL_CALLBACK)
+async def cancel_project_selection(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    clear_document_flow(callback.from_user.id)
+    await callback.answer('Загрузка отменена.')
+    await callback.message.answer('Подготовка документа отменена.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
 
 @router.callback_query(F.data == PROJECT_CREATE_CALLBACK)
