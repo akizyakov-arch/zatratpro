@@ -8,7 +8,6 @@ from app.services.projects import ProjectService
 from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
     format_duplicate_report,
-    format_employee_report,
     format_project_report,
     format_report_document_items,
     format_report_documents,
@@ -1028,29 +1027,6 @@ async def report_employee_period_callback(callback: CallbackQuery) -> None:
     payload = callback.data.removeprefix(MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX)
     try:
         user_id_text, period = payload.split(':', 1)
-        user_id = int(user_id_text)
-        member, documents = await view_service.get_employee_report_detail(callback.from_user.id, period, user_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
-        await callback.answer(message, show_alert=True)
-        return
-    employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
-    title_prefix = 'Руководитель' if member.role == 'manager' else 'Сотрудник'
-    await callback.answer()
-    await callback.message.answer(
-        format_report_documents(f'{title_prefix}: {employee_name}', period, documents),
-        reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
-        parse_mode='HTML',
-    )
-
-
-@router.callback_query(F.data.startswith(MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX))
-async def report_employee_detail_callback(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX)
-    try:
-        period, user_id_text = payload.split(':', 1)
         user_id = int(user_id_text)
         member, documents = await view_service.get_employee_report_detail(callback.from_user.id, period, user_id)
     except (ValueError, CompanyAccessError) as exc:
