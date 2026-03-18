@@ -117,7 +117,7 @@ async def projects_archived_callback(callback: CallbackQuery) -> None:
 async def project_create_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    set_pending_action(callback.from_user.id, 'create_project')
+    await set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
     await callback.message.answer('Отправь название нового проекта.', reply_markup=await main_menu_markup_for_user(callback.from_user))
 
@@ -141,7 +141,7 @@ async def project_rename_prompt(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     project_id = int(callback.data.removeprefix(MANAGER_PROJECT_RENAME_PREFIX))
-    set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
+    await set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
     await callback.answer()
     await callback.message.answer('Отправь новое название проекта.', reply_markup=await main_menu_markup_for_user(callback.from_user))
 

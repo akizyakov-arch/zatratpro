@@ -120,7 +120,7 @@ async def create_company_button(message: Message) -> None:
     if context is None or context.platform_role != 'owner':
         await message.answer('Создавать компании может только owner.', reply_markup=await main_menu_markup(message))
         return
-    set_pending_action(message.from_user.id, 'create_company')
+    await set_pending_action(message.from_user.id, 'create_company')
     await message.answer(f'{person_name(message.from_user)}, отправь название новой компании.', reply_markup=await main_menu_markup(message))
 
 

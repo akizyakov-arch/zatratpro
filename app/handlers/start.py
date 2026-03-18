@@ -61,7 +61,7 @@ async def join_company(message: Message, invite_code: str) -> None:
 async def join_company_button(message: Message) -> None:
     if message.from_user is None:
         return
-    set_pending_action(message.from_user.id, 'join_company')
+    await set_pending_action(message.from_user.id, 'join_company')
     await message.answer(f'{person_name(message.from_user)}, отправь invite-код следующим сообщением.', reply_markup=await main_menu_markup(message))
 
 
@@ -90,11 +90,11 @@ async def handle_pending_text(message: Message) -> None:
     if message.from_user is None or not message.text:
         await message.answer('Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.', reply_markup=await main_menu_markup(message))
         return
-    pending_action = get_pending_action(message.from_user.id)
+    pending_action = await get_pending_action(message.from_user.id)
     if pending_action is None:
         await message.answer('Используй кнопки главного меню или отправь фото документа.', reply_markup=await main_menu_markup(message))
         return
-    pop_pending_action(message.from_user.id)
+    await pop_pending_action(message.from_user.id)
     text_value = message.text.strip()
     try:
         if pending_action.action == 'join_company':
@@ -108,7 +108,7 @@ async def handle_pending_text(message: Message) -> None:
         if pending_action.action == 'create_project':
             project = await project_service.create_project(message.from_user.id, text_value)
             await message.answer(f'Проект создан: {project.name}.', reply_markup=await main_menu_markup(message))
-            if get_pending_document(message.from_user.id) is not None:
+            if await get_pending_document(message.from_user.id) is not None:
                 projects = await project_service.list_active_projects(message.from_user.id)
                 await message.answer('Выбери проект для сохранения документа.', reply_markup=build_document_projects_keyboard(projects, allow_create_project=True))
             return
