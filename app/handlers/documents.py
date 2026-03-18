@@ -337,6 +337,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         pending_document.duplicate_check = duplicate_check
         pending_document.selected_project_id = project.id
         if duplicate_check.status in {'exact', 'probable'}:
+            await store_pending_document(callback.from_user.id, pending_document)
             duplicate_info = await document_service.get_duplicate_document_info(
                 callback.from_user.id,
                 duplicate_check.duplicate_document_id,
