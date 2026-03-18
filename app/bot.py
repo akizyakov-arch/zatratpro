@@ -5,9 +5,11 @@ import sys
 from aiogram import Bot, Dispatcher
 
 from app.config import get_settings
+from app.handlers.common_menu import router as common_menu_router
 from app.handlers.documents import router as documents_router
 from app.handlers.help import router as help_router
 from app.handlers.manager import router as manager_router
+from app.handlers.onboarding import router as onboarding_router
 from app.handlers.owner import router as owner_router
 from app.handlers.reports import router as reports_router
 from app.handlers.start import router as start_router
@@ -43,11 +45,13 @@ async def main() -> None:
     dispatcher.shutdown.register(on_shutdown)
 
     dispatcher.include_router(documents_router)
+    dispatcher.include_router(start_router)
+    dispatcher.include_router(onboarding_router)
     dispatcher.include_router(help_router)
     dispatcher.include_router(owner_router)
     dispatcher.include_router(manager_router)
     dispatcher.include_router(reports_router)
-    dispatcher.include_router(start_router)
+    dispatcher.include_router(common_menu_router)
 
     logging.getLogger(__name__).info("Starting Telegram bot polling")
     await dispatcher.start_polling(bot)
