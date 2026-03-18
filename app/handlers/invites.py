@@ -3,6 +3,7 @@ from aiogram.filters import Command, CommandObject, CommandStart, Filter
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
 
 from app.services.companies import ACTIVE_INVITE_STATUSES, CompanyAccessError, CompanyService
+from app.services.views import ViewService
 from app.state.pending_actions import get_pending_action, pop_pending_action, set_pending_action
 from app.ui.company import (
     MANAGER_EMPLOYEE_INVITE_CALLBACK,
@@ -24,6 +25,7 @@ from app.use_cases.invite_onboarding import InviteOnboardingUseCase
 
 router = Router()
 company_service = CompanyService()
+view_service = ViewService()
 invite_use_case = InviteOnboardingUseCase()
 
 
@@ -181,7 +183,7 @@ async def company_reset_invite_callback(callback: CallbackQuery) -> None:
         return
     company_id = int(callback.data.removeprefix(OWNER_COMPANY_RESET_INVITE_PREFIX))
     try:
-        changed = await company_service.revoke_manager_invite(callback.from_user.id, company_id)
+        changed = await view_service.revoke_manager_invite(callback.from_user.id, company_id)
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return

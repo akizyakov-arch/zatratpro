@@ -23,7 +23,7 @@ async def set_pending_action(
         await connection.execute(
             """
             INSERT INTO pending_actions (telegram_user_id, action, payload, expires_at)
-            VALUES ($1, $2, $3::jsonb, NOW() + ($4 || ' minutes')::interval)
+            VALUES ($1, $2, $3::jsonb, NOW() + $4::interval)
             ON CONFLICT (telegram_user_id)
             DO UPDATE SET
                 action = EXCLUDED.action,
@@ -34,7 +34,7 @@ async def set_pending_action(
             telegram_user_id,
             action,
             json.dumps(payload or {}),
-            PENDING_ACTION_TTL_MINUTES,
+            f"{PENDING_ACTION_TTL_MINUTES} minutes",
         )
 
 
