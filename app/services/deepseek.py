@@ -6,6 +6,7 @@ import httpx
 from app.config import get_settings
 from app.prompts.cleanup_prompt import CLEANUP_PROMPT
 from app.prompts.extraction_prompt import EXTRACTION_PROMPT
+from app.services.http_clients import get_deepseek_client
 
 
 class DeepSeekError(RuntimeError):
@@ -32,12 +33,7 @@ class DeepSeekService:
         }
 
         try:
-            async with httpx.AsyncClient(
-                base_url=settings.deepseek_base_url,
-                timeout=60,
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-            ) as client:
-                response = await client.post("/chat/completions", json=payload)
+            response = await get_deepseek_client().post("/chat/completions", json=payload)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise DeepSeekError(f"Ошибка сети DeepSeek: {exc}") from exc
@@ -66,12 +62,7 @@ class DeepSeekService:
         }
 
         try:
-            async with httpx.AsyncClient(
-                base_url=settings.deepseek_base_url,
-                timeout=60,
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-            ) as client:
-                response = await client.post("/chat/completions", json=payload)
+            response = await get_deepseek_client().post("/chat/completions", json=payload)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise DeepSeekError(f"Ошибка сети DeepSeek: {exc}") from exc

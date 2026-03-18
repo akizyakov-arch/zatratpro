@@ -3,6 +3,7 @@ from pathlib import Path
 import httpx
 
 from app.config import get_settings
+from app.services.http_clients import get_ocr_client
 
 
 class OCRSpaceError(RuntimeError):
@@ -14,21 +15,20 @@ class OCRSpaceService:
         settings = get_settings()
         response = None
         last_error: Exception | None = None
+        client = get_ocr_client()
 
         for attempt in range(1, 4):
             try:
-                timeout = httpx.Timeout(90.0, connect=20.0)
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    with file_path.open("rb") as image_file:
-                        response = await client.post(
-                            "https://api.ocr.space/parse/image",
-                            data={
-                                "apikey": settings.ocr_space_api_key,
-                                "language": "rus",
-                                "OCREngine": 2,
-                            },
-                            files={"file": (file_path.name, image_file, "image/jpeg")},
-                        )
+                with file_path.open("rb") as image_file:
+                    response = await client.post(
+                        "/parse/image",
+                        data={
+                            "apikey": settings.ocr_space_api_key,
+                            "language": "rus",
+                            "OCREngine": 2,
+                        },
+                        files={"file": (file_path.name, image_file, "image/jpeg")},
+                    )
                 response.raise_for_status()
                 break
             except httpx.ReadTimeout as exc:

@@ -6,8 +6,14 @@ from aiogram import Bot, Dispatcher
 
 from app.config import get_settings
 from app.handlers.documents import router as documents_router
+from app.handlers.help import router as help_router
+from app.handlers.invites import router as invites_router
+from app.handlers.manager import router as manager_router
+from app.handlers.owner import router as owner_router
+from app.handlers.reports import router as reports_router
 from app.handlers.start import router as start_router
 from app.services.database import close_db, init_db
+from app.services.http_clients import close_http_clients, init_http_clients
 
 
 def configure_logging() -> None:
@@ -21,10 +27,12 @@ def configure_logging() -> None:
 
 async def on_startup() -> None:
     await init_db()
+    await init_http_clients()
     logging.getLogger(__name__).info("Database pool initialized")
 
 
 async def on_shutdown() -> None:
+    await close_http_clients()
     await close_db()
     logging.getLogger(__name__).info("Database pool closed")
 
@@ -39,6 +47,11 @@ async def main() -> None:
     dispatcher.shutdown.register(on_shutdown)
 
     dispatcher.include_router(documents_router)
+    dispatcher.include_router(invites_router)
+    dispatcher.include_router(owner_router)
+    dispatcher.include_router(manager_router)
+    dispatcher.include_router(reports_router)
+    dispatcher.include_router(help_router)
     dispatcher.include_router(start_router)
 
     logging.getLogger(__name__).info("Starting Telegram bot polling")

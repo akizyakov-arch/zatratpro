@@ -8,7 +8,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from app.schemas.document import DocumentSchema
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.deepseek import DeepSeekError, DeepSeekService
-from app.services.documents import DocumentService
+from app.services.documents import DocumentService, DocumentValidationError
 from app.services.json_formatter import chunk_message
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
@@ -79,7 +79,7 @@ async def process_photo(message: Message) -> None:
     if not message.photo or message.from_user is None:
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
-    if has_active_document_flow(message.from_user.id):
+    if await has_active_document_flow(message.from_user.id):
         await message.answer(
             f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
             reply_markup=menu_markup,
@@ -90,7 +90,7 @@ async def process_photo(message: Message) -> None:
     file_service = TelegramFileService(bot)
     ocr_service = OCRSpaceService()
     deepseek_service = DeepSeekService()
-    begin_document_flow(message.from_user.id)
+    await begin_document_flow(message.from_user.id)
 
     await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
     try:
@@ -99,23 +99,23 @@ async def process_photo(message: Message) -> None:
             async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
                 ocr_text = await ocr_service.extract_text(file_path)
     except TimeoutError:
-        release_document_flow(message.from_user.id)
+        await release_document_flow(message.from_user.id)
         logger.exception('OCR timed out')
         await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except OCRSpaceError as exc:
-        release_document_flow(message.from_user.id)
+        await release_document_flow(message.from_user.id)
         logger.exception('OCR failed')
         await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
-        release_document_flow(message.from_user.id)
+        await release_document_flow(message.from_user.id)
         logger.exception('Unexpected error while processing photo')
         await message.answer(f'Не удалось обработать фото: {exc}', reply_markup=menu_markup)
         return
 
     if not ocr_text.strip():
-        release_document_flow(message.from_user.id)
+        await release_document_flow(message.from_user.id)
         await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
         return
 
@@ -125,22 +125,22 @@ async def process_photo(message: Message) -> None:
             async with asyncio.timeout(NORMALIZE_TIMEOUT_SECONDS):
                 normalized_text = await deepseek_service.normalize_document_text(ocr_text)
     except TimeoutError:
-        release_document_flow(message.from_user.id)
+        await release_document_flow(message.from_user.id)
         logger.exception('Normalization timed out')
         await message.answer('Подготовка документа заняла слишком много времени. Попробуй еще раз.', reply_markup=menu_markup)
         return
     except DeepSeekError as exc:
-        release_document_flow(message.from_user.id)
+        await release_document_flow(message.from_user.id)
         logger.exception('DeepSeek normalization failed')
         await message.answer(f'Не удалось нормализовать документ: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
-        release_document_flow(message.from_user.id)
+        await release_document_flow(message.from_user.id)
         logger.exception('Normalization failed')
         await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
         return
 
-    store_pending_document(message.from_user.id, PendingDocument(ocr_text=ocr_text, normalized_text=normalized_text))
+    await store_pending_document(message.from_user.id, PendingDocument(ocr_text=ocr_text, normalized_text=normalized_text))
     for chunk in chunk_message(normalized_text):
         await message.answer(chunk, reply_markup=menu_markup)
 
@@ -148,12 +148,12 @@ async def process_photo(message: Message) -> None:
         projects = await project_service.list_active_projects(message.from_user.id)
         context = await company_service.get_user_context(message.from_user.id)
     except CompanyAccessError as exc:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id)
         await message.answer(str(exc), reply_markup=menu_markup)
         return
 
     if not projects and not context.can_manage_company:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id)
         await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
         return
 
@@ -167,7 +167,7 @@ async def process_photo(message: Message) -> None:
 async def create_project_from_document(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    set_pending_action(callback.from_user.id, 'create_project')
+    await set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
     await callback.message.answer(f'{_person_name(callback.from_user)}, отправь название нового проекта.')
 
@@ -177,7 +177,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     menu_markup = await _main_menu_markup_for_user(callback.from_user)
-    pending_document = get_pending_document(callback.from_user.id)
+    pending_document = await get_pending_document(callback.from_user.id)
     if pending_document is None:
         await callback.answer('Нет подготовленного документа. Отправь фото заново.', show_alert=True)
         return
@@ -204,6 +204,11 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
                 extracted_document = await deepseek_service.extract_document(pending_document.ocr_text)
         document = DocumentSchema.model_validate({**extracted_document, 'raw_text': pending_document.ocr_text})
+        duplicate_check = await document_service.find_company_duplicate_document(
+            telegram_user=callback.from_user,
+            project=project,
+            document=document,
+        )
         document_id = await document_service.save_document(
             telegram_user=callback.from_user,
             project=project,
@@ -219,6 +224,10 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         logger.exception('DeepSeek extraction failed')
         await callback.message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
         return
+    except DocumentValidationError as exc:
+        await pop_pending_document(callback.from_user.id)
+        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        return
     except CompanyAccessError as exc:
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
@@ -227,8 +236,22 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         await callback.message.answer(f'Не удалось сохранить документ: {exc}', reply_markup=menu_markup)
         return
 
-    pop_pending_document(callback.from_user.id)
-    await callback.message.answer(f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.', reply_markup=menu_markup)
+    await pop_pending_document(callback.from_user.id)
+    await callback.message.answer(
+        (
+            f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.'
+            + (
+                f'\n\nНайден точный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Загрузка не заблокирована.'
+                if duplicate_check.duplicate_document_id is not None
+                else (
+                    '\n\nТочная проверка на дубль выполнена: совпадений не найдено.'
+                    if duplicate_check.is_exact_check_complete
+                    else '\n\nТочная проверка на дубль не выполнена: нужны сумма, номер документа, дата и продавец.'
+                )
+            )
+        ),
+        reply_markup=menu_markup,
+    )
 
 
 @router.message(~F.text)

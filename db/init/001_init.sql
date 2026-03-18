@@ -50,14 +50,15 @@ CREATE TABLE IF NOT EXISTS company_invites (
     company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
     code TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL DEFAULT 'active',
+    start_token TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
     created_by_user_id BIGINT NOT NULL REFERENCES users(id),
     used_by_user_id BIGINT REFERENCES users(id),
     expires_at TIMESTAMPTZ,
     used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_company_invites_role CHECK (role IN ('manager', 'employee')),
-    CONSTRAINT chk_company_invites_status CHECK (status IN ('active', 'used', 'expired', 'revoked'))
+    CONSTRAINT chk_company_invites_status CHECK (status IN ('new', 'used', 'expired', 'revoked'))
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -97,7 +98,18 @@ CREATE TABLE IF NOT EXISTS documents (
     source_file_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_documents_document_type CHECK (document_type IN ('receipt', 'invoice', 'act', 'manual_expense')),
+    CONSTRAINT chk_documents_document_type CHECK (
+        document_type IN (
+            'goods_invoice',
+            'service_act',
+            'upd',
+            'vat_invoice',
+            'cash_receipt',
+            'bso',
+            'transport_invoice',
+            'cash_out_order'
+        )
+    ),
     CONSTRAINT chk_documents_source_type CHECK (source_type IN ('photo', 'pdf', 'excel', 'word', 'manual')),
     CONSTRAINT fk_documents_project_company
         FOREIGN KEY (project_id, company_id)
@@ -141,12 +153,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_company_members_one_active_company_per_user
 CREATE INDEX IF NOT EXISTS idx_company_invites_company_status ON company_invites(company_id, status);
 CREATE INDEX IF NOT EXISTS idx_company_invites_expires_at ON company_invites(expires_at);
 CREATE INDEX IF NOT EXISTS idx_company_invites_created_by_user_id ON company_invites(created_by_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_start_token ON company_invites(start_token);
+CREATE INDEX IF NOT EXISTS idx_company_invites_start_token ON company_invites(start_token);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_manager_per_company
     ON company_invites(company_id)
-    WHERE status = 'active' AND role = 'manager';
+    WHERE status = 'new' AND role = 'manager';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_employee_per_company
     ON company_invites(company_id)
-    WHERE status = 'active' AND role = 'employee';
+    WHERE status = 'new' AND role = 'employee';
 
 CREATE INDEX IF NOT EXISTS idx_projects_company_status ON projects(company_id, status);
 CREATE INDEX IF NOT EXISTS idx_projects_created_by_user_id ON projects(created_by_user_id);

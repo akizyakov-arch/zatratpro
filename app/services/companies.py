@@ -15,6 +15,7 @@ ADMIN_ROLES = {MANAGER_ROLE}
 VALID_MEMBER_ROLES = {MANAGER_ROLE, EMPLOYEE_ROLE}
 EMPLOYEE_LIMIT = 10
 INVITE_TTL_HOURS = 72
+ACTIVE_INVITE_STATUSES = ("new", "active")
 
 
 class CompanyAccessError(RuntimeError):
@@ -49,6 +50,32 @@ class CompanyMember:
     def full_name(self) -> str | None:
         parts = [part for part in (self.first_name, self.last_name) if part]
         return " ".join(parts) or None
+
+
+@dataclass(slots=True)
+class InviteDetails:
+    id: int
+    company_id: int
+    company_name: str
+    role: str
+    code: str
+    start_token: str
+    status: str
+    created_at: object | None
+    expires_at: object | None
+    inviter_user_id: int | None
+    inviter_username: str | None
+    inviter_first_name: str | None
+    inviter_last_name: str | None
+    used_by_user_id: int | None = None
+    used_at: object | None = None
+
+    @property
+    def inviter_name(self) -> str | None:
+        parts = [part for part in (self.inviter_first_name, self.inviter_last_name) if part]
+        if parts:
+            return " ".join(parts)
+        return self.inviter_username
 
 
 @dataclass(slots=True)
@@ -158,6 +185,10 @@ class CompanyService:
         return self._company_from_row(row)
 
     async def create_initial_manager_invite(self, telegram_user: User, company_id: int) -> str:
+        details = await self.create_initial_manager_invite_details(telegram_user, company_id)
+        return details.code
+
+    async def create_initial_manager_invite_details(self, telegram_user: User, company_id: int) -> InviteDetails:
         await self.ensure_platform_user(telegram_user)
         if not await self.is_platform_owner(telegram_user.id):
             raise CompanyAccessError("Выдавать первый invite руководителю может только владелец бота.")
@@ -191,6 +222,10 @@ class CompanyService:
         return membership["member_role"]
 
     async def create_invite(self, telegram_user: User, role: str) -> str:
+        details = await self.create_invite_details(telegram_user, role)
+        return details.code
+
+    async def create_invite_details(self, telegram_user: User, role: str) -> InviteDetails:
         await self.ensure_platform_user(telegram_user)
         if role != EMPLOYEE_ROLE:
             raise CompanyAccessError("Для invite сотрудников доступна только роль employee.")
@@ -212,33 +247,51 @@ class CompanyService:
                 return await self._insert_invite(connection, company.id, role, inviter_id)
 
     async def join_company(self, telegram_user: User, code: str) -> Company:
-        await self.ensure_platform_user(telegram_user)
         normalized_code = code.strip().upper()
         if not normalized_code:
             raise CompanyAccessError("Invite-код не должен быть пустым.")
+        return await self._join_company_by_lookup(telegram_user, "ci.code = $1", normalized_code)
+
+    async def join_company_by_start_token(self, telegram_user: User, start_token: str) -> Company:
+        normalized_token = start_token.strip().upper()
+        if not normalized_token:
+            raise CompanyAccessError("Invite-ссылка недействительна.")
+        return await self._join_company_by_lookup(telegram_user, "ci.start_token = $1", normalized_token)
+
+    async def get_invite_details_by_start_token(self, start_token: str) -> InviteDetails:
+        normalized_token = start_token.strip().upper()
+        if not normalized_token:
+            raise CompanyAccessError("Invite-ссылка недействительна.")
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._expire_outdated_invites(connection)
+                details = await self._fetch_invite_details(connection, "ci.start_token = $1", normalized_token)
+        if details is None:
+            raise CompanyAccessError("Invite-ссылка недействительна или уже неактуальна.")
+        return details
+
+    async def get_active_invite_details(self, company_id: int, role: str) -> InviteDetails | None:
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._expire_outdated_invites(connection)
+                return await self._fetch_invite_details(
+                    connection,
+                    "ci.company_id = $1 AND ci.role = $2 AND ci.status = ANY($3::text[])",
+                    company_id,
+                    role,
+                    list(ACTIVE_INVITE_STATUSES),
+                )
+
+    async def _join_company_by_lookup(self, telegram_user: User, invite_predicate: str, invite_value: str) -> Company:
+        await self.ensure_platform_user(telegram_user)
 
         pool = get_pool()
         async with pool.acquire() as connection:
             async with connection.transaction():
                 await self._expire_outdated_invites(connection)
-                invite = await connection.fetchrow(
-                    """
-                    SELECT ci.id,
-                           ci.company_id,
-                           ci.role,
-                           c.name,
-                           c.status,
-                           c.owner_user_id,
-                           c.manager_user_id
-                    FROM company_invites AS ci
-                    JOIN companies AS c ON c.id = ci.company_id
-                    WHERE ci.code = $1
-                      AND ci.status = 'active'
-                      AND c.status = 'active'
-                      AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
-                    """,
-                    normalized_code,
-                )
+                invite = await self._fetch_joinable_invite(connection, invite_predicate, invite_value)
                 if invite is None:
                     raise CompanyAccessError("Invite-код недействителен или уже использован.")
 
@@ -565,22 +618,63 @@ class CompanyService:
                     )
         return self._member_from_row(membership)
 
-    async def _insert_invite(self, connection, company_id: int, role: str, inviter_id: int) -> str:
+    async def _insert_invite(self, connection, company_id: int, role: str, inviter_id: int) -> InviteDetails:
         for _ in range(10):
             code = _generate_invite_code()
+            start_token = _generate_invite_token()
             try:
-                await connection.execute(
+                row = await connection.fetchrow(
                     """
-                    INSERT INTO company_invites (company_id, role, code, status, created_by_user_id, expires_at)
-                    VALUES ($1, $2, $3, 'active', $4, NOW() + make_interval(hours => $5))
+                    WITH inserted AS (
+                        INSERT INTO company_invites (
+                            company_id,
+                            role,
+                            code,
+                            start_token,
+                            status,
+                            created_by_user_id,
+                            expires_at
+                        )
+                        VALUES ($1, $2, $3, $4, 'new', $5, NOW() + make_interval(hours => $6))
+                        RETURNING id,
+                                  company_id,
+                                  role,
+                                  code,
+                                  start_token,
+                                  status,
+                                  created_at,
+                                  expires_at,
+                                  created_by_user_id,
+                                  used_by_user_id,
+                                  used_at
+                    )
+                    SELECT inserted.id,
+                           inserted.company_id,
+                           c.name AS company_name,
+                           inserted.role,
+                           inserted.code,
+                           inserted.start_token,
+                           inserted.status,
+                           inserted.created_at,
+                           inserted.expires_at,
+                           inserted.created_by_user_id AS inviter_user_id,
+                           inviter.username AS inviter_username,
+                           inviter.first_name AS inviter_first_name,
+                           inviter.last_name AS inviter_last_name,
+                           inserted.used_by_user_id,
+                           inserted.used_at
+                    FROM inserted
+                    JOIN companies c ON c.id = inserted.company_id
+                    JOIN users inviter ON inviter.id = inserted.created_by_user_id
                     """,
                     company_id,
                     role,
                     code,
+                    start_token,
                     inviter_id,
                     INVITE_TTL_HOURS,
                 )
-                return code
+                return InviteDetails(**dict(row))
             except UniqueViolationError:
                 continue
         raise CompanyAccessError("Не удалось сгенерировать уникальный invite-код. Повтори попытку.")
@@ -592,10 +686,11 @@ class CompanyService:
             SET status = 'revoked'
             WHERE company_id = $1
               AND role = $2
-              AND status = 'active'
+              AND status = ANY($3::text[])
             """,
             company_id,
             role,
+            list(ACTIVE_INVITE_STATUSES),
         )
 
     async def _expire_outdated_invites(self, connection) -> None:
@@ -603,11 +698,64 @@ class CompanyService:
             """
             UPDATE company_invites
             SET status = 'expired'
-            WHERE status = 'active'
+            WHERE status = ANY($1::text[])
               AND expires_at IS NOT NULL
               AND expires_at <= NOW()
-            """
+            """,
+            list(ACTIVE_INVITE_STATUSES),
         )
+
+    async def _fetch_joinable_invite(self, connection, invite_predicate: str, invite_value: str):
+        return await connection.fetchrow(
+            f"""
+            SELECT ci.id,
+                   ci.company_id,
+                   ci.role,
+                   c.name,
+                   c.status,
+                   c.owner_user_id,
+                   c.manager_user_id
+            FROM company_invites AS ci
+            JOIN companies AS c ON c.id = ci.company_id
+            WHERE {invite_predicate}
+              AND ci.status = ANY($2::text[])
+              AND c.status = 'active'
+              AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
+            """,
+            invite_value,
+            list(ACTIVE_INVITE_STATUSES),
+        )
+
+    async def _fetch_invite_details(self, connection, invite_predicate: str, *params) -> InviteDetails | None:
+        row = await connection.fetchrow(
+            f"""
+            SELECT ci.id,
+                   ci.company_id,
+                   c.name AS company_name,
+                   ci.role,
+                   ci.code,
+                   ci.start_token,
+                   ci.status,
+                   ci.created_at,
+                   ci.expires_at,
+                   ci.created_by_user_id AS inviter_user_id,
+                   inviter.username AS inviter_username,
+                   inviter.first_name AS inviter_first_name,
+                   inviter.last_name AS inviter_last_name,
+                   ci.used_by_user_id,
+                   ci.used_at
+            FROM company_invites ci
+            JOIN companies c ON c.id = ci.company_id
+            JOIN users inviter ON inviter.id = ci.created_by_user_id
+            WHERE {invite_predicate}
+            ORDER BY ci.created_at DESC, ci.id DESC
+            LIMIT 1
+            """,
+            *params,
+        )
+        if row is None:
+            return None
+        return InviteDetails(**dict(row))
 
     async def _get_active_membership(self, telegram_user_id: int):
         pool = get_pool()
@@ -717,5 +865,10 @@ class CompanyService:
 
 
 def _generate_invite_code(length: int = 10) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _generate_invite_token(length: int = 24) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))

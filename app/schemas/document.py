@@ -29,8 +29,20 @@ class DocumentItem(BaseModel):
         return _coerce_number(value)
 
 
+ALLOWED_DOCUMENT_TYPES = {
+    "goods_invoice",
+    "service_act",
+    "upd",
+    "vat_invoice",
+    "cash_receipt",
+    "bso",
+    "transport_invoice",
+    "cash_out_order",
+}
+
+
 class DocumentSchema(BaseModel):
-    document_type: str = "receipt"
+    document_type: str = "cash_receipt"
     external_document_number: str | None = None
     incoming_number: str | None = None
     vendor: str | None = None
@@ -75,13 +87,23 @@ def _coerce_number(value: Any) -> Any:
 def _detect_document_type(current_type: str | None, raw_text: str | None) -> str:
     text = (raw_text or "").lower()
 
-    if any(token in text for token in ("товарная накладная", "накладная", "торг-12", "упд")):
-        return "invoice"
-    if any(token in text for token in ("акт выполненных работ", "акт оказанных услуг", "акт")):
-        return "act"
-    if any(token in text for token in ("кассовый чек", "фискальный чек", "чек ккт", "чек")):
-        return "receipt"
+    if any(token in text for token in ("универсальный передаточный документ", " упд", "упд ")):
+        return "upd"
+    if any(token in text for token in ("счет-фактура", "счёт-фактура")):
+        return "vat_invoice"
+    if any(token in text for token in ("товарная накладная", "торг-12")):
+        return "goods_invoice"
+    if any(token in text for token in ("транспортная накладная",)):
+        return "transport_invoice"
+    if any(token in text for token in ("акт выполненных работ", "акт оказанных услуг")):
+        return "service_act"
+    if any(token in text for token in ("бланк строгой отчетности", "бланк строгой отчётности", " бсо", "бсо ")):
+        return "bso"
+    if any(token in text for token in ("расходный кассовый ордер", "рко")):
+        return "cash_out_order"
+    if any(token in text for token in ("кассовый чек", "фискальный чек", "чек ккт", "кассовый документ", "чек")):
+        return "cash_receipt"
 
-    if current_type in {"receipt", "invoice", "act"}:
+    if current_type in ALLOWED_DOCUMENT_TYPES:
         return current_type
-    return "receipt"
+    return "unknown"

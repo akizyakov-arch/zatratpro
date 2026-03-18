@@ -70,6 +70,7 @@ class UserCard:
 @dataclass(slots=True)
 class InviteView:
     code: str
+    start_token: str
     role: str
     expires_at: datetime | None
     created_at: datetime
@@ -178,7 +179,7 @@ class ViewService:
                            FROM company_invites ci
                            WHERE ci.company_id = c.id
                              AND ci.role = 'manager'
-                             AND ci.status = 'active'
+                             AND ci.status IN ('new', 'active')
                              AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
                        ) AS has_active_manager_invite
                 FROM companies c
@@ -310,11 +311,11 @@ class ViewService:
                 raise CompanyAccessError("Компания не найдена.")
             invite_row = await connection.fetchrow(
                 """
-                SELECT code, role, expires_at, created_at
+                SELECT code, start_token, role, expires_at, created_at
                 FROM company_invites
                 WHERE company_id = $1
                   AND role = 'manager'
-                  AND status = 'active'
+                  AND status IN ('new', 'active')
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -643,7 +644,7 @@ class ViewService:
                     UPDATE company_invites
                     SET status = 'revoked'
                     WHERE company_id = $1
-                      AND status = 'active'
+                      AND status IN ('new', 'active')
                     """,
                     company_id,
                 )
@@ -660,7 +661,7 @@ class ViewService:
                 SET status = 'revoked'
                 WHERE company_id = $1
                   AND role = 'manager'
-                  AND status = 'active'
+                  AND status IN ('new', 'active')
                 """,
                 company_id,
             )

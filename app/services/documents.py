@@ -1,12 +1,23 @@
+from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 
 from aiogram.types import User
 
-from app.schemas.document import DocumentItem, DocumentSchema
+from app.schemas.document import ALLOWED_DOCUMENT_TYPES, DocumentItem, DocumentSchema
 from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyService, EMPLOYEE_ROLE
 from app.services.database import get_pool
 from app.services.projects import Project
+
+
+class DocumentValidationError(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
+class DuplicateCheckResult:
+    duplicate_document_id: int | None
+    is_exact_check_complete: bool
 
 
 class DocumentService:
@@ -30,6 +41,7 @@ class DocumentService:
             raise CompanyAccessError("Нельзя сохранить документ в проект другой компании.")
         if project.is_archived:
             raise CompanyAccessError("Нельзя сохранить документ в архивный проект.")
+        self._ensure_expense_document(document)
 
         pool = get_pool()
         document_date = _parse_document_datetime(document.date)
@@ -126,6 +138,98 @@ class DocumentService:
                     )
         return document_id
 
+    async def find_company_duplicate_document(
+        self,
+        telegram_user: User,
+        project: Project,
+        document: DocumentSchema,
+    ) -> DuplicateCheckResult:
+        member_role = await self.company_service.ensure_member_role(telegram_user.id)
+        if member_role not in ADMIN_ROLES | {EMPLOYEE_ROLE}:
+            raise CompanyAccessError("Недостаточно прав для проверки документа.")
+
+        active_company = await self.company_service.get_active_company_for_user(telegram_user.id)
+        if active_company.id != project.company_id:
+            raise CompanyAccessError("Нельзя проверять документ в проекте другой компании.")
+
+        document_date = _parse_document_datetime(document.date)
+        document_number = _document_number(document)
+        total_amount = _as_decimal(document.total, "0.01")
+        vendor_key = _normalize_vendor_key(document)
+        is_exact_check_complete = all(
+            value is not None
+            for value in (document_number, document_date, total_amount, vendor_key)
+        )
+        if not is_exact_check_complete:
+            return DuplicateCheckResult(duplicate_document_id=None, is_exact_check_complete=False)
+
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            duplicate_document_id = await self._find_company_duplicate_document(
+                connection=connection,
+                company_id=project.company_id,
+                document=document,
+                document_number=document_number,
+                document_date=document_date,
+                total_amount=total_amount,
+                vendor_key=vendor_key,
+            )
+        return DuplicateCheckResult(
+            duplicate_document_id=duplicate_document_id,
+            is_exact_check_complete=True,
+        )
+
+    def _ensure_expense_document(self, document: DocumentSchema) -> None:
+        if document.document_type not in ALLOWED_DOCUMENT_TYPES:
+            raise DocumentValidationError(
+                "Документ не относится к поддерживаемым затратным документам. Допустимы: товарная накладная, акт, УПД, счет-фактура, кассовый чек, БСО, транспортная накладная, расходный кассовый ордер."
+            )
+
+    async def _find_company_duplicate_document(
+        self,
+        connection,
+        company_id: int,
+        document: DocumentSchema,
+        document_number: str,
+        document_date: datetime,
+        total_amount: Decimal,
+        vendor_key: str,
+    ) -> int | None:
+        return await connection.fetchval(
+            """
+            SELECT d.id
+            FROM documents d
+            WHERE d.company_id = $1
+              AND d.document_type = $2
+              AND LOWER(
+                    REGEXP_REPLACE(
+                        COALESCE(NULLIF(d.external_document_number, ''), d.incoming_number, ''),
+                        '[^[:alnum:]]+',
+                        '',
+                        'g'
+                    )
+                  ) = $3
+              AND d.document_date = $4
+              AND d.total_amount = $5
+              AND LOWER(
+                    REGEXP_REPLACE(
+                        COALESCE(NULLIF(d.vendor_inn, ''), d.vendor, ''),
+                        '[^[:alnum:]]+',
+                        '',
+                        'g'
+                    )
+                  ) = $6
+            ORDER BY d.id DESC
+            LIMIT 1
+            """,
+            company_id,
+            document.document_type,
+            document_number,
+            document_date,
+            total_amount,
+            vendor_key,
+        )
+
 
 def _parse_document_datetime(value: str | None) -> datetime | None:
     if not value:
@@ -158,3 +262,19 @@ def _as_decimal(value: float | int | None, quantize_to: str) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value)).quantize(Decimal(quantize_to))
+
+
+def _normalize_text_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = "".join(ch for ch in value.lower().strip() if ch.isalnum())
+    return cleaned or None
+
+
+
+def _document_number(document: DocumentSchema) -> str | None:
+    return _normalize_text_key(document.external_document_number) or _normalize_text_key(document.incoming_number)
+
+
+def _normalize_vendor_key(document: DocumentSchema) -> str | None:
+    return _normalize_text_key(document.vendor_inn) or _normalize_text_key(document.vendor)
