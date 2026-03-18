@@ -18,7 +18,7 @@ async def begin_document_flow(telegram_user_id: int) -> None:
         await connection.execute(
             """
             INSERT INTO pending_documents (telegram_user_id, ocr_text, normalized_text, expires_at)
-            VALUES ($1, NULL, NULL, NOW() + $2::interval)
+            VALUES ($1, NULL, NULL, NOW() + make_interval(mins => $2))
             ON CONFLICT (telegram_user_id)
             DO UPDATE SET
                 ocr_text = NULL,
@@ -27,7 +27,7 @@ async def begin_document_flow(telegram_user_id: int) -> None:
                 expires_at = EXCLUDED.expires_at
             """,
             telegram_user_id,
-            f"{PENDING_DOCUMENT_TTL_MINUTES} minutes",
+            PENDING_DOCUMENT_TTL_MINUTES,
         )
 
 
@@ -51,7 +51,7 @@ async def store_pending_document(telegram_user_id: int, pending_document: Pendin
         await connection.execute(
             """
             INSERT INTO pending_documents (telegram_user_id, ocr_text, normalized_text, expires_at)
-            VALUES ($1, $2, $3, NOW() + $4::interval)
+            VALUES ($1, $2, $3, NOW() + make_interval(mins => $4))
             ON CONFLICT (telegram_user_id)
             DO UPDATE SET
                 ocr_text = EXCLUDED.ocr_text,
@@ -62,7 +62,7 @@ async def store_pending_document(telegram_user_id: int, pending_document: Pendin
             telegram_user_id,
             pending_document.ocr_text,
             pending_document.normalized_text,
-            f"{PENDING_DOCUMENT_TTL_MINUTES} minutes",
+            PENDING_DOCUMENT_TTL_MINUTES,
         )
 
 
