@@ -5,7 +5,7 @@ from aiogram.types import Message
 from app.handlers.common import company_service, main_menu_markup, person_name
 from app.services.companies import CompanyAccessError
 from app.state.pending_actions import set_pending_action
-from app.ui.main_menu import MENU_BUTTONS
+from app.ui.main_menu import MAIN_MENU_TEXT, MENU_BUTTONS
 
 router = Router()
 
@@ -21,7 +21,9 @@ async def join_company(message: Message, invite_code: str) -> None:
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))
         return
-    await message.answer(f'Доступ к компании "{company.name}" подключен.', reply_markup=await main_menu_markup(message))
+    menu_markup = await main_menu_markup(message)
+    await message.answer(f'Доступ к компании "{company.name}" подключен.', reply_markup=menu_markup)
+    await message.answer(MAIN_MENU_TEXT, reply_markup=menu_markup)
 
 
 @router.message(Command('join'))
