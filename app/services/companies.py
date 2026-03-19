@@ -301,7 +301,7 @@ class CompanyService:
                         SET manager_user_id = $2,
                             updated_at = NOW()
                         WHERE id = $1
-                          AND status = 'new'
+                          AND status = 'active'
                           AND (manager_user_id IS NULL OR manager_user_id = $2)
                         RETURNING id
                         """,
