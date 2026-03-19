@@ -577,15 +577,17 @@ class CompanyService:
         for _ in range(10):
             code = _generate_invite_code()
             try:
+                start_token = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(24))
                 await connection.execute(
                     """
-                    INSERT INTO company_invites (company_id, role, code, status, created_by_user_id, expires_at)
-                    VALUES ($1, $2, $3, 'active', $4, NOW() + make_interval(hours => $5))
+                    INSERT INTO company_invites (company_id, role, code, status, created_by_user_id, start_token, expires_at)
+                    VALUES ($1, $2, $3, 'active', $4, $5, NOW() + make_interval(hours => $6))
                     """,
                     company_id,
                     role,
                     code,
                     inviter_id,
+                    start_token,
                     INVITE_TTL_HOURS,
                 )
                 return code
