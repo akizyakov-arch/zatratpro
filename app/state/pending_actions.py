@@ -55,7 +55,10 @@ async def get_pending_action(telegram_user_id: int) -> PendingAction | None:
         )
     if row is None:
         return None
-    return PendingAction(action=row["action"], payload=dict(row["payload"] or {}))
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return PendingAction(action=row["action"], payload=dict(payload or {}))
 
 
 async def pop_pending_action(telegram_user_id: int) -> PendingAction | None:
