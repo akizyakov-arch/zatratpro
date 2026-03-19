@@ -440,7 +440,7 @@ class CompanyService:
                     SELECT company_id, role
                     FROM company_members
                     WHERE user_id = $1
-                      AND status = 'new'
+                      AND status = 'active'
                     ORDER BY joined_at DESC, id DESC
                     LIMIT 1
                     """,
@@ -554,7 +554,7 @@ class CompanyService:
                         removed_at = NOW()
                     WHERE company_id = $1
                       AND user_id = $2
-                      AND status = 'new'
+                      AND status = 'active'
                     """,
                     membership["company_id"],
                     target_user_id,
