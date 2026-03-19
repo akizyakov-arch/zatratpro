@@ -1,3 +1,4 @@
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message, ReplyKeyboardMarkup
 
 from app.services.access import AccessService
@@ -5,7 +6,9 @@ from app.services.companies import CompanyService
 from app.services.documents import DocumentService
 from app.services.projects import ProjectService
 from app.services.views import ViewService
-from app.ui.main_menu import build_main_menu_keyboard
+from app.state.pending_actions import clear_pending_action
+from app.state.pending_documents import clear_document_flow
+from app.ui.main_menu import MAIN_MENU_TEXT, build_main_menu_keyboard
 
 access_service = AccessService()
 company_service = CompanyService()
@@ -34,6 +37,29 @@ async def main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
 
 async def main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
     return await main_menu_markup_for_user(message.from_user)
+
+
+async def main_menu_markup_for_telegram_id(telegram_user_id: int) -> ReplyKeyboardMarkup:
+    context = await company_service.get_user_context(telegram_user_id)
+    return build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.can_view_reports,
+    )
+
+
+async def notify_membership_update(bot, telegram_user_id: int, text: str) -> None:
+    await clear_pending_action(telegram_user_id)
+    await clear_document_flow(telegram_user_id)
+    try:
+        await bot.send_message(telegram_user_id, text)
+        await bot.send_message(
+            telegram_user_id,
+            MAIN_MENU_TEXT,
+            reply_markup=await main_menu_markup_for_telegram_id(telegram_user_id),
+        )
+    except TelegramAPIError:
+        return
 
 
 async def help_menu_kind_for_user(user) -> str:

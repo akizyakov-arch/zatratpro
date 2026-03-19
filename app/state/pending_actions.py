@@ -71,6 +71,12 @@ async def pop_pending_action(telegram_user_id: int) -> PendingAction | None:
     return pending_action
 
 
+async def clear_pending_action(telegram_user_id: int) -> None:
+    pool = get_pool()
+    async with pool.acquire() as connection:
+        await connection.execute("DELETE FROM pending_actions WHERE telegram_user_id = $1", telegram_user_id)
+
+
 async def cleanup_expired_pending_actions() -> None:
     pool = get_pool()
     async with pool.acquire() as connection:

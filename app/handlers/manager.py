@@ -10,6 +10,7 @@ from app.handlers.common import (
     format_project_card,
     main_menu_markup,
     main_menu_markup_for_user,
+    notify_membership_update,
     project_service,
     view_service,
 )
@@ -286,6 +287,11 @@ async def employee_remove_confirm(callback: CallbackQuery) -> None:
         return
     await callback.answer('Сотрудник исключен.')
     await callback.message.answer(f'Сотрудник исключен: {member.full_name or member.username or member.telegram_user_id}.')
+    await notify_membership_update(
+        callback.bot,
+        member.telegram_user_id,
+        'Тебя исключили из компании. Доступ к рабочим разделам отключен.',
+    )
 
 
 @router.message(F.text == MENU_BUTTONS['my_company'])

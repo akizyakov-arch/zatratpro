@@ -9,6 +9,7 @@ from app.handlers.common import (
     format_user_card,
     main_menu_markup,
     main_menu_markup_for_user,
+    notify_membership_update,
     person_name,
     view_service,
 )
@@ -204,6 +205,13 @@ async def user_assign_company_callback(callback: CallbackQuery) -> None:
     await callback.answer('Пользователь привязан.')
     await callback.message.answer(f'Пользователь привязан к компании как {member.role}.', reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
     await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+    role_label = 'руководитель' if member.role == 'manager' else 'сотрудник'
+    company_name = user.company_name or 'компания'
+    await notify_membership_update(
+        callback.bot,
+        member.telegram_user_id,
+        f'Тебя подключили к компании "{company_name}". Роль: {role_label}.',
+    )
 
 
 @router.callback_query(F.data.startswith(OWNER_USER_REMOVE_PREFIX))
@@ -232,6 +240,11 @@ async def user_remove_confirm(callback: CallbackQuery) -> None:
         reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company),
     )
     await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+    await notify_membership_update(
+        callback.bot,
+        member.telegram_user_id,
+        'Тебя исключили из компании. Доступ к рабочим разделам отключен.',
+    )
 
 
 @router.callback_query(F.data == OWNER_COMPANIES_CALLBACK)
