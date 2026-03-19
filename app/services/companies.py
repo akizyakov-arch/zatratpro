@@ -240,7 +240,7 @@ class CompanyService:
                     FROM company_invites AS ci
                     JOIN companies AS c ON c.id = ci.company_id
                     WHERE ci.code = $1
-                      AND ci.status = 'active'
+                      AND ci.status = 'new'
                       AND c.status = 'active'
                       AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
                     """,
@@ -301,7 +301,7 @@ class CompanyService:
                         SET manager_user_id = $2,
                             updated_at = NOW()
                         WHERE id = $1
-                          AND status = 'active'
+                          AND status = 'new'
                           AND (manager_user_id IS NULL OR manager_user_id = $2)
                         RETURNING id
                         """,
@@ -440,7 +440,7 @@ class CompanyService:
                     SELECT company_id, role
                     FROM company_members
                     WHERE user_id = $1
-                      AND status = 'active'
+                      AND status = 'new'
                     ORDER BY joined_at DESC, id DESC
                     LIMIT 1
                     """,
@@ -554,7 +554,7 @@ class CompanyService:
                         removed_at = NOW()
                     WHERE company_id = $1
                       AND user_id = $2
-                      AND status = 'active'
+                      AND status = 'new'
                     """,
                     membership["company_id"],
                     target_user_id,
@@ -581,7 +581,7 @@ class CompanyService:
                 await connection.execute(
                     """
                     INSERT INTO company_invites (company_id, role, code, status, created_by_user_id, start_token, expires_at)
-                    VALUES ($1, $2, $3, 'active', $4, $5, NOW() + make_interval(hours => $6))
+                    VALUES ($1, $2, $3, 'new', $4, $5, NOW() + make_interval(hours => $6))
                     """,
                     company_id,
                     role,
@@ -602,7 +602,7 @@ class CompanyService:
             SET status = 'revoked'
             WHERE company_id = $1
               AND role = $2
-              AND status = 'active'
+              AND status = 'new'
             """,
             company_id,
             role,
@@ -613,7 +613,7 @@ class CompanyService:
             """
             UPDATE company_invites
             SET status = 'expired'
-            WHERE status = 'active'
+            WHERE status = 'new'
               AND expires_at IS NOT NULL
               AND expires_at <= NOW()
             """
@@ -660,7 +660,7 @@ class CompanyService:
             FROM company_members
             WHERE company_id = $1
               AND role = ANY($2::text[])
-              AND status = 'active'
+              AND status = 'new'
             """,
             company_id,
             list(WORKER_ROLES),
@@ -674,7 +674,7 @@ class CompanyService:
                 FROM company_members
                 WHERE company_id = $1
                   AND role = $2
-                  AND status = 'active'
+                  AND status = 'new'
                 LIMIT 1
                 """,
                 company_id,
