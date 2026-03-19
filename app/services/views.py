@@ -259,7 +259,7 @@ class ViewService:
                            FROM company_invites ci
                            WHERE ci.company_id = c.id
                              AND ci.role = 'manager'
-                             AND ci.status = 'active'
+                             AND ci.status = 'new'
                              AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
                        ) AS has_active_manager_invite
                 FROM companies c

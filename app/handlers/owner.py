@@ -15,6 +15,8 @@ from app.handlers.common import (
 from app.services.companies import CompanyAccessError
 from app.state.pending_actions import set_pending_action
 from app.ui.company import (
+    OWNER_COMPANIES_ACTIVE_CALLBACK,
+    OWNER_COMPANIES_ARCHIVED_CALLBACK,
     OWNER_COMPANIES_CALLBACK,
     OWNER_COMPANY_ARCHIVE_CONFIRM_PREFIX,
     OWNER_COMPANY_ARCHIVE_PREFIX,
@@ -32,6 +34,7 @@ from app.ui.company import (
     OWNER_USER_VIEW_PREFIX,
     build_companies_keyboard,
     build_company_actions_keyboard,
+    build_owner_companies_menu_keyboard,
     build_company_members_keyboard,
     build_confirm_keyboard,
     build_owner_user_card_keyboard,
@@ -65,15 +68,11 @@ async def create_company_command(message: Message, command: CommandObject) -> No
 async def companies_entry(message: Message) -> None:
     if message.from_user is None:
         return
-    try:
-        companies = await view_service.list_companies(message.from_user.id)
-    except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+    context = await ensure_context(message)
+    if context is None or context.platform_role != 'owner':
+        await message.answer('Раздел доступен только owner.', reply_markup=await main_menu_markup(message))
         return
-    if not companies:
-        await message.answer('Компаний пока нет.', reply_markup=await main_menu_markup(message))
-        return
-    await message.answer('Компании:', reply_markup=build_companies_keyboard(companies))
+    await message.answer('Компании:', reply_markup=build_owner_companies_menu_keyboard())
 
 
 @router.message(F.text == MENU_BUTTONS['users'])
@@ -237,15 +236,48 @@ async def user_remove_confirm(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == OWNER_COMPANIES_CALLBACK)
 async def companies_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await callback.answer()
+    await callback.message.answer('Компании:', reply_markup=build_owner_companies_menu_keyboard())
+
+
+@router.callback_query(F.data == OWNER_COMPANIES_ACTIVE_CALLBACK)
+async def active_companies_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     try:
-        companies = await view_service.list_companies(callback.from_user.id)
+        companies = [company for company in await view_service.list_companies(callback.from_user.id) if company.is_active]
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer('Компании:', reply_markup=build_companies_keyboard(companies))
+    if not companies:
+        await callback.message.answer('Активных компаний пока нет.', reply_markup=build_owner_companies_menu_keyboard())
+        return
+    await callback.message.answer(
+        'Активные компании:',
+        reply_markup=build_companies_keyboard(companies, back_callback=OWNER_COMPANIES_CALLBACK),
+    )
+
+
+@router.callback_query(F.data == OWNER_COMPANIES_ARCHIVED_CALLBACK)
+async def archived_companies_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        companies = [company for company in await view_service.list_companies(callback.from_user.id) if not company.is_active]
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer()
+    if not companies:
+        await callback.message.answer('Архивированных компаний пока нет.', reply_markup=build_owner_companies_menu_keyboard())
+        return
+    await callback.message.answer(
+        'Архивированные компании:',
+        reply_markup=build_companies_keyboard(companies, back_callback=OWNER_COMPANIES_CALLBACK),
+    )
 
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_VIEW_PREFIX))

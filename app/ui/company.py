@@ -6,6 +6,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 NAV_MAIN_CALLBACK = "nav:main"
 
 OWNER_COMPANIES_CALLBACK = "owner:companies"
+OWNER_COMPANIES_ACTIVE_CALLBACK = "owner:companies:active"
+OWNER_COMPANIES_ARCHIVED_CALLBACK = "owner:companies:archived"
 OWNER_USERS_CALLBACK = "owner:users"
 OWNER_COMPANY_VIEW_PREFIX = "owner:company:view:"
 OWNER_COMPANY_ISSUE_INVITE_PREFIX = "owner:company:issue_invite:"
@@ -40,12 +42,22 @@ MANAGER_EMPLOYEE_REMOVE_PREFIX = "manager:employee:remove:"
 MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX = "manager:employee:remove_confirm:"
 
 
-def build_companies_keyboard(companies: list[Any]) -> InlineKeyboardMarkup:
+def build_owner_companies_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Активные компании", callback_data=OWNER_COMPANIES_ACTIVE_CALLBACK)],
+            [InlineKeyboardButton(text="Архивированные компании", callback_data=OWNER_COMPANIES_ARCHIVED_CALLBACK)],
+            [InlineKeyboardButton(text="Назад", callback_data=NAV_MAIN_CALLBACK)],
+        ]
+    )
+
+
+def build_companies_keyboard(companies: list[Any], back_callback: str = OWNER_COMPANIES_CALLBACK) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=company.name, callback_data=f"{OWNER_COMPANY_VIEW_PREFIX}{company.id}")]
         for company in companies
     ]
-    rows.append([InlineKeyboardButton(text="Назад", callback_data=NAV_MAIN_CALLBACK)])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
