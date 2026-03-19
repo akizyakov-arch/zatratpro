@@ -1,7 +1,7 @@
 from aiogram import F, Router
 from aiogram.types import Message
 
-from app.handlers.common import company_service, main_menu_markup, person_name, project_service, require_company_access
+from app.handlers.common import company_service, main_menu_markup, person_name, project_service, require_company_access, view_service
 from app.handlers.onboarding import join_company
 from app.services.companies import CompanyAccessError
 from app.state.pending_actions import get_pending_action, pop_pending_action
@@ -57,7 +57,7 @@ async def handle_pending_text(message: Message) -> None:
             return
         if pending_action.action == 'rename_project':
             project_id = int(pending_action.payload['project_id'])
-            await project_service.rename_project(message.from_user.id, project_id, text_value)
+            await view_service.rename_project(message.from_user.id, project_id, text_value)
             await message.answer('Проект переименован.', reply_markup=await main_menu_markup(message))
             return
     except CompanyAccessError as exc:
