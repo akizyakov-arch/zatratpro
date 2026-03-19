@@ -1,11 +1,13 @@
 from aiogram.types import Message, ReplyKeyboardMarkup
 
+from app.services.access import AccessService
 from app.services.companies import CompanyService
 from app.services.documents import DocumentService
 from app.services.projects import ProjectService
 from app.services.views import ViewService
 from app.ui.main_menu import build_main_menu_keyboard
 
+access_service = AccessService()
 company_service = CompanyService()
 project_service = ProjectService()
 document_service = DocumentService()
@@ -16,15 +18,13 @@ NL = chr(10)
 async def ensure_context(message: Message):
     if message.from_user is None:
         return None
-    await company_service.ensure_platform_user(message.from_user)
-    return await company_service.get_user_context(message.from_user.id)
+    return await access_service.get_access_context(message.from_user)
 
 
 async def main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
     if user is None:
         return build_main_menu_keyboard(has_company=False)
-    await company_service.ensure_platform_user(user)
-    context = await company_service.get_user_context(user.id)
+    context = await access_service.get_access_context(user)
     return build_main_menu_keyboard(
         menu_kind=context.menu_kind,
         has_company=context.has_company,
@@ -39,8 +39,7 @@ async def main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
 async def help_menu_kind_for_user(user) -> str:
     if user is None:
         return 'employee'
-    await company_service.ensure_platform_user(user)
-    context = await company_service.get_user_context(user.id)
+    context = await access_service.get_access_context(user)
     return context.menu_kind
 
 

@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.schemas.document import DocumentSchema
+from app.services.access import AccessService
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService, DocumentValidationError
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 project_service = ProjectService()
 document_service = DocumentService()
 company_service = CompanyService()
+access_service = AccessService()
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
@@ -48,8 +50,7 @@ OCR_RETRY_DELAY_SECONDS = 3
 async def _main_menu_markup_for_user(user) -> object:
     if user is None:
         return build_main_menu_keyboard(has_company=False)
-    await company_service.ensure_platform_user(user)
-    context = await company_service.get_user_context(user.id)
+    context = await access_service.get_access_context(user)
     return build_main_menu_keyboard(
         menu_kind=context.menu_kind,
         has_company=context.has_company,
