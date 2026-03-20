@@ -62,7 +62,9 @@ async def create_company_command(message: Message, command: CommandObject) -> No
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))
         return
-    await message.answer(f'Компания создана: {company.name}. Invite для первого manager: {invite_code}', reply_markup=await main_menu_markup(message))
+    await message.answer(f'Компания создана: {company.name}.', reply_markup=await main_menu_markup(message))
+    await message.answer('Invite-код для первого manager:')
+    await message.answer(invite_code)
 
 
 @router.message(F.text == MENU_BUTTONS['companies'])
@@ -319,7 +321,8 @@ async def company_issue_invite_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer('Invite выдан.')
-    await callback.message.answer(f'Invite для manager: {code}', reply_markup=await main_menu_markup_for_user(callback.from_user))
+    await callback.message.answer('Invite для manager:', reply_markup=await main_menu_markup_for_user(callback.from_user))
+    await callback.message.answer(code)
 
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_SHOW_INVITE_PREFIX))
@@ -337,7 +340,8 @@ async def company_show_invite_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     expires = card.invite.expires_at.strftime('%Y-%m-%d %H:%M') if card.invite.expires_at else 'без срока'
-    await callback.message.answer(f'Текущий invite: {card.invite.code}. Действует до: {expires}')
+    await callback.message.answer(f'Текущий invite. Действует до: {expires}')
+    await callback.message.answer(card.invite.code)
 
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_RESET_INVITE_PREFIX))

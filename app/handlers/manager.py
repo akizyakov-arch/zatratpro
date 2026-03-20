@@ -60,7 +60,8 @@ async def invite_command(message: Message, command: CommandObject) -> None:
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))
         return
-    await message.answer(f'Invite-код для сотрудника: {code}', reply_markup=await main_menu_markup(message))
+    await message.answer('Invite-код для сотрудника:', reply_markup=await main_menu_markup(message))
+    await message.answer(code)
 
 
 @router.message(F.text == MENU_BUTTONS['projects'])
@@ -249,7 +250,8 @@ async def employee_invite_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(f'Invite-код для сотрудника: {code}')
+    await callback.message.answer('Invite-код для сотрудника:')
+    await callback.message.answer(code)
 
 
 @router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_VIEW_PREFIX))
