@@ -3,6 +3,7 @@ import logging
 import sys
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from app.config import get_settings
 from app.handlers.common_menu import router as common_menu_router
@@ -40,7 +41,10 @@ async def main() -> None:
     configure_logging()
     settings = get_settings()
 
-    bot = Bot(token=settings.telegram_bot_token)
+    session = AiohttpSession(proxy=settings.telegram_proxy_url) if settings.telegram_proxy_url else None
+    bot = Bot(token=settings.telegram_bot_token, session=session)
+    if settings.telegram_proxy_url:
+        logging.getLogger(__name__).info("Telegram Bot API proxy enabled")
     dispatcher = Dispatcher()
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
