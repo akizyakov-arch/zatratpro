@@ -40,7 +40,7 @@ async def main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
 
 
 async def main_menu_markup_for_telegram_id(telegram_user_id: int) -> ReplyKeyboardMarkup:
-    context = await company_service.get_user_context(telegram_user_id)
+    context = await access_service.get_access_context_by_telegram_id(telegram_user_id)
     return build_main_menu_keyboard(
         menu_kind=context.menu_kind,
         has_company=context.has_company,

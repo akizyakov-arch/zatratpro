@@ -44,12 +44,23 @@ class AccessService:
         self.company_service = CompanyService()
 
     async def get_access_context(self, telegram_user: User) -> AccessContext:
-        platform_user_id = await self.company_service.ensure_platform_user(telegram_user)
+        row = await self._fetch_access_row(telegram_user.id)
+        if row is None:
+            await self.company_service.ensure_platform_user(telegram_user)
+            row = await self._fetch_access_row(telegram_user.id)
+        return self._build_access_context(row, telegram_user.id)
+
+    async def get_access_context_by_telegram_id(self, telegram_user_id: int) -> AccessContext:
+        row = await self._fetch_access_row(telegram_user_id)
+        return self._build_access_context(row, telegram_user_id)
+
+    async def _fetch_access_row(self, telegram_user_id: int):
         pool = get_pool()
         async with pool.acquire() as connection:
-            row = await connection.fetchrow(
+            return await connection.fetchrow(
                 """
-                SELECT u.telegram_id,
+                SELECT u.id AS platform_user_id,
+                       u.telegram_id,
                        u.system_role,
                        active.company_id,
                        active.company_name,
@@ -74,11 +85,12 @@ class AccessService:
                     ORDER BY cm.joined_at DESC, cm.id DESC
                     LIMIT 1
                 ) AS active ON TRUE
-                WHERE u.id = $1
+                WHERE u.telegram_id = $1
                 """,
-                platform_user_id,
+                telegram_user_id,
             )
 
+    def _build_access_context(self, row, telegram_user_id: int) -> AccessContext:
         company = None
         company_role = None
         if row is not None and row["company_id"] is not None:
@@ -92,8 +104,8 @@ class AccessService:
             company_role = row["company_role"]
 
         return AccessContext(
-            platform_user_id=platform_user_id,
-            telegram_id=telegram_user.id,
+            platform_user_id=row["platform_user_id"] if row is not None else 0,
+            telegram_id=telegram_user_id,
             system_role=row["system_role"] if row is not None else "user",
             company=company,
             company_role=company_role,
