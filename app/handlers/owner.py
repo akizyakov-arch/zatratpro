@@ -5,10 +5,12 @@ from aiogram.types import CallbackQuery, Message
 from app.handlers.common import (
     company_service,
     ensure_context,
+    ensure_user_context,
+    main_menu_markup_for_user,
+    build_main_menu_markup_from_context,
     format_company_card,
     format_user_card,
     main_menu_markup,
-    main_menu_markup_for_user,
     notify_membership_update,
     person_name,
     view_service,
@@ -123,7 +125,10 @@ async def create_company_button(message: Message) -> None:
         await message.answer('Создавать компании может только owner.', reply_markup=await main_menu_markup(message))
         return
     await set_pending_action(message.from_user.id, 'create_company')
-    await message.answer(f'{person_name(message.from_user)}, отправь название новой компании.', reply_markup=await main_menu_markup(message))
+    await message.answer(
+        f'{person_name(message.from_user)}, отправь название новой компании.',
+        reply_markup=build_main_menu_markup_from_context(context),
+    )
 
 
 @router.callback_query(F.data == OWNER_USERS_CALLBACK)
@@ -321,7 +326,9 @@ async def company_issue_invite_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer('Invite выдан.')
-    await callback.message.answer('Invite для manager:', reply_markup=await main_menu_markup_for_user(callback.from_user))
+    context = await ensure_user_context(callback.from_user)
+    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user)
+    await callback.message.answer('Invite для manager:', reply_markup=reply_markup)
     await callback.message.answer(code)
 
 

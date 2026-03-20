@@ -3,13 +3,15 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
 from app.handlers.common import (
+    build_main_menu_markup_from_context,
     company_service,
     ensure_context,
+    ensure_user_context,
+    main_menu_markup_for_user,
     format_company_card,
     format_member_card,
     format_project_card,
     main_menu_markup,
-    main_menu_markup_for_user,
     notify_membership_update,
     project_service,
     view_service,
@@ -121,7 +123,9 @@ async def project_create_callback(callback: CallbackQuery) -> None:
         return
     await set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
-    await callback.message.answer('Отправь название нового проекта.', reply_markup=await main_menu_markup_for_user(callback.from_user))
+    context = await ensure_user_context(callback.from_user)
+    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user)
+    await callback.message.answer('Отправь название нового проекта.', reply_markup=reply_markup)
 
 
 @router.callback_query(F.data.startswith(MANAGER_PROJECT_VIEW_PREFIX))
@@ -145,7 +149,9 @@ async def project_rename_prompt(callback: CallbackQuery) -> None:
     project_id = int(callback.data.removeprefix(MANAGER_PROJECT_RENAME_PREFIX))
     await set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
     await callback.answer()
-    await callback.message.answer('Отправь новое название проекта.', reply_markup=await main_menu_markup_for_user(callback.from_user))
+    context = await ensure_user_context(callback.from_user)
+    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user)
+    await callback.message.answer('Отправь новое название проекта.', reply_markup=reply_markup)
 
 
 @router.callback_query(F.data.startswith(MANAGER_PROJECT_ARCHIVE_PREFIX))

@@ -18,21 +18,29 @@ view_service = ViewService()
 NL = chr(10)
 
 
-async def ensure_context(message: Message):
-    if message.from_user is None:
+async def ensure_user_context(user):
+    if user is None:
         return None
-    return await access_service.get_access_context(message.from_user)
+    return await access_service.get_access_context(user)
+
+
+async def ensure_context(message: Message):
+    return await ensure_user_context(message.from_user)
+
+
+def build_main_menu_markup_from_context(context) -> ReplyKeyboardMarkup:
+    return build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.can_view_reports,
+    )
 
 
 async def main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
     if user is None:
         return build_main_menu_keyboard(has_company=False)
     context = await access_service.get_access_context(user)
-    return build_main_menu_keyboard(
-        menu_kind=context.menu_kind,
-        has_company=context.has_company,
-        can_view_reports=context.can_view_reports,
-    )
+    return build_main_menu_markup_from_context(context)
 
 
 async def main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
@@ -41,11 +49,7 @@ async def main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
 
 async def main_menu_markup_for_telegram_id(telegram_user_id: int) -> ReplyKeyboardMarkup:
     context = await access_service.get_access_context_by_telegram_id(telegram_user_id)
-    return build_main_menu_keyboard(
-        menu_kind=context.menu_kind,
-        has_company=context.has_company,
-        can_view_reports=context.can_view_reports,
-    )
+    return build_main_menu_markup_from_context(context)
 
 
 async def notify_membership_update(bot, telegram_user_id: int, text: str) -> None:
