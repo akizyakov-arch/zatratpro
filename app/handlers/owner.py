@@ -75,7 +75,10 @@ async def companies_entry(message: Message) -> None:
         return
     context = await ensure_context(message)
     if context is None or context.platform_role != 'owner':
-        await message.answer('Раздел доступен только owner.', reply_markup=await main_menu_markup(message))
+        await message.answer(
+            'Раздел доступен только owner.',
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+        )
         return
     await message.answer('Компании:', reply_markup=build_owner_companies_menu_keyboard())
 
@@ -122,7 +125,10 @@ async def create_company_button(message: Message) -> None:
         return
     context = await ensure_context(message)
     if context is None or context.platform_role != 'owner':
-        await message.answer('Создавать компании может только owner.', reply_markup=await main_menu_markup(message))
+        await message.answer(
+            'Создавать компании может только owner.',
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+        )
         return
     await set_pending_action(message.from_user.id, 'create_company')
     await message.answer(

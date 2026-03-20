@@ -1,7 +1,7 @@
 from aiogram import F, Router
 from aiogram.types import Message
 
-from app.handlers.common import company_service, main_menu_markup, person_name, project_service, require_company_access, view_service
+from app.handlers.common import build_main_menu_markup_from_context, company_service, ensure_context, main_menu_markup, person_name, project_service, require_company_access, view_service
 from app.handlers.onboarding import join_company
 from app.services.companies import CompanyAccessError
 from app.state.pending_actions import pop_pending_action
@@ -14,11 +14,14 @@ router = Router()
 
 @router.message(F.text == MENU_BUTTONS['upload_document'])
 async def upload_document_entry(message: Message) -> None:
-    if not await require_company_access(message):
-        return
+    context = await ensure_context(message)
+    if context is None or not context.has_company:
+        if not await require_company_access(message):
+            return
+        context = await ensure_context(message)
     await message.answer(
         f'{person_name(message.from_user)}, отправь фото документа. После preview я предложу проекты кнопками.',
-        reply_markup=await main_menu_markup(message),
+        reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
     )
 
 

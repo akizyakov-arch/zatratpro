@@ -1,7 +1,7 @@
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from app.handlers.common import document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
+from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, main_menu_markup, view_service
 from app.services.companies import CompanyAccessError
 from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
@@ -56,7 +56,10 @@ async def reports_menu_entry(message: Message) -> None:
         return
     context = await ensure_context(message)
     if context is None or not context.can_view_reports:
-        await message.answer('Раздел отчетов доступен только manager.', reply_markup=await main_menu_markup(message))
+        await message.answer(
+            'Раздел отчетов доступен только manager.',
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+        )
         return
     await message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
 

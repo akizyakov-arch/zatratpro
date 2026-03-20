@@ -72,7 +72,10 @@ async def projects_menu_entry(message: Message) -> None:
         return
     context = await ensure_context(message)
     if context is None or not context.can_manage_company:
-        await message.answer('Раздел проектов доступен только manager.', reply_markup=await main_menu_markup(message))
+        await message.answer(
+            'Раздел проектов доступен только manager.',
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+        )
         return
     await message.answer('Раздел проектов:', reply_markup=build_projects_menu_keyboard())
 
@@ -217,7 +220,10 @@ async def employees_menu_entry(message: Message) -> None:
         return
     context = await ensure_context(message)
     if context is None or not context.can_manage_company:
-        await message.answer('Раздел сотрудников доступен только manager.', reply_markup=await main_menu_markup(message))
+        await message.answer(
+            'Раздел сотрудников доступен только manager.',
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+        )
         return
     await message.answer('Раздел сотрудников:', reply_markup=build_employees_menu_keyboard())
 
