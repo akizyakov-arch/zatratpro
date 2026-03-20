@@ -3,6 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from app.handlers.common import help_menu_kind_for_user, person_name
+from app.ui.help import HELP_TOPICS
 from app.ui.help import (
     HELP_MENU_PREFIX,
     HELP_TOPIC_PREFIX,
@@ -31,12 +32,11 @@ async def help_menu_callback(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
     await callback.answer()
-    actual_menu_kind = await help_menu_kind_for_user(callback.from_user)
-    requested_menu_kind = callback.data.removeprefix(HELP_MENU_PREFIX) or actual_menu_kind
-    if requested_menu_kind != actual_menu_kind:
+    menu_kind = callback.data.removeprefix(HELP_MENU_PREFIX) or 'employee'
+    if menu_kind not in HELP_TOPICS:
         await callback.message.answer('Раздел помощи недоступен.')
         return
-    await callback.message.answer('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(actual_menu_kind))
+    await callback.message.answer('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
 
 
 @router.callback_query(F.data.startswith(HELP_TOPIC_PREFIX))
@@ -50,8 +50,7 @@ async def help_topic_callback(callback: CallbackQuery) -> None:
     except ValueError:
         await callback.message.answer('Тема помощи недоступна.')
         return
-    actual_menu_kind = await help_menu_kind_for_user(callback.from_user)
-    if menu_kind != actual_menu_kind:
+    if menu_kind not in HELP_TOPICS:
         await callback.message.answer('Тема помощи недоступна.')
         return
     text_value = get_help_topic_text(menu_kind, topic_id)
