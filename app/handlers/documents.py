@@ -146,26 +146,34 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
     )
 
 
-async def _ensure_company_access(message: Message) -> bool:
+async def _get_access_context_or_reply(message: Message):
     if message.from_user is None:
         await message.answer('Не удалось определить пользователя.', reply_markup=await _main_menu_markup(message))
-        return False
-    try:
-        await company_service.get_active_company_for_user(message.from_user.id)
-    except CompanyAccessError:
+        return None
+    context = await access_service.get_access_context(message.from_user)
+    if not context.has_company:
         await message.answer(
             'Сначала нужно получить доступ к компании. Используй invite-код руководителя и выполни /join КОД.',
-            reply_markup=await _main_menu_markup(message),
+            reply_markup=build_main_menu_keyboard(
+                menu_kind=context.menu_kind,
+                has_company=context.has_company,
+                can_view_reports=context.can_view_reports,
+            ),
         )
-        return False
-    return True
+        return None
+    return context
 
 
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
-    menu_markup = await _main_menu_markup(message)
-    if not await _ensure_company_access(message):
+    context = await _get_access_context_or_reply(message)
+    if context is None:
         return
+    menu_markup = build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.can_view_reports,
+    )
     if not message.photo or message.from_user is None:
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
@@ -262,7 +270,6 @@ async def process_photo(message: Message) -> None:
 
     try:
         projects = await project_service.list_active_projects(message.from_user.id)
-        context = await company_service.get_user_context(message.from_user.id)
     except CompanyAccessError as exc:
         await clear_document_flow(message.from_user.id)
         await message.answer(str(exc), reply_markup=menu_markup)

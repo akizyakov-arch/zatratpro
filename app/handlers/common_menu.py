@@ -4,7 +4,7 @@ from aiogram.types import Message
 from app.handlers.common import company_service, main_menu_markup, person_name, project_service, require_company_access, view_service
 from app.handlers.onboarding import join_company
 from app.services.companies import CompanyAccessError
-from app.state.pending_actions import get_pending_action, pop_pending_action
+from app.state.pending_actions import pop_pending_action
 from app.state.pending_documents import get_pending_document
 from app.ui.main_menu import MENU_BUTTONS
 from app.ui.projects import build_projects_keyboard as build_document_projects_keyboard
@@ -27,11 +27,10 @@ async def handle_pending_text(message: Message) -> None:
     if message.from_user is None or not message.text:
         await message.answer('Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.', reply_markup=await main_menu_markup(message))
         return
-    pending_action = await get_pending_action(message.from_user.id)
+    pending_action = await pop_pending_action(message.from_user.id)
     if pending_action is None:
         await message.answer('Используй кнопки главного меню или отправь фото документа.', reply_markup=await main_menu_markup(message))
         return
-    await pop_pending_action(message.from_user.id)
     text_value = message.text.strip()
     try:
         if pending_action.action == 'join_company':
