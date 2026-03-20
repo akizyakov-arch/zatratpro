@@ -24,6 +24,7 @@ from app.state.pending_documents import (
     pop_pending_document,
     store_pending_document,
 )
+from app.handlers.common import main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
 from app.ui.projects import (
     DOCUMENT_DUPLICATE_CANCEL_CALLBACK,
@@ -45,17 +46,6 @@ access_service = AccessService()
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
-
-
-async def _main_menu_markup_for_user(user) -> object:
-    if user is None:
-        return build_main_menu_keyboard(has_company=False)
-    context = await access_service.get_access_context(user)
-    return build_main_menu_keyboard(
-        menu_kind=context.menu_kind,
-        has_company=context.has_company,
-        can_view_reports=context.can_view_reports,
-    )
 
 
 async def _main_menu_markup(message: Message) -> object:

@@ -80,9 +80,9 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
     }[callback.data]
     if report_kind == REPORT_KIND_PROJECTS:
+        await callback.answer()
         summary = await view_service.get_manager_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
         rows = await view_service.list_report_projects(callback.from_user.id, REPORT_PERIOD_ALL)
-        await callback.answer()
         await callback.message.answer(
             format_project_report(summary, rows),
             reply_markup=build_project_report_keyboard(REPORT_PERIOD_ALL, rows),
@@ -90,9 +90,9 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         )
         return
     if report_kind == REPORT_KIND_DUPLICATES:
+        await callback.answer()
         rows = await view_service.list_duplicate_report_rows(callback.from_user.id, REPORT_PERIOD_ALL)
         summary = await view_service.get_duplicate_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
-        await callback.answer()
         await callback.message.answer(
             format_duplicate_report(summary, rows),
             reply_markup=build_duplicate_report_keyboard(REPORT_PERIOD_ALL, rows),
@@ -100,8 +100,8 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         )
         return
     if report_kind == REPORT_KIND_EMPLOYEES:
-        rows = await view_service.list_report_employees(callback.from_user.id, REPORT_PERIOD_ALL)
         await callback.answer()
+        rows = await view_service.list_report_employees(callback.from_user.id, REPORT_PERIOD_ALL)
         if not rows:
             await callback.message.answer('Сотрудников с затратами пока нет.', reply_markup=build_reports_menu_keyboard())
             return
@@ -127,18 +127,19 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         return
     try:
         if report_kind == REPORT_KIND_PROJECTS:
+            await callback.answer()
             summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
             rows = await view_service.list_report_projects(callback.from_user.id, period)
-            await callback.answer()
             await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_DUPLICATES:
+            await callback.answer()
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
             duplicate_summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-            await callback.answer()
             await callback.message.answer(format_duplicate_report(duplicate_summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_EXPORT:
+            await callback.answer()
             summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
             projects = await view_service.list_report_projects(callback.from_user.id, period)
             employees = await view_service.list_report_employees(callback.from_user.id, period)
@@ -146,7 +147,6 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             documents = await view_service.list_report_documents_for_company(callback.from_user.id, period)
             items = await view_service.list_report_items_for_company(callback.from_user.id, period)
             filename, payload_bytes = build_manager_report_workbook(period, summary, projects, employees, duplicates, documents, items)
-            await callback.answer()
             await callback.message.answer_document(BufferedInputFile(payload_bytes, filename=filename), caption=f'Выгрузка отчетов за период: {report_period_label(period)}')
             return
     except CompanyAccessError as exc:
@@ -187,9 +187,9 @@ async def report_employee_select_callback(callback: CallbackQuery) -> None:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
         await callback.answer(message, show_alert=True)
         return
+    await callback.answer()
     employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
     title_prefix = 'Руководитель' if member.role == 'manager' else 'Сотрудник'
-    await callback.answer()
     await callback.message.answer(f'Выбери период для {title_prefix.lower()}: {employee_name}.', reply_markup=build_employee_report_period_keyboard(member.user_id))
 
 
@@ -206,9 +206,9 @@ async def report_employee_period_callback(callback: CallbackQuery) -> None:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
         await callback.answer(message, show_alert=True)
         return
+    await callback.answer()
     employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
     title_prefix = 'Руководитель' if member.role == 'manager' else 'Сотрудник'
-    await callback.answer()
     await callback.message.answer(
         format_report_documents(f'{title_prefix}: {employee_name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
