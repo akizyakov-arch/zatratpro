@@ -41,9 +41,11 @@ async def handle_pending_text(message: Message) -> None:
             company = await company_service.create_company(message.from_user, text_value)
             invite_code = await company_service.create_initial_manager_invite(message.from_user, company.id)
             await message.answer(
-                f'Компания создана: {company.name}. Invite для первого manager: {invite_code}',
+                f'Компания создана: {company.name}.',
                 reply_markup=await main_menu_markup(message),
             )
+            await message.answer('Invite-код для первого manager:')
+            await message.answer(invite_code)
             return
         if pending_action.action == 'create_project':
             project = await project_service.create_project(message.from_user.id, text_value)
