@@ -38,6 +38,8 @@ MANAGER_PROJECT_DOCUMENTS_PREFIX = "manager:project:documents:"
 
 MANAGER_EMPLOYEES_MENU_CALLBACK = "manager:employees:menu"
 MANAGER_EMPLOYEES_LIST_CALLBACK = "manager:employees:list"
+MANAGER_EMPLOYEES_ACTIVE_CALLBACK = "manager:employees:active"
+MANAGER_EMPLOYEES_BLOCKED_CALLBACK = "manager:employees:blocked"
 MANAGER_EMPLOYEE_INVITE_CALLBACK = "manager:employees:invite"
 MANAGER_EMPLOYEE_VIEW_PREFIX = "manager:employee:view:"
 MANAGER_EMPLOYEE_REMOVE_PREFIX = "manager:employee:remove:"
