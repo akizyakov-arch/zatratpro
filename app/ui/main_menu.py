@@ -41,8 +41,8 @@ def build_main_menu_keyboard(
         keyboard = [
             [KeyboardButton(text=MENU_BUTTONS["upload_document"])],
             [KeyboardButton(text=MENU_BUTTONS["projects"]), KeyboardButton(text=MENU_BUTTONS["employees"])],
-            [KeyboardButton(text=MENU_BUTTONS["my_company"]), KeyboardButton(text=MENU_BUTTONS["reports"])],
-            [KeyboardButton(text=MENU_BUTTONS["help"])],
+            [KeyboardButton(text=MENU_BUTTONS["my_documents"]), KeyboardButton(text=MENU_BUTTONS["reports"])],
+            [KeyboardButton(text=MENU_BUTTONS["my_company"]), KeyboardButton(text=MENU_BUTTONS["help"])],
         ]
     else:
         second_row = [KeyboardButton(text=MENU_BUTTONS["my_documents"])]
