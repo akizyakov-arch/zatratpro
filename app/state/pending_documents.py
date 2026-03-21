@@ -89,7 +89,7 @@ async def begin_document_flow(telegram_user_id: int) -> None:
         previous_temp_path = await connection.fetchval(
             '''
             DELETE FROM pending_documents
-            WHERE telegram_user_id = 
+            WHERE telegram_user_id = $1
             RETURNING source_temp_path
             ''',
             telegram_user_id,
@@ -109,7 +109,7 @@ async def begin_document_flow(telegram_user_id: int) -> None:
                 source_file_ext,
                 expires_at
             )
-            VALUES (, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NOW() + make_interval(mins => ))
+            VALUES ($1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NOW() + make_interval(mins => $2))
             ''',
             telegram_user_id,
             PENDING_DOCUMENT_TTL_MINUTES,
@@ -121,7 +121,7 @@ async def has_active_document_flow(telegram_user_id: int) -> bool:
     pool = get_pool()
     async with pool.acquire() as connection:
         exists = await connection.fetchval(
-            'SELECT EXISTS(SELECT 1 FROM pending_documents WHERE telegram_user_id =  AND expires_at > NOW())',
+            'SELECT EXISTS(SELECT 1 FROM pending_documents WHERE telegram_user_id = $1 AND expires_at > NOW())',
             telegram_user_id,
         )
     return bool(exists)
@@ -131,7 +131,7 @@ async def store_pending_document(telegram_user_id: int, pending_document: Pendin
     pool = get_pool()
     async with pool.acquire() as connection:
         previous_temp_path = await connection.fetchval(
-            'SELECT source_temp_path FROM pending_documents WHERE telegram_user_id = ',
+            'SELECT source_temp_path FROM pending_documents WHERE telegram_user_id = $1',
             telegram_user_id,
         )
         await connection.execute(
@@ -149,7 +149,7 @@ async def store_pending_document(telegram_user_id: int, pending_document: Pendin
                 source_file_ext,
                 expires_at
             )
-            VALUES (, , , ::jsonb, ::jsonb, , , , , , NOW() + make_interval(mins => ))
+            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, NOW() + make_interval(mins => $11))
             ON CONFLICT (telegram_user_id)
             DO UPDATE SET
                 ocr_text = EXCLUDED.ocr_text,
@@ -196,7 +196,7 @@ async def get_pending_document(telegram_user_id: int) -> PendingDocument | None:
                 source_mime_type,
                 source_file_ext
             FROM pending_documents
-            WHERE telegram_user_id = 
+            WHERE telegram_user_id = $1
               AND expires_at > NOW()
             ''',
             telegram_user_id,
@@ -222,7 +222,7 @@ async def pop_pending_document(telegram_user_id: int) -> PendingDocument | None:
         row = await connection.fetchrow(
             '''
             DELETE FROM pending_documents
-            WHERE telegram_user_id = 
+            WHERE telegram_user_id = $1
               AND expires_at > NOW()
             RETURNING
                 ocr_text,
@@ -260,7 +260,7 @@ async def clear_document_flow(telegram_user_id: int) -> None:
         temp_path = await connection.fetchval(
             '''
             DELETE FROM pending_documents
-            WHERE telegram_user_id = 
+            WHERE telegram_user_id = $1
             RETURNING source_temp_path
             ''',
             telegram_user_id,
