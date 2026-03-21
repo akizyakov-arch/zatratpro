@@ -1,8 +1,9 @@
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 
 from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
 from app.services.companies import CompanyAccessError
+from app.services.document_storage import DocumentStorageService
 from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
     format_duplicate_report,
@@ -20,6 +21,8 @@ from app.ui.reports import (
     MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_OPEN_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_OPEN_SOURCE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX,
     MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
@@ -53,6 +56,7 @@ from app.ui.reports import (
 
 router = Router()
 NL = '\n'
+document_storage_service = DocumentStorageService()
 
 
 async def _send_duplicate_report(message, period: str, summary, rows) -> None:
@@ -252,9 +256,54 @@ async def duplicate_view_callback(callback: CallbackQuery) -> None:
         lines.extend(['', _format_duplicate_document_card('Исходный документ', source_document, source_items)])
     await callback.message.answer(
         NL.join(lines),
-        reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id is not None),
+        reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id),
         parse_mode='HTML',
     )
+
+
+async def _send_report_document_source(callback: CallbackQuery, document_id: int) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        source = await view_service.get_manager_document_source(callback.from_user.id, document_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    file_path = document_storage_service.resolve_path(source.storage_key)
+    if not file_path.exists():
+        await callback.answer('Файл документа не найден в storage.', show_alert=True)
+        return
+    await callback.answer()
+    input_file = FSInputFile(file_path, filename=source.original_filename or file_path.name)
+    caption = 'Исходный файл документа'
+    if source.mime_type and source.mime_type.startswith('image/'):
+        await callback.message.answer_photo(input_file, caption=caption)
+        return
+    await callback.message.answer_document(input_file, caption=caption)
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_OPEN_PREFIX))
+async def duplicate_open_callback(callback: CallbackQuery) -> None:
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_OPEN_PREFIX)
+    try:
+        _period, document_id_text = payload.split(':', 1)
+        document_id = int(document_id_text)
+    except ValueError:
+        await callback.answer('Некорректные данные документа.', show_alert=True)
+        return
+    await _send_report_document_source(callback, document_id)
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_OPEN_SOURCE_PREFIX))
+async def duplicate_open_source_callback(callback: CallbackQuery) -> None:
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_OPEN_SOURCE_PREFIX)
+    try:
+        _period, document_id_text = payload.split(':', 1)
+        document_id = int(document_id_text)
+    except ValueError:
+        await callback.answer('Некорректные данные документа.', show_alert=True)
+        return
+    await _send_report_document_source(callback, document_id)
 
 
 def _format_duplicate_document_card(title: str, document, items) -> str:

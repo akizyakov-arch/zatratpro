@@ -643,6 +643,39 @@ class ViewService:
         items = await self._list_report_items(company.id, start_at, document_id=document_id, uploaded_by_user_id=user_id)
         return document, items
 
+    async def get_manager_document_source(self, telegram_user_id: int, document_id: int) -> DocumentSourceView:
+        company, _ = await self._get_manager_company_and_period(telegram_user_id, 'all_time')
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT d.id AS document_id,
+                       COALESCE(df.storage_key, d.source_file_path) AS storage_key,
+                       df.original_filename,
+                       df.mime_type,
+                       df.file_ext
+                FROM documents d
+                LEFT JOIN document_files df
+                  ON df.document_id = d.id
+                 AND df.file_role = 'source'
+                 AND df.page_no = 0
+                WHERE d.company_id = $1
+                  AND d.id = $2
+                LIMIT 1
+                """,
+                company.id,
+                document_id,
+            )
+        if row is None or not row['storage_key']:
+            raise CompanyAccessError('Исходный файл документа не найден.')
+        return DocumentSourceView(
+            document_id=row['document_id'],
+            storage_key=row['storage_key'],
+            original_filename=row['original_filename'],
+            mime_type=row['mime_type'],
+            file_ext=row['file_ext'],
+        )
+
     async def get_my_document_source(self, telegram_user_id: int, document_id: int) -> DocumentSourceView:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         pool = get_pool()
