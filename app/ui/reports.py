@@ -16,7 +16,6 @@ MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX = "manager:reports:employee_detail:"
 MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX = "manager:reports:document_detail:"
 MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX = "manager:reports:document_items:"
 MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX = "manager:reports:duplicate:view:"
-MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX = "manager:reports:duplicate:keep:"
 MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX = "manager:reports:duplicate:delete:"
 MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX = "manager:reports:duplicate:delete_confirm:"
 MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX = "manager:reports:duplicate:delete_source:"
@@ -113,14 +112,13 @@ def build_duplicate_report_keyboard(period: str, rows: list[Any]) -> InlineKeybo
 
 
 def build_duplicate_card_keyboard(period: str, duplicate_id: int, source_document_id: int | None) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="Открыть дубликат", callback_data=f"{MANAGER_REPORTS_DUPLICATE_OPEN_PREFIX}{period}:{duplicate_id}")],
-        [InlineKeyboardButton(text="Оставить как отдельный", callback_data=f"{MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX}{period}:{duplicate_id}")],
-        [InlineKeyboardButton(text="Удалить дубликат", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX}{period}:{duplicate_id}")],
-    ]
+    rows = []
     if source_document_id is not None:
         rows.append([InlineKeyboardButton(text="Открыть исходный", callback_data=f"{MANAGER_REPORTS_DUPLICATE_OPEN_SOURCE_PREFIX}{period}:{source_document_id}")])
-        rows.append([InlineKeyboardButton(text="Удалить исходную запись", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX}{period}:{duplicate_id}")])
+    rows.append([InlineKeyboardButton(text="Открыть дубликат", callback_data=f"{MANAGER_REPORTS_DUPLICATE_OPEN_PREFIX}{period}:{duplicate_id}")])
+    rows.append([InlineKeyboardButton(text="Удалить дубликат", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX}{period}:{duplicate_id}")])
+    if source_document_id is not None:
+        rows.append([InlineKeyboardButton(text="Удалить исходный", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX}{period}:{duplicate_id}")])
     rows.append([InlineKeyboardButton(text="Назад к дублям", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:{period}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -211,3 +209,4 @@ def _duplicate_row_text(row: Any) -> str:
     current_project = getattr(row, "project_name", None) or "Без проекта"
     base_project = getattr(row, "base_project_name", None) or "Без исходной записи"
     return f"{current_project} | {base_project}"
+

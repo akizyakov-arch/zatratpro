@@ -24,7 +24,6 @@ from app.ui.reports import (
     MANAGER_REPORTS_DUPLICATE_OPEN_PREFIX,
     MANAGER_REPORTS_DUPLICATE_OPEN_SOURCE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX,
-    MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX,
     MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
     MANAGER_REPORTS_EMPLOYEES_CALLBACK,
@@ -324,25 +323,6 @@ def _format_duplicate_document_card(title: str, document, items) -> str:
         format_items_only('Состав документа', items),
     ]
     return NL.join(lines)
-
-
-@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX))
-async def duplicate_keep_callback(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX)
-    try:
-        period, duplicate_id_text = payload.split(':', 1)
-        duplicate_id = int(duplicate_id_text)
-        await document_service.resolve_duplicate_keep_separate(callback.from_user.id, duplicate_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные дубля.'
-        await callback.answer(message, show_alert=True)
-        return
-    await callback.answer('Статус дубля снят.')
-    rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
-    summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-    await _send_duplicate_report(callback.message, period, summary, rows)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX))
