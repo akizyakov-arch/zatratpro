@@ -674,7 +674,9 @@ class ViewService:
             row = await connection.fetchrow(
                 """
                 SELECT d.id AS document_id,
-                       COALESCE(df.storage_key, d.source_file_path) AS storage_key,
+                       d.company_id,
+                       d.source_file_path,
+                       df.storage_key,
                        df.original_filename,
                        df.mime_type,
                        df.file_ext
@@ -690,11 +692,19 @@ class ViewService:
                 company.id,
                 document_id,
             )
-        if row is None or not row['storage_key']:
+        if row is None:
             raise CompanyAccessError('Исходный файл документа не найден.')
+        storage_key = self._resolve_document_storage_key(
+            row['company_id'],
+            row['document_id'],
+            row['storage_key'],
+            row['source_file_path'],
+        )
+        if not storage_key:
+            raise CompanyAccessError('Исходный файл документа недоступен для просмотра.')
         return DocumentSourceView(
             document_id=row['document_id'],
-            storage_key=row['storage_key'],
+            storage_key=storage_key,
             original_filename=row['original_filename'],
             mime_type=row['mime_type'],
             file_ext=row['file_ext'],
@@ -710,7 +720,9 @@ class ViewService:
             row = await connection.fetchrow(
                 """
                 SELECT d.id AS document_id,
-                       COALESCE(df.storage_key, d.source_file_path) AS storage_key,
+                       d.company_id,
+                       d.source_file_path,
+                       df.storage_key,
                        df.original_filename,
                        df.mime_type,
                        df.file_ext
@@ -728,15 +740,37 @@ class ViewService:
                 user_id,
                 document_id,
             )
-        if row is None or not row['storage_key']:
+        if row is None:
             raise CompanyAccessError('Исходный файл документа не найден.')
+        storage_key = self._resolve_document_storage_key(
+            row['company_id'],
+            row['document_id'],
+            row['storage_key'],
+            row['source_file_path'],
+        )
+        if not storage_key:
+            raise CompanyAccessError('Исходный файл документа недоступен для просмотра.')
         return DocumentSourceView(
             document_id=row['document_id'],
-            storage_key=row['storage_key'],
+            storage_key=storage_key,
             original_filename=row['original_filename'],
             mime_type=row['mime_type'],
             file_ext=row['file_ext'],
         )
+
+    def _resolve_document_storage_key(
+        self,
+        company_id: int,
+        document_id: int,
+        document_file_storage_key: str | None,
+        source_file_path: str | None,
+    ) -> str | None:
+        expected_prefix = f'documents/{company_id}/{document_id}/'
+        if document_file_storage_key and document_file_storage_key.startswith(expected_prefix):
+            return document_file_storage_key
+        if source_file_path and source_file_path.startswith(expected_prefix):
+            return source_file_path
+        return None
 
     async def get_my_company_card(self, telegram_user_id: int) -> CompanyCard:
         return await self.get_company_card_for_manager(telegram_user_id)
