@@ -385,3 +385,31 @@ async def report_document_detail_callback(callback: CallbackQuery) -> None:
         reply_markup=build_report_document_card_keyboard(report_kind, period, target_id, document_id),
         parse_mode='HTML',
     )
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX))
+async def report_document_items_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX)
+    try:
+        report_kind, period, target_id_text, document_id_text = payload.split(':', 3)
+        target_id = int(target_id_text)
+        document_id = int(document_id_text)
+        if report_kind == REPORT_KIND_PROJECTS:
+            document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id, project_id=target_id)
+        elif report_kind == REPORT_KIND_EMPLOYEES:
+            document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id, uploaded_by_user_id=target_id)
+        else:
+            await callback.answer('Некорректный источник отчета.', show_alert=True)
+            return
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        format_items_only('Состав документа', items),
+        reply_markup=build_report_document_items_back_keyboard(report_kind, period, target_id, document_id),
+        parse_mode='HTML',
+    )
