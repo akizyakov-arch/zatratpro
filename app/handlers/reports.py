@@ -52,6 +52,7 @@ from app.ui.reports import (
 )
 
 router = Router()
+NL = '\n'
 
 
 async def _send_duplicate_report(message, period: str, summary, rows) -> None:
