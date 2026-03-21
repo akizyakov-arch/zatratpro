@@ -18,6 +18,8 @@ from app.ui.reports import (
     MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_ITEMS_PREFIX,
+    MANAGER_REPORTS_DUPLICATE_SOURCE_ITEMS_PREFIX,
     MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX,
     MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
@@ -38,6 +40,7 @@ from app.ui.reports import (
     build_duplicate_delete_confirm_keyboard,
     build_duplicate_delete_source_confirm_keyboard,
     build_duplicate_report_keyboard,
+    build_duplicate_items_back_keyboard,
     build_employee_report_period_keyboard,
     build_employee_report_selector_keyboard,
     build_project_report_keyboard,
@@ -238,6 +241,52 @@ async def duplicate_view_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     await callback.message.answer(format_duplicate_card(row), reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id is not None))
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_ITEMS_PREFIX))
+async def duplicate_items_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_ITEMS_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+        document, items = await view_service.get_report_document_items(callback.from_user.id, period, duplicate_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        format_report_document_items('Состав дубликата', period, document, items),
+        reply_markup=build_duplicate_items_back_keyboard(period, duplicate_id),
+        parse_mode='HTML',
+    )
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_SOURCE_ITEMS_PREFIX))
+async def duplicate_source_items_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_SOURCE_ITEMS_PREFIX)
+    try:
+        period, duplicate_id_text = payload.split(':', 1)
+        duplicate_id = int(duplicate_id_text)
+        row = await view_service.get_duplicate_report_row(callback.from_user.id, period, duplicate_id)
+        if row.duplicate_of_document_id is None:
+            await callback.answer('Исходная запись недоступна.', show_alert=True)
+            return
+        document, items = await view_service.get_report_document_items(callback.from_user.id, period, row.duplicate_of_document_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        format_report_document_items('Состав исходной записи', period, document, items),
+        reply_markup=build_duplicate_items_back_keyboard(period, duplicate_id),
+        parse_mode='HTML',
+    )
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX))
