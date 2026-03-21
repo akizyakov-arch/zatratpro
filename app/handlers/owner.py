@@ -24,6 +24,8 @@ from app.ui.company import (
     OWNER_COMPANY_ARCHIVE_CONFIRM_PREFIX,
     OWNER_COMPANY_ARCHIVE_PREFIX,
     OWNER_COMPANY_ISSUE_INVITE_PREFIX,
+    OWNER_COMPANY_MEMBERS_ACTIVE_PREFIX,
+    OWNER_COMPANY_MEMBERS_BLOCKED_PREFIX,
     OWNER_COMPANY_MEMBERS_PREFIX,
     OWNER_COMPANY_RESET_INVITE_PREFIX,
     OWNER_COMPANY_SHOW_INVITE_PREFIX,
@@ -41,6 +43,7 @@ from app.ui.company import (
     build_company_actions_keyboard,
     build_owner_companies_menu_keyboard,
     build_company_members_keyboard,
+    build_company_members_menu_keyboard,
     build_confirm_keyboard,
     build_owner_user_card_keyboard,
     build_owner_user_company_select_keyboard,
@@ -407,22 +410,47 @@ async def company_reset_invite_callback(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_MEMBERS_PREFIX))
 async def company_members_callback(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
+    if callback.message is None:
         return
     company_id = int(callback.data.removeprefix(OWNER_COMPANY_MEMBERS_PREFIX))
+    await callback.answer()
+    await callback.message.answer('Участники компании:', reply_markup=build_company_members_menu_keyboard(company_id))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_MEMBERS_ACTIVE_PREFIX))
+async def company_members_active_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_MEMBERS_ACTIVE_PREFIX))
     try:
         members = await view_service.list_company_members_for_owner(callback.from_user.id, company_id)
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
-    if not members:
-        await callback.answer('Участников нет.', show_alert=True)
-        return
+    active_members = [member for member in members if not member.is_blocked]
     await callback.answer()
-    lines = ['Участники компании:', '']
-    for index, member in enumerate(members, start=1):
-        lines.append(f"{index}. {member.full_name or member.username or member.telegram_id} — {member.role}")
-    await callback.message.answer(NL.join(lines), reply_markup=build_company_members_keyboard(company_id, members))
+    if not active_members:
+        await callback.message.answer('Активных сотрудников пока нет.', reply_markup=build_company_members_menu_keyboard(company_id))
+        return
+    await callback.message.answer('Активные сотрудники:', reply_markup=build_company_members_keyboard(company_id, active_members, f'{OWNER_COMPANY_MEMBERS_PREFIX}{company_id}'))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_MEMBERS_BLOCKED_PREFIX))
+async def company_members_blocked_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_MEMBERS_BLOCKED_PREFIX))
+    try:
+        members = await view_service.list_company_members_for_owner(callback.from_user.id, company_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    blocked_members = [member for member in members if member.is_blocked]
+    await callback.answer()
+    if not blocked_members:
+        await callback.message.answer('Заблокированных сотрудников пока нет.', reply_markup=build_company_members_menu_keyboard(company_id))
+        return
+    await callback.message.answer('Заблокированные сотрудники:', reply_markup=build_company_members_keyboard(company_id, blocked_members, f'{OWNER_COMPANY_MEMBERS_PREFIX}{company_id}'))
 
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_ARCHIVE_PREFIX))

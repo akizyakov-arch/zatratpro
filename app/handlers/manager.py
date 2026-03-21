@@ -20,6 +20,8 @@ from app.services.companies import CompanyAccessError
 from app.services.document_storage import DocumentStorageService
 from app.state.pending_actions import set_pending_action
 from app.ui.company import (
+    MANAGER_EMPLOYEES_ACTIVE_CALLBACK,
+    MANAGER_EMPLOYEES_BLOCKED_CALLBACK,
     MANAGER_EMPLOYEES_LIST_CALLBACK,
     MANAGER_EMPLOYEES_MENU_CALLBACK,
     MANAGER_EMPLOYEE_INVITE_CALLBACK,
@@ -250,6 +252,7 @@ async def employees_menu_callback(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == MANAGER_EMPLOYEES_LIST_CALLBACK)
+@router.callback_query(F.data == MANAGER_EMPLOYEES_ACTIVE_CALLBACK)
 async def employees_list_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
@@ -259,10 +262,28 @@ async def employees_list_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer()
-    if not employees:
-        await callback.message.answer('Сотрудников пока нет.', reply_markup=build_employees_menu_keyboard())
+    active_employees = [member for member in employees if not member.is_blocked]
+    if not active_employees:
+        await callback.message.answer('Активных сотрудников пока нет.', reply_markup=build_employees_menu_keyboard())
         return
-    await callback.message.answer('Сотрудники:', reply_markup=build_employees_keyboard(employees))
+    await callback.message.answer('Активные сотрудники:', reply_markup=build_employees_keyboard(active_employees, MANAGER_EMPLOYEES_MENU_CALLBACK))
+
+
+@router.callback_query(F.data == MANAGER_EMPLOYEES_BLOCKED_CALLBACK)
+async def employees_blocked_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        employees = await view_service.list_employees_for_manager(callback.from_user.id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    blocked_employees = [member for member in employees if member.is_blocked]
+    await callback.answer()
+    if not blocked_employees:
+        await callback.message.answer('Заблокированных сотрудников пока нет.', reply_markup=build_employees_menu_keyboard())
+        return
+    await callback.message.answer('Заблокированные сотрудники:', reply_markup=build_employees_keyboard(blocked_employees, MANAGER_EMPLOYEES_MENU_CALLBACK))
 
 
 @router.callback_query(F.data == MANAGER_EMPLOYEE_INVITE_CALLBACK)
@@ -290,7 +311,8 @@ async def employee_view_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(format_member_card(member), reply_markup=build_employee_card_keyboard(member.user_id, member.is_blocked))
+    back_callback = MANAGER_EMPLOYEES_BLOCKED_CALLBACK if member.is_blocked else MANAGER_EMPLOYEES_ACTIVE_CALLBACK
+    await callback.message.answer(format_member_card(member), reply_markup=build_employee_card_keyboard(member.user_id, member.is_blocked, back_callback))
 
 
 @router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_REMOVE_PREFIX))
