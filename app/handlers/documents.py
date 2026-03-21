@@ -275,12 +275,13 @@ async def _process_uploaded_image(
             ocr_text=ocr_text,
             normalized_text=preview_text,
             extracted_document=document,
-            source_temp_path=str(downloaded_photo.source_path),
+            source_temp_path=str(downloaded_photo.ocr_path),
             source_original_name=downloaded_photo.original_filename,
-            source_mime_type=downloaded_photo.mime_type,
-            source_file_ext=downloaded_photo.file_ext,
+            source_mime_type='image/jpeg',
+            source_file_ext='.jpg',
         ),
     )
+    file_service.delete_temp_file(downloaded_photo.source_path)
     await message.answer(preview_text, reply_markup=menu_markup)
 
     try:
