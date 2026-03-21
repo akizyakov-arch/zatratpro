@@ -1,7 +1,7 @@
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, main_menu_markup, view_service
+from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
 from app.services.companies import CompanyAccessError
 from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
