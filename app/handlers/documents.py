@@ -145,10 +145,20 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
 
 async def _get_access_context_or_reply(message: Message):
     if message.from_user is None:
+        logger.info('Access context missing: no from_user on message')
         await message.answer('Не удалось определить пользователя.', reply_markup=await _main_menu_markup(message))
         return None
     context = await access_service.get_access_context(message.from_user)
+    logger.info(
+        'Access context resolved: user_id=%s menu_kind=%s has_company=%s can_manage_company=%s can_view_reports=%s',
+        message.from_user.id,
+        context.menu_kind,
+        context.has_company,
+        context.can_manage_company,
+        context.can_view_reports,
+    )
     if not context.has_company:
+        logger.info('Access context rejected for document flow: user_id=%s has_company=%s', message.from_user.id, context.has_company)
         await message.answer(
             'Сначала нужно получить доступ к компании. Используй invite-код руководителя и выполни /join КОД.',
             reply_markup=build_main_menu_keyboard(
