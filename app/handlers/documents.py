@@ -187,6 +187,12 @@ async def process_photo(message: Message) -> None:
 
 @router.message(F.document)
 async def process_document_file(message: Message) -> None:
+    logger.info(
+        'Document upload received: user_id=%s file_name=%s mime_type=%s',
+        message.from_user.id if message.from_user is not None else None,
+        message.document.file_name if message.document is not None else None,
+        message.document.mime_type if message.document is not None else None,
+    )
     context = await _get_access_context_or_reply(message)
     if context is None:
         return
@@ -206,11 +212,23 @@ async def process_document_file(message: Message) -> None:
         return
     if not _is_supported_image_document(message):
         file_name = message.document.file_name or 'файл'
+        logger.info(
+            'Document upload rejected: user_id=%s file_name=%s mime_type=%s',
+            message.from_user.id,
+            file_name,
+            message.document.mime_type,
+        )
         if (message.document.mime_type or '').lower() == 'application/pdf' or file_name.lower().endswith('.pdf'):
             await message.answer('PDF уже принимается как файл, но отдельный PDF OCR-flow еще не включен. Пока отправь документ как фото или изображение-файл.', reply_markup=menu_markup)
             return
         await message.answer('Поддерживаются изображения: JPG, JPEG, PNG, WEBP, HEIC, HEIF. Этот файл пока не поддерживается для OCR.', reply_markup=menu_markup)
         return
+    logger.info(
+        'Document upload accepted for OCR: user_id=%s file_name=%s mime_type=%s',
+        message.from_user.id,
+        message.document.file_name,
+        message.document.mime_type,
+    )
     file_service = TelegramFileService(message.bot)
     downloaded_photo = await file_service.download_image_document(message.document)
     await _process_uploaded_image(message, menu_markup, context, downloaded_photo, 'файл получен')
