@@ -408,15 +408,6 @@ async def company_reset_invite_callback(callback: CallbackQuery) -> None:
     await callback.answer('Invite сброшен.' if changed else 'Активного invite не было.')
 
 
-@router.callback_query(F.data.startswith(OWNER_COMPANY_MEMBERS_PREFIX))
-async def company_members_callback(callback: CallbackQuery) -> None:
-    if callback.message is None:
-        return
-    company_id = int(callback.data.removeprefix(OWNER_COMPANY_MEMBERS_PREFIX))
-    await callback.answer()
-    await callback.message.answer('Участники компании:', reply_markup=build_company_members_menu_keyboard(company_id))
-
-
 @router.callback_query(F.data.startswith(OWNER_COMPANY_MEMBERS_ACTIVE_PREFIX))
 async def company_members_active_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
@@ -451,6 +442,15 @@ async def company_members_blocked_callback(callback: CallbackQuery) -> None:
         await callback.message.answer('Заблокированных сотрудников пока нет.', reply_markup=build_company_members_menu_keyboard(company_id))
         return
     await callback.message.answer('Заблокированные сотрудники:', reply_markup=build_company_members_keyboard(company_id, blocked_members, f'{OWNER_COMPANY_MEMBERS_PREFIX}{company_id}'))
+
+
+@router.callback_query(F.data.startswith(OWNER_COMPANY_MEMBERS_PREFIX))
+async def company_members_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    company_id = int(callback.data.removeprefix(OWNER_COMPANY_MEMBERS_PREFIX))
+    await callback.answer()
+    await callback.message.answer('Участники компании:', reply_markup=build_company_members_menu_keyboard(company_id))
 
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_ARCHIVE_PREFIX))
