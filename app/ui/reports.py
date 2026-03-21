@@ -14,6 +14,7 @@ MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX = "manager:reports:employee_select:"
 MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX = "manager:reports:employee_period:"
 MANAGER_REPORTS_EMPLOYEE_DETAIL_PREFIX = "manager:reports:employee_detail:"
 MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX = "manager:reports:document_detail:"
+MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX = "manager:reports:document_open:"
 MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX = "manager:reports:document_items:"
 MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX = "manager:reports:duplicate:view:"
 MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX = "manager:reports:duplicate:delete:"
@@ -163,6 +164,7 @@ def build_report_document_card_keyboard(report_kind: str, period: str, target_id
         back_callback = f"{MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX}{target_id}:{period}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть документ", callback_data=f"{MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX}{report_kind}:{period}:{target_id}:{document_id}")],
             [InlineKeyboardButton(text="Состав документа", callback_data=f"{MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX}{report_kind}:{period}:{target_id}:{document_id}")],
             [InlineKeyboardButton(text="Назад к документам", callback_data=back_callback)],
             [InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)],

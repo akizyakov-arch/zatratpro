@@ -17,6 +17,7 @@ from app.services.report_formatters import (
 from app.ui.main_menu import MENU_BUTTONS
 from app.ui.reports import (
     MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX,
+    MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX,
     MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX,
@@ -419,6 +420,23 @@ async def report_document_detail_callback(callback: CallbackQuery) -> None:
         reply_markup=build_report_document_card_keyboard(report_kind, period, target_id, document_id),
         parse_mode='HTML',
     )
+
+
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX))
+async def report_document_open_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX)
+    try:
+        report_kind, _period, _target_id_text, document_id_text = payload.split(':', 3)
+        if report_kind not in {REPORT_KIND_PROJECTS, REPORT_KIND_EMPLOYEES}:
+            await callback.answer('Некорректный источник отчета.', show_alert=True)
+            return
+        document_id = int(document_id_text)
+    except ValueError:
+        await callback.answer('Некорректные данные документа.', show_alert=True)
+        return
+    await _send_report_document_source(callback, document_id)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX))
