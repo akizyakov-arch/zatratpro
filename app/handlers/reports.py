@@ -50,6 +50,14 @@ from app.ui.reports import (
 router = Router()
 
 
+async def _send_duplicate_report(message, period: str, summary, rows) -> None:
+    await message.answer(
+        format_duplicate_report(summary, rows),
+        reply_markup=build_duplicate_report_keyboard(period, rows),
+        parse_mode='HTML',
+    )
+
+
 @router.message(F.text == MENU_BUTTONS['reports'])
 async def reports_menu_entry(message: Message) -> None:
     if message.from_user is None:
@@ -96,11 +104,7 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         await callback.answer()
         rows = await view_service.list_duplicate_report_rows(callback.from_user.id, REPORT_PERIOD_ALL)
         summary = await view_service.get_duplicate_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
-        await callback.message.answer(
-            format_duplicate_report(summary, rows),
-            reply_markup=build_duplicate_report_keyboard(REPORT_PERIOD_ALL, rows),
-            parse_mode='HTML',
-        )
+        await _send_duplicate_report(callback.message, REPORT_PERIOD_ALL, summary, rows)
         return
     if report_kind == REPORT_KIND_EMPLOYEES:
         await callback.answer()
@@ -139,7 +143,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             await callback.answer()
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
             duplicate_summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-            await callback.message.answer(format_duplicate_report(duplicate_summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows), parse_mode='HTML')
+            await _send_duplicate_report(callback.message, period, duplicate_summary, rows)
             return
         if report_kind == REPORT_KIND_EXPORT:
             await callback.answer()
@@ -252,7 +256,7 @@ async def duplicate_keep_callback(callback: CallbackQuery) -> None:
     await callback.answer('Статус дубля снят.')
     rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
     summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+    await _send_duplicate_report(callback.message, period, summary, rows)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX))
@@ -286,7 +290,7 @@ async def duplicate_delete_confirm_callback(callback: CallbackQuery) -> None:
     await callback.answer('Дубликат удален.')
     rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
     summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+    await _send_duplicate_report(callback.message, period, summary, rows)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX))
@@ -320,7 +324,7 @@ async def duplicate_delete_source_confirm_callback(callback: CallbackQuery) -> N
     await callback.answer('Исходная запись удалена.')
     rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
     summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+    await _send_duplicate_report(callback.message, period, summary, rows)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX))
