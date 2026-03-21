@@ -247,10 +247,14 @@ async def duplicate_view_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    lines = [format_duplicate_card(row), '', _format_duplicate_document_card('Документ-дубликат', duplicate_document, duplicate_items)]
+    lines = [_format_duplicate_document_card('Документ-дубликат', duplicate_document, duplicate_items)]
     if source_document is not None:
         lines.extend(['', _format_duplicate_document_card('Исходный документ', source_document, source_items)])
-    await callback.message.answer(NL.join(lines), reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id is not None))
+    await callback.message.answer(
+        NL.join(lines),
+        reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id is not None),
+        parse_mode='HTML',
+    )
 
 
 def _format_duplicate_document_card(title: str, document, items) -> str:
