@@ -192,7 +192,10 @@ async def process_photo(message: Message) -> None:
         logger.info('Photo upload rejected: photo payload missing or user missing')
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
-    if await has_active_document_flow(message.from_user.id):
+    logger.info('Photo upload checking active pending flow: user_id=%s', message.from_user.id)
+    has_active_flow = await has_active_document_flow(message.from_user.id)
+    logger.info('Photo upload active pending flow result: user_id=%s active=%s', message.from_user.id, has_active_flow)
+    if has_active_flow:
         logger.info('Photo upload blocked: active pending document flow user_id=%s', message.from_user.id)
         await message.answer(
             f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
@@ -200,6 +203,7 @@ async def process_photo(message: Message) -> None:
         )
         return
     logger.info('Photo upload accepted for OCR: user_id=%s', message.from_user.id)
+    logger.info('Photo upload starting file download: user_id=%s photo_count=%s', message.from_user.id, len(message.photo))
     file_service = TelegramFileService(message.bot)
     downloaded_photo = await file_service.download_best_photo(message.photo)
     await _process_uploaded_image(message, menu_markup, context, downloaded_photo, 'фото получено')
@@ -224,7 +228,10 @@ async def process_document_file(message: Message) -> None:
     if message.document is None or message.from_user is None:
         await message.answer('Файл не найден в сообщении.', reply_markup=menu_markup)
         return
-    if await has_active_document_flow(message.from_user.id):
+    logger.info('Photo upload checking active pending flow: user_id=%s', message.from_user.id)
+    has_active_flow = await has_active_document_flow(message.from_user.id)
+    logger.info('Photo upload active pending flow result: user_id=%s active=%s', message.from_user.id, has_active_flow)
+    if has_active_flow:
         await message.answer(
             f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
             reply_markup=menu_markup,
