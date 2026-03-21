@@ -2,6 +2,7 @@ import logging
 from time import perf_counter
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
@@ -53,10 +54,13 @@ async def help_menu_callback(callback: CallbackQuery) -> None:
     after_answer = perf_counter()
     menu_kind = callback.data.removeprefix(HELP_MENU_PREFIX) or 'employee'
     if menu_kind not in HELP_TOPICS:
-        await callback.message.answer('Раздел помощи недоступен.')
+        await callback.answer('Раздел помощи недоступен.', show_alert=True)
         return
     before_send = perf_counter()
-    await callback.message.answer('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
+    try:
+        await callback.message.edit_text('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
+    except TelegramBadRequest:
+        await callback.message.answer('Выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
     finished = perf_counter()
     total_ms = (finished - started) * 1000
     if total_ms >= SLOW_STAGE_MS:
@@ -81,17 +85,20 @@ async def help_topic_callback(callback: CallbackQuery) -> None:
     try:
         menu_kind, topic_id = payload.split(':', 1)
     except ValueError:
-        await callback.message.answer('Тема помощи недоступна.')
+        await callback.answer('Тема помощи недоступна.', show_alert=True)
         return
     if menu_kind not in HELP_TOPICS:
-        await callback.message.answer('Тема помощи недоступна.')
+        await callback.answer('Тема помощи недоступна.', show_alert=True)
         return
     text_value = get_help_topic_text(menu_kind, topic_id)
     if text_value is None:
-        await callback.message.answer('Тема помощи недоступна.')
+        await callback.answer('Тема помощи недоступна.', show_alert=True)
         return
     before_send = perf_counter()
-    await callback.message.answer(text_value, reply_markup=build_help_topic_keyboard(menu_kind))
+    try:
+        await callback.message.edit_text(text_value, reply_markup=build_help_topic_keyboard(menu_kind))
+    except TelegramBadRequest:
+        await callback.message.answer(text_value, reply_markup=build_help_topic_keyboard(menu_kind))
     finished = perf_counter()
     total_ms = (finished - started) * 1000
     if total_ms >= SLOW_STAGE_MS:
