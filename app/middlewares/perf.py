@@ -22,12 +22,40 @@ class SlowUpdateMiddleware(BaseMiddleware):
             return await handler(event, data)
         finally:
             elapsed_ms = (perf_counter() - started) * 1000
+            self._log_non_text_update(event)
             if elapsed_ms < self.threshold_ms:
                 return
             self.logger.warning(
                 "Slow update: %s",
                 self._build_message(event, elapsed_ms),
             )
+
+    def _log_non_text_update(self, event: TelegramObject) -> None:
+        message = None
+        if isinstance(event, Update):
+            message = event.message or event.edited_message
+        elif isinstance(event, Message):
+            message = event
+        if message is None:
+            return
+        if message.text:
+            return
+        if not any((message.photo, message.document, message.animation, message.video, message.sticker, message.voice, message.audio)):
+            return
+        self.logger.info(
+            "Inbound non-text update: user_id=%s has_photo=%s has_document=%s has_animation=%s has_video=%s has_sticker=%s has_voice=%s has_audio=%s file_name=%s mime_type=%s caption=%s",
+            message.from_user.id if message.from_user else 0,
+            bool(message.photo),
+            message.document is not None,
+            message.animation is not None,
+            message.video is not None,
+            message.sticker is not None,
+            message.voice is not None,
+            message.audio is not None,
+            message.document.file_name if message.document is not None else None,
+            message.document.mime_type if message.document is not None else None,
+            message.caption,
+        )
 
     def _build_message(self, event: TelegramObject, elapsed_ms: float) -> str:
         if isinstance(event, Update):
