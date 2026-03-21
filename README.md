@@ -31,6 +31,25 @@ cp .env.example .env
 python -m app.main
 ```
 
+## Telegram Proxy
+
+Если есть проблемы с маршрутом до Telegram API или Telegram CDN, бот можно запустить через SOCKS5-прокси только для Telegram-трафика.
+
+Пример `.env`:
+
+```env
+TELEGRAM_PROXY_ENABLED=true
+TELEGRAM_PROXY_URL=socks5://user:password@1.2.3.4:1080
+```
+
+Через этот прокси идет только Telegram-трафик aiogram:
+- long polling
+- Bot API запросы
+- `getFile`
+- скачивание файлов через Telegram
+
+OCR.Space, DeepSeek и Postgres через этот proxy не идут.
+
 ## Структура
 
 ```text

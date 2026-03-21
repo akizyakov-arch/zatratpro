@@ -3,6 +3,7 @@ import logging
 import sys
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from app.config import get_settings
 from app.handlers.common_menu import router as common_menu_router
@@ -36,11 +37,31 @@ async def on_shutdown() -> None:
     logging.getLogger(__name__).info("Database pool closed")
 
 
+def _mask_proxy_url(proxy_url: str) -> str:
+    if '@' not in proxy_url:
+        return proxy_url
+    scheme, rest = proxy_url.split('://', 1)
+    credentials, host = rest.rsplit('@', 1)
+    if ':' in credentials:
+        user, _password = credentials.split(':', 1)
+        return f"{scheme}://{user}:***@{host}"
+    return f"{scheme}://***@{host}"
+
+
 async def main() -> None:
     configure_logging()
     settings = get_settings()
 
-    bot = Bot(token=settings.telegram_bot_token)
+    session = None
+    if settings.telegram_proxy_enabled:
+        if not settings.telegram_proxy_url:
+            raise RuntimeError("TELEGRAM_PROXY_ENABLED=true but TELEGRAM_PROXY_URL is empty")
+        session = AiohttpSession(proxy=settings.telegram_proxy_url)
+        logging.getLogger(__name__).info("Telegram proxy enabled: %s", _mask_proxy_url(settings.telegram_proxy_url))
+    else:
+        logging.getLogger(__name__).info("Telegram proxy disabled")
+
+    bot = Bot(token=settings.telegram_bot_token, session=session)
     dispatcher = Dispatcher()
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)

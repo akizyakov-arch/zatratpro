@@ -11,6 +11,8 @@ TMP_DIR = BASE_DIR / "tmp"
 
 class Settings(BaseSettings):
     telegram_bot_token: str = Field(alias="TELEGRAM_BOT_TOKEN")
+    telegram_proxy_enabled: bool = Field(default=False, alias="TELEGRAM_PROXY_ENABLED")
+    telegram_proxy_url: str | None = Field(default=None, alias="TELEGRAM_PROXY_URL")
     ocr_space_api_key: str = Field(alias="OCR_SPACE_API_KEY")
     deepseek_api_key: str = Field(alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
