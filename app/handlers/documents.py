@@ -229,8 +229,6 @@ async def _process_uploaded_image(
         logger.exception('Unexpected error while processing uploaded image')
         await message.answer(f'Не удалось обработать документ: {exc}', reply_markup=menu_markup)
         return
-    finally:
-        file_service.delete_temp_file(downloaded_photo.ocr_path)
 
     if not ocr_text.strip():
         file_service.delete_temp_file(downloaded_photo.source_path)
