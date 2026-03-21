@@ -1,11 +1,9 @@
 from dataclasses import dataclass
-import mimetypes
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.documents import DocumentService
-from app.services.document_storage import DocumentStorageService
 from app.services.database import get_pool
 
 
@@ -262,7 +260,6 @@ class ViewService:
     def __init__(self) -> None:
         self.company_service = CompanyService()
         self.document_service = DocumentService()
-        self.document_storage = DocumentStorageService()
 
     async def list_companies(self, telegram_user_id: int) -> list[CompanyListItem]:
         context = await self.company_service.get_user_context(telegram_user_id)
@@ -695,12 +692,23 @@ class ViewService:
                 company.id,
                 document_id,
             )
-            if row is None:
-                raise CompanyAccessError('Исходный файл документа не найден.')
-            resolved = await self._resolve_or_migrate_document_source(connection, row)
-        if resolved is None:
+        if row is None:
+            raise CompanyAccessError('Исходный файл документа не найден.')
+        storage_key = self._resolve_document_storage_key(
+            row['company_id'],
+            row['document_id'],
+            row['storage_key'],
+            row['source_file_path'],
+        )
+        if not storage_key:
             raise CompanyAccessError('Исходный файл документа недоступен для просмотра.')
-        return resolved
+        return DocumentSourceView(
+            document_id=row['document_id'],
+            storage_key=storage_key,
+            original_filename=row['original_filename'],
+            mime_type=row['mime_type'],
+            file_ext=row['file_ext'],
+        )
 
     async def get_my_document_source(self, telegram_user_id: int, document_id: int) -> DocumentSourceView:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
@@ -732,128 +740,23 @@ class ViewService:
                 user_id,
                 document_id,
             )
-            if row is None:
-                raise CompanyAccessError('Исходный файл документа не найден.')
-            resolved = await self._resolve_or_migrate_document_source(connection, row)
-        if resolved is None:
-            raise CompanyAccessError('Исходный файл документа недоступен для просмотра.')
-        return resolved
-
-    async def _resolve_or_migrate_document_source(self, connection, row) -> DocumentSourceView | None:
+        if row is None:
+            raise CompanyAccessError('Исходный файл документа не найден.')
         storage_key = self._resolve_document_storage_key(
             row['company_id'],
             row['document_id'],
             row['storage_key'],
             row['source_file_path'],
         )
-        original_filename = row['original_filename']
-        mime_type = row['mime_type']
-        file_ext = row['file_ext']
-        if storage_key:
-            return DocumentSourceView(
-                document_id=row['document_id'],
-                storage_key=storage_key,
-                original_filename=original_filename,
-                mime_type=mime_type,
-                file_ext=file_ext,
-            )
-
-        legacy_path = self._resolve_legacy_document_path(row['source_file_path'])
-        if legacy_path is None or not legacy_path.exists():
-            return None
-
-        if not original_filename:
-            original_filename = legacy_path.name
-        if not file_ext:
-            file_ext = legacy_path.suffix or '.bin'
-        if not mime_type:
-            guessed_mime, _ = mimetypes.guess_type(str(legacy_path))
-            mime_type = guessed_mime or 'application/octet-stream'
-
-        stored_source = self.document_storage.migrate_legacy_source(
-            company_id=row['company_id'],
-            document_id=row['document_id'],
-            source_path=legacy_path,
-            original_filename=original_filename,
-            mime_type=mime_type,
-            file_ext=file_ext,
-            original_file_size=legacy_path.stat().st_size,
-            was_normalized=True,
-            original_kind='legacy',
-        )
-        await connection.execute(
-            """
-            INSERT INTO document_files (
-                document_id,
-                file_role,
-                page_no,
-                storage_key,
-                mime_type,
-                original_filename,
-                file_ext,
-                file_size,
-                original_file_size,
-                stored_file_size,
-                was_normalized,
-                original_kind
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (document_id, file_role, page_no) DO UPDATE SET
-                storage_key = EXCLUDED.storage_key,
-                mime_type = EXCLUDED.mime_type,
-                original_filename = EXCLUDED.original_filename,
-                file_ext = EXCLUDED.file_ext,
-                file_size = EXCLUDED.file_size,
-                original_file_size = EXCLUDED.original_file_size,
-                stored_file_size = EXCLUDED.stored_file_size,
-                was_normalized = EXCLUDED.was_normalized,
-                original_kind = EXCLUDED.original_kind
-            """,
-            row['document_id'],
-            stored_source.file_role,
-            stored_source.page_no,
-            stored_source.storage_key,
-            stored_source.mime_type,
-            stored_source.original_filename,
-            stored_source.file_ext,
-            stored_source.file_size,
-            stored_source.original_file_size,
-            stored_source.stored_file_size,
-            stored_source.was_normalized,
-            stored_source.original_kind,
-        )
-        await connection.execute(
-            """
-            UPDATE documents
-            SET source_file_path = $2,
-                source_file_id = $3,
-                updated_at = NOW()
-            WHERE id = $1
-            """,
-            row['document_id'],
-            stored_source.storage_key,
-            stored_source.file_role,
-        )
+        if not storage_key:
+            raise CompanyAccessError('Исходный файл документа недоступен для просмотра.')
         return DocumentSourceView(
             document_id=row['document_id'],
-            storage_key=stored_source.storage_key,
-            original_filename=stored_source.original_filename,
-            mime_type=stored_source.mime_type,
-            file_ext=stored_source.file_ext,
+            storage_key=storage_key,
+            original_filename=row['original_filename'],
+            mime_type=row['mime_type'],
+            file_ext=row['file_ext'],
         )
-
-    def _resolve_legacy_document_path(self, source_file_path: str | None) -> Path | None:
-        if not source_file_path:
-            return None
-        path = Path(source_file_path)
-        if path.is_absolute():
-            normalized = path.as_posix()
-            if normalized.startswith('/app/tmp/') or normalized.startswith('/tmp/'):
-                return path
-            return None
-        if source_file_path.startswith('tmp/') or source_file_path.startswith('tmp\\'):
-            return Path('/app') / source_file_path
-        return None
 
     def _resolve_document_storage_key(
         self,
