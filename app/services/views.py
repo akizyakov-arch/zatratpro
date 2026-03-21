@@ -146,6 +146,15 @@ class DocumentRow:
 
 
 @dataclass(slots=True)
+class DocumentSourceView:
+    document_id: int
+    storage_key: str
+    original_filename: str | None
+    mime_type: str | None
+    file_ext: str | None
+
+
+@dataclass(slots=True)
 class SystemStats:
     users: int
     companies: int
@@ -633,6 +642,44 @@ class ViewService:
         document = await self._get_report_document(company.id, start_at, document_id, uploaded_by_user_id=user_id)
         items = await self._list_report_items(company.id, start_at, document_id=document_id, uploaded_by_user_id=user_id)
         return document, items
+
+    async def get_my_document_source(self, telegram_user_id: int, document_id: int) -> DocumentSourceView:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            user_id = await connection.fetchval("SELECT id FROM users WHERE telegram_id = $1", telegram_user_id)
+            if user_id is None:
+                raise CompanyAccessError('Пользователь не найден.')
+            row = await connection.fetchrow(
+                """
+                SELECT d.id AS document_id,
+                       COALESCE(df.storage_key, d.source_file_path) AS storage_key,
+                       df.original_filename,
+                       df.mime_type,
+                       df.file_ext
+                FROM documents d
+                LEFT JOIN document_files df
+                  ON df.document_id = d.id
+                 AND df.file_role = 'source'
+                 AND df.page_no = 0
+                WHERE d.company_id = $1
+                  AND d.uploaded_by_user_id = $2
+                  AND d.id = $3
+                LIMIT 1
+                """,
+                company.id,
+                user_id,
+                document_id,
+            )
+        if row is None or not row['storage_key']:
+            raise CompanyAccessError('Исходный файл документа не найден.')
+        return DocumentSourceView(
+            document_id=row['document_id'],
+            storage_key=row['storage_key'],
+            original_filename=row['original_filename'],
+            mime_type=row['mime_type'],
+            file_ext=row['file_ext'],
+        )
 
     async def get_my_company_card(self, telegram_user_id: int) -> CompanyCard:
         return await self.get_company_card_for_manager(telegram_user_id)

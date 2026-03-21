@@ -1,6 +1,6 @@
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.handlers.common import (
     build_main_menu_markup_from_context,
@@ -17,6 +17,7 @@ from app.handlers.common import (
     view_service,
 )
 from app.services.companies import CompanyAccessError
+from app.services.document_storage import DocumentStorageService
 from app.state.pending_actions import set_pending_action
 from app.ui.company import (
     MANAGER_EMPLOYEES_LIST_CALLBACK,
@@ -47,6 +48,7 @@ from app.ui.main_menu import MENU_BUTTONS
 from app.ui.my_documents import (
     MY_DOCUMENTS_ITEMS_PREFIX,
     MY_DOCUMENTS_LIST_CALLBACK,
+    MY_DOCUMENTS_OPEN_PREFIX,
     MY_DOCUMENTS_VIEW_PREFIX,
     build_my_document_card_keyboard,
     build_my_document_items_keyboard,
@@ -55,6 +57,7 @@ from app.ui.my_documents import (
 
 router = Router()
 NL = chr(10)
+document_storage_service = DocumentStorageService()
 
 
 @router.message(Command('invite'))
@@ -386,6 +389,30 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
         f'Первая позиция: {first_item}',
     ]
     await callback.message.answer(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
+
+
+@router.callback_query(F.data.startswith(MY_DOCUMENTS_OPEN_PREFIX))
+async def my_document_open_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        document_id = int(callback.data.removeprefix(MY_DOCUMENTS_OPEN_PREFIX))
+        source = await view_service.get_my_document_source(callback.from_user.id, document_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        await callback.answer(message, show_alert=True)
+        return
+    file_path = document_storage_service.resolve_path(source.storage_key)
+    if not file_path.exists():
+        await callback.answer('Файл документа не найден в storage.', show_alert=True)
+        return
+    await callback.answer()
+    input_file = FSInputFile(file_path, filename=source.original_filename or file_path.name)
+    caption = 'Исходный файл документа'
+    if source.mime_type and source.mime_type.startswith('image/'):
+        await callback.message.answer_photo(input_file, caption=caption)
+        return
+    await callback.message.answer_document(input_file, caption=caption)
 
 
 @router.callback_query(F.data.startswith(MY_DOCUMENTS_ITEMS_PREFIX))
