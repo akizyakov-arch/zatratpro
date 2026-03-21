@@ -20,6 +20,9 @@ class DownloadedTelegramPhoto:
     original_filename: str
     mime_type: str
     file_ext: str
+    original_file_size: int
+    normalized_file_size: int
+    original_kind: str
 
 
 class TelegramFileService:
@@ -33,12 +36,16 @@ class TelegramFileService:
         await self.bot.download_file(telegram_file.file_path, destination=source_path)
         file_ext = source_path.suffix or '.jpg'
         original_filename = Path(telegram_file.file_path or '').name or f'telegram_photo{file_ext}'
+        ocr_path = self._prepare_image_for_ocr(source_path)
         return DownloadedTelegramPhoto(
             source_path=source_path,
-            ocr_path=self._prepare_image_for_ocr(source_path),
+            ocr_path=ocr_path,
             original_filename=original_filename,
             mime_type='image/jpeg',
             file_ext=file_ext,
+            original_file_size=source_path.stat().st_size,
+            normalized_file_size=ocr_path.stat().st_size,
+            original_kind='photo',
         )
 
 
@@ -49,12 +56,16 @@ class TelegramFileService:
         await self.bot.download_file(telegram_file.file_path, destination=source_path)
         original_filename = document.file_name or Path(telegram_file.file_path or '').name or f'telegram_document{file_ext}'
         mime_type = document.mime_type or 'application/octet-stream'
+        ocr_path = self._prepare_image_for_ocr(source_path)
         return DownloadedTelegramPhoto(
             source_path=source_path,
-            ocr_path=self._prepare_image_for_ocr(source_path),
+            ocr_path=ocr_path,
             original_filename=original_filename,
             mime_type=mime_type,
             file_ext=file_ext,
+            original_file_size=source_path.stat().st_size,
+            normalized_file_size=ocr_path.stat().st_size,
+            original_kind='image_file',
         )
 
     def delete_temp_file(self, path: Path | None) -> None:

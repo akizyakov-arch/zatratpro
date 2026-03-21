@@ -26,6 +26,10 @@ class PendingDocument:
     source_original_name: str | None = None
     source_mime_type: str | None = None
     source_file_ext: str | None = None
+    source_original_file_size: int | None = None
+    source_stored_file_size: int | None = None
+    source_was_normalized: bool = False
+    source_original_kind: str | None = None
 
 
 def _cleanup_temp_path(path_value: str | None) -> None:
@@ -107,9 +111,13 @@ async def begin_document_flow(telegram_user_id: int) -> None:
                 source_original_name,
                 source_mime_type,
                 source_file_ext,
+                source_original_file_size,
+                source_stored_file_size,
+                source_was_normalized,
+                source_original_kind,
                 expires_at
             )
-            VALUES ($1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NOW() + make_interval(mins => $2))
+            VALUES ($1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, FALSE, NULL, NOW() + make_interval(mins => $2))
             ''',
             telegram_user_id,
             PENDING_DOCUMENT_TTL_MINUTES,
@@ -147,9 +155,13 @@ async def store_pending_document(telegram_user_id: int, pending_document: Pendin
                 source_original_name,
                 source_mime_type,
                 source_file_ext,
+                source_original_file_size,
+                source_stored_file_size,
+                source_was_normalized,
+                source_original_kind,
                 expires_at
             )
-            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, NOW() + make_interval(mins => $11))
+            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW() + make_interval(mins => $15))
             ON CONFLICT (telegram_user_id)
             DO UPDATE SET
                 ocr_text = EXCLUDED.ocr_text,
@@ -161,6 +173,10 @@ async def store_pending_document(telegram_user_id: int, pending_document: Pendin
                 source_original_name = EXCLUDED.source_original_name,
                 source_mime_type = EXCLUDED.source_mime_type,
                 source_file_ext = EXCLUDED.source_file_ext,
+                source_original_file_size = EXCLUDED.source_original_file_size,
+                source_stored_file_size = EXCLUDED.source_stored_file_size,
+                source_was_normalized = EXCLUDED.source_was_normalized,
+                source_original_kind = EXCLUDED.source_original_kind,
                 created_at = NOW(),
                 expires_at = EXCLUDED.expires_at
             ''',
@@ -174,6 +190,10 @@ async def store_pending_document(telegram_user_id: int, pending_document: Pendin
             pending_document.source_original_name,
             pending_document.source_mime_type,
             pending_document.source_file_ext,
+            pending_document.source_original_file_size,
+            pending_document.source_stored_file_size,
+            pending_document.source_was_normalized,
+            pending_document.source_original_kind,
             PENDING_DOCUMENT_TTL_MINUTES,
         )
     if previous_temp_path and previous_temp_path != pending_document.source_temp_path:
@@ -194,7 +214,11 @@ async def get_pending_document(telegram_user_id: int) -> PendingDocument | None:
                 source_temp_path,
                 source_original_name,
                 source_mime_type,
-                source_file_ext
+                source_file_ext,
+                source_original_file_size,
+                source_stored_file_size,
+                source_was_normalized,
+                source_original_kind
             FROM pending_documents
             WHERE telegram_user_id = $1
               AND expires_at > NOW()
@@ -213,6 +237,10 @@ async def get_pending_document(telegram_user_id: int) -> PendingDocument | None:
         source_original_name=row['source_original_name'],
         source_mime_type=row['source_mime_type'],
         source_file_ext=row['source_file_ext'],
+        source_original_file_size=row['source_original_file_size'],
+        source_stored_file_size=row['source_stored_file_size'],
+        source_was_normalized=row['source_was_normalized'],
+        source_original_kind=row['source_original_kind'],
     )
 
 
@@ -233,7 +261,11 @@ async def pop_pending_document(telegram_user_id: int) -> PendingDocument | None:
                 source_temp_path,
                 source_original_name,
                 source_mime_type,
-                source_file_ext
+                source_file_ext,
+                source_original_file_size,
+                source_stored_file_size,
+                source_was_normalized,
+                source_original_kind
             ''',
             telegram_user_id,
         )
@@ -249,6 +281,10 @@ async def pop_pending_document(telegram_user_id: int) -> PendingDocument | None:
         source_original_name=row['source_original_name'],
         source_mime_type=row['source_mime_type'],
         source_file_ext=row['source_file_ext'],
+        source_original_file_size=row['source_original_file_size'],
+        source_stored_file_size=row['source_stored_file_size'],
+        source_was_normalized=row['source_was_normalized'],
+        source_original_kind=row['source_original_kind'],
     )
     _cleanup_temp_path(pending_document.source_temp_path)
     return pending_document

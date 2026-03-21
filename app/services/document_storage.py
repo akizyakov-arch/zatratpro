@@ -14,6 +14,10 @@ class StoredDocumentFile:
     original_filename: str | None
     file_ext: str
     file_size: int
+    original_file_size: int | None
+    stored_file_size: int
+    was_normalized: bool
+    original_kind: str | None
 
 
 class DocumentStorageService:
@@ -28,6 +32,9 @@ class DocumentStorageService:
         original_filename: str | None = None,
         mime_type: str | None = None,
         file_ext: str | None = None,
+        original_file_size: int | None = None,
+        was_normalized: bool = False,
+        original_kind: str | None = None,
     ) -> StoredDocumentFile:
         source = Path(source_path)
         ext = file_ext or source.suffix or '.bin'
@@ -37,6 +44,7 @@ class DocumentStorageService:
         target_path = self.root / storage_key
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(source), str(target_path))
+        stored_file_size = target_path.stat().st_size
         return StoredDocumentFile(
             storage_key=storage_key,
             file_role='source',
@@ -44,7 +52,11 @@ class DocumentStorageService:
             mime_type=mime_type,
             original_filename=original_filename,
             file_ext=ext.lower(),
-            file_size=target_path.stat().st_size,
+            file_size=stored_file_size,
+            original_file_size=original_file_size,
+            stored_file_size=stored_file_size,
+            was_normalized=was_normalized,
+            original_kind=original_kind,
         )
 
     def resolve_path(self, storage_key: str) -> Path:

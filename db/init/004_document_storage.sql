@@ -16,7 +16,16 @@ CREATE TABLE IF NOT EXISTS document_files (
 CREATE INDEX IF NOT EXISTS idx_document_files_document_id
 ON document_files(document_id);
 
+ALTER TABLE document_files ADD COLUMN IF NOT EXISTS original_file_size BIGINT;
+ALTER TABLE document_files ADD COLUMN IF NOT EXISTS stored_file_size BIGINT;
+ALTER TABLE document_files ADD COLUMN IF NOT EXISTS was_normalized BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE document_files ADD COLUMN IF NOT EXISTS original_kind TEXT;
+
 ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_temp_path TEXT;
 ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_original_name TEXT;
 ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_mime_type TEXT;
 ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_file_ext TEXT;
+ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_original_file_size BIGINT;
+ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_stored_file_size BIGINT;
+ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_was_normalized BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_original_kind TEXT;

@@ -75,6 +75,10 @@ async def _run_runtime_migrations(pool: Pool) -> None:
             await connection.execute('ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_original_name TEXT')
             await connection.execute('ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_mime_type TEXT')
             await connection.execute('ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_file_ext TEXT')
+            await connection.execute('ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_original_file_size BIGINT')
+            await connection.execute('ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_stored_file_size BIGINT')
+            await connection.execute('ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_was_normalized BOOLEAN NOT NULL DEFAULT FALSE')
+            await connection.execute('ALTER TABLE pending_documents ADD COLUMN IF NOT EXISTS source_original_kind TEXT')
             await connection.execute(
                 '''
                 CREATE INDEX IF NOT EXISTS idx_pending_documents_expires_at
@@ -93,6 +97,10 @@ async def _run_runtime_migrations(pool: Pool) -> None:
                     original_filename TEXT,
                     file_ext TEXT NOT NULL,
                     file_size BIGINT NOT NULL,
+                    original_file_size BIGINT,
+                    stored_file_size BIGINT,
+                    was_normalized BOOLEAN NOT NULL DEFAULT FALSE,
+                    original_kind TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     CONSTRAINT chk_document_files_role CHECK (file_role IN ('source', 'preview', 'page', 'ocr_text')),
                     CONSTRAINT uq_document_files_document_role_page UNIQUE (document_id, file_role, page_no)
@@ -105,3 +113,7 @@ async def _run_runtime_migrations(pool: Pool) -> None:
                 ON document_files(document_id)
                 '''
             )
+            await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS original_file_size BIGINT')
+            await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS stored_file_size BIGINT')
+            await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS was_normalized BOOLEAN NOT NULL DEFAULT FALSE')
+            await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS original_kind TEXT')

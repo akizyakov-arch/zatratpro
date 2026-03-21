@@ -93,6 +93,10 @@ class DocumentService:
         source_original_name: str | None = None,
         source_mime_type: str | None = None,
         source_file_ext: str | None = None,
+        source_original_file_size: int | None = None,
+        source_stored_file_size: int | None = None,
+        source_was_normalized: bool = False,
+        source_original_kind: str | None = None,
     ) -> int:
         member_role = await self.company_service.ensure_member_role(telegram_user.id)
         if member_role not in ADMIN_ROLES | WORKER_ROLES:
@@ -194,6 +198,9 @@ class DocumentService:
                         original_filename=source_original_name,
                         mime_type=source_mime_type,
                         file_ext=source_file_ext,
+                        original_file_size=source_original_file_size,
+                        was_normalized=source_was_normalized,
+                        original_kind=source_original_kind,
                     )
                     await connection.execute(
                         """
@@ -205,9 +212,13 @@ class DocumentService:
                             mime_type,
                             original_filename,
                             file_ext,
-                            file_size
+                            file_size,
+                            original_file_size,
+                            stored_file_size,
+                            was_normalized,
+                            original_kind
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                         """,
                         document_id,
                         stored_source.file_role,
@@ -217,6 +228,10 @@ class DocumentService:
                         stored_source.original_filename,
                         stored_source.file_ext,
                         stored_source.file_size,
+                        stored_source.original_file_size,
+                        source_stored_file_size or stored_source.stored_file_size,
+                        stored_source.was_normalized,
+                        stored_source.original_kind,
                     )
                     await connection.execute(
                         """

@@ -115,6 +115,10 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
             source_original_name=pending_document.source_original_name,
             source_mime_type=pending_document.source_mime_type,
             source_file_ext=pending_document.source_file_ext,
+            source_original_file_size=pending_document.source_original_file_size,
+            source_stored_file_size=pending_document.source_stored_file_size,
+            source_was_normalized=pending_document.source_was_normalized,
+            source_original_kind=pending_document.source_original_kind,
         )
     except DocumentValidationError as exc:
         await clear_document_flow(callback.from_user.id)
@@ -277,6 +281,10 @@ async def _process_uploaded_image(
             source_original_name=downloaded_photo.original_filename,
             source_mime_type='image/jpeg',
             source_file_ext='.jpg',
+            source_original_file_size=downloaded_photo.original_file_size,
+            source_stored_file_size=downloaded_photo.normalized_file_size,
+            source_was_normalized=True,
+            source_original_kind=downloaded_photo.original_kind,
         ),
     )
     file_service.delete_temp_file(downloaded_photo.source_path)
@@ -471,6 +479,10 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             source_original_name=pending_document.source_original_name,
             source_mime_type=pending_document.source_mime_type,
             source_file_ext=pending_document.source_file_ext,
+            source_original_file_size=pending_document.source_original_file_size,
+            source_stored_file_size=pending_document.source_stored_file_size,
+            source_was_normalized=pending_document.source_was_normalized,
+            source_original_kind=pending_document.source_original_kind,
         )
     except DocumentValidationError as exc:
         await clear_document_flow(callback.from_user.id)
