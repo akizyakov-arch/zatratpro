@@ -171,6 +171,137 @@ async def _get_access_context_or_reply(message: Message):
     return context
 
 
+async def _process_uploaded_image(
+    message: Message,
+    menu_markup,
+    context,
+    downloaded_photo: DownloadedTelegramPhoto,
+    received_label: str,
+) -> None:
+    if message.from_user is None:
+        TelegramFileService(message.bot).delete_temp_file(downloaded_photo.ocr_path)
+        TelegramFileService(message.bot).delete_temp_file(downloaded_photo.source_path)
+        return
+
+    bot = message.bot
+    file_service = TelegramFileService(bot)
+    ocr_service = OCRSpaceService()
+    deepseek_service = DeepSeekService()
+
+    await begin_document_flow(message.from_user.id)
+    await message.answer(f'{_person_name(message.from_user)}, {received_label}. Начинаю распознавание.', reply_markup=menu_markup)
+
+    try:
+        async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
+            try:
+                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
+            except TimeoutError:
+                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
+                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
+                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
+            except OCRSpaceError as exc:
+                if 'E101' not in str(exc):
+                    raise
+                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
+                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
+                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
+    except TimeoutError:
+        file_service.delete_temp_file(downloaded_photo.ocr_path)
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        logger.exception('OCR timed out')
+        await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
+        return
+    except OCRSpaceError as exc:
+        file_service.delete_temp_file(downloaded_photo.ocr_path)
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        logger.exception('OCR failed')
+        await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
+        return
+    except Exception as exc:  # noqa: BLE001
+        file_service.delete_temp_file(downloaded_photo.ocr_path)
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        logger.exception('Unexpected error while processing uploaded image')
+        await message.answer(f'Не удалось обработать документ: {exc}', reply_markup=menu_markup)
+        return
+    finally:
+        file_service.delete_temp_file(downloaded_photo.ocr_path)
+
+    if not ocr_text.strip():
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
+        return
+
+    await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
+    try:
+        async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
+            async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
+                extracted_document = await deepseek_service.extract_document(ocr_text)
+        document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
+        preview_text = format_document_preview(document)
+    except TimeoutError:
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        logger.exception('DeepSeek extraction timed out')
+        await message.answer('Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
+        return
+    except DeepSeekError as exc:
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        logger.exception('DeepSeek extraction failed')
+        await message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
+        return
+    except DocumentValidationError as exc:
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        await message.answer(str(exc), reply_markup=menu_markup)
+        return
+    except Exception as exc:  # noqa: BLE001
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        logger.exception('Extraction failed')
+        await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
+        return
+
+    await store_pending_document(
+        message.from_user.id,
+        PendingDocument(
+            ocr_text=ocr_text,
+            normalized_text=preview_text,
+            extracted_document=document,
+            source_temp_path=str(downloaded_photo.source_path),
+            source_original_name=downloaded_photo.original_filename,
+            source_mime_type=downloaded_photo.mime_type,
+            source_file_ext=downloaded_photo.file_ext,
+        ),
+    )
+    await message.answer(preview_text, reply_markup=menu_markup)
+
+    try:
+        projects = await project_service.list_active_projects(message.from_user.id)
+    except CompanyAccessError as exc:
+        file_service.delete_temp_file(downloaded_photo.source_path)
+        await clear_document_flow(message.from_user.id)
+        await message.answer(str(exc), reply_markup=menu_markup)
+        return
+
+    if not projects and not context.can_manage_company:
+        await clear_document_flow(message.from_user.id)
+        await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
+        return
+
+    await message.answer(
+        f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
+        reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
+    )
+
+
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
     logger.info(
