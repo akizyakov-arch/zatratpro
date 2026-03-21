@@ -128,6 +128,25 @@ def format_items_only(title: str, items) -> str:
     return NL.join(lines)
 
 
+def format_report_document_card(title: str, document, items) -> str:
+    number = document.document_number or 'без номера'
+    date_line = format_date(document.document_date)
+    vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
+    executor = document.uploaded_by_name or 'не указан'
+    project_name = document.project_name or 'Проект не указан'
+    first_item = items[0].name if items else (document.first_item_name or 'Позиции не найдены')
+    return NL.join([
+        f'<b>{title}</b>',
+        f'Проект: {project_name}',
+        f'Контрагент: {vendor}',
+        f'Дата: {date_line}',
+        f'Номер: {number}',
+        f'Сумма: {format_amount(document.total_amount)}',
+        f'Исполнитель: {executor}',
+        f'Первая позиция: {first_item}',
+    ])
+
+
 def format_report_document_items(title: str, period: str, document, items) -> str:
     number = document.document_number or 'без номера'
     date_line = format_date(document.document_date)

@@ -7,6 +7,7 @@ from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
     format_duplicate_report,
     format_project_report,
+    format_report_document_card,
     format_report_document_items,
     format_report_documents,
     format_items_only,
@@ -15,6 +16,7 @@ from app.services.report_formatters import (
 from app.ui.main_menu import MENU_BUTTONS
 from app.ui.reports import (
     MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX,
+    MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_CONFIRM_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX,
@@ -42,7 +44,8 @@ from app.ui.reports import (
     build_employee_report_period_keyboard,
     build_employee_report_selector_keyboard,
     build_project_report_keyboard,
-    build_report_document_back_keyboard,
+    build_report_document_card_keyboard,
+    build_report_document_items_back_keyboard,
     build_report_documents_keyboard,
     build_report_period_keyboard,
     build_reports_menu_keyboard,
@@ -378,7 +381,7 @@ async def report_document_detail_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     await callback.message.answer(
-        format_report_document_items('Позиции документа', period, document, items),
-        reply_markup=build_report_document_back_keyboard(report_kind, period, target_id),
+        format_report_document_card('Документ', document, items),
+        reply_markup=build_report_document_card_keyboard(report_kind, period, target_id, document_id),
         parse_mode='HTML',
     )
