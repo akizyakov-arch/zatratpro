@@ -1,3 +1,4 @@
+from pathlib import Path
 import asyncio
 import logging
 from time import perf_counter
@@ -162,9 +163,7 @@ async def _get_access_context_or_reply(message: Message):
 
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
-    started = perf_counter()
     context = await _get_access_context_or_reply(message)
-    after_context = perf_counter()
     if context is None:
         return
     menu_markup = build_main_menu_keyboard(
@@ -181,175 +180,40 @@ async def process_photo(message: Message) -> None:
             reply_markup=menu_markup,
         )
         return
+    file_service = TelegramFileService(message.bot)
+    downloaded_photo = await file_service.download_best_photo(message.photo)
+    await _process_uploaded_image(message, menu_markup, context, downloaded_photo, 'фото получено')
 
-    bot = message.bot
-    file_service = TelegramFileService(bot)
-    ocr_service = OCRSpaceService()
-    deepseek_service = DeepSeekService()
-    await begin_document_flow(message.from_user.id)
-    after_begin = perf_counter()
 
-    await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
-    after_intro = perf_counter()
-    downloaded_photo: DownloadedTelegramPhoto | None = None
-    try:
-        async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            downloaded_photo = await file_service.download_best_photo(message.photo)
-            after_download = perf_counter()
-            try:
-                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
-            except TimeoutError:
-                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
-                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
-                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
-            except OCRSpaceError as exc:
-                if 'E101' not in str(exc):
-                    raise
-                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
-                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
-                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
-            after_ocr = perf_counter()
-    except TimeoutError:
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        logger.exception('OCR timed out')
-        await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
+@router.message(F.document)
+async def process_document_file(message: Message) -> None:
+    context = await _get_access_context_or_reply(message)
+    if context is None:
         return
-    except OCRSpaceError as exc:
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        logger.exception('OCR failed')
-        await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
-        return
-    except Exception as exc:  # noqa: BLE001
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        logger.exception('Unexpected error while processing photo')
-        await message.answer(f'Не удалось обработать фото: {exc}', reply_markup=menu_markup)
-        return
-
-    if not ocr_text.strip():
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
-        return
-
-    await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
-    after_ocr_message = perf_counter()
-    try:
-        async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
-                extracted_document = await deepseek_service.extract_document(ocr_text)
-        after_extract = perf_counter()
-        document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
-        preview_text = format_document_preview(document)
-        after_preview_format = perf_counter()
-    except TimeoutError:
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        logger.exception('DeepSeek extraction timed out')
-        await message.answer('Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
-        return
-    except DeepSeekError as exc:
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        logger.exception('DeepSeek extraction failed')
-        await message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
-        return
-    except DocumentValidationError as exc:
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        await message.answer(str(exc), reply_markup=menu_markup)
-        return
-    except Exception as exc:  # noqa: BLE001
-        await clear_document_flow(message.from_user.id)
-        if downloaded_photo is not None:
-            file_service.delete_temp_file(downloaded_photo.ocr_path)
-            file_service.delete_temp_file(downloaded_photo.source_path)
-        logger.exception('Extraction failed')
-        await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
-        return
-
-    if downloaded_photo is not None:
-        file_service.delete_temp_file(downloaded_photo.ocr_path)
-
-    await store_pending_document(
-        message.from_user.id,
-        PendingDocument(
-            ocr_text=ocr_text,
-            normalized_text=preview_text,
-            extracted_document=document,
-            source_temp_path=str(downloaded_photo.source_path) if downloaded_photo is not None else None,
-            source_original_name=downloaded_photo.original_filename if downloaded_photo is not None else None,
-            source_mime_type=downloaded_photo.mime_type if downloaded_photo is not None else None,
-            source_file_ext=downloaded_photo.file_ext if downloaded_photo is not None else None,
-        ),
+    menu_markup = build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.can_view_reports,
     )
-    after_store = perf_counter()
-    preview_chunks = list(chunk_message(preview_text))
-    preview_message = preview_chunks[0]
-    if len(preview_chunks) > 1:
-        preview_message += '\n\n... Превью сокращено. Полный текст не отправляется в чат.'
-    after_chunk_prepare = perf_counter()
-    await message.answer(preview_message, reply_markup=menu_markup)
-    after_preview_send = perf_counter()
-
-    try:
-        projects = await project_service.list_active_projects(message.from_user.id)
-        after_projects = perf_counter()
-    except CompanyAccessError as exc:
-        await clear_document_flow(message.from_user.id)
-        await message.answer(str(exc), reply_markup=menu_markup)
+    if message.document is None or message.from_user is None:
+        await message.answer('Файл не найден в сообщении.', reply_markup=menu_markup)
         return
-
-    if not projects and not context.can_manage_company:
-        await clear_document_flow(message.from_user.id)
-        await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
-        return
-
-    await message.answer(
-        f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
-        reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
-    )
-    finished = perf_counter()
-    total_ms = (finished - started) * 1000
-    if total_ms >= SLOW_DOCUMENT_STAGE_MS:
-        logger.warning(
-            'Document stages: user_id=%s context=%.1fms begin=%.1fms intro=%.1fms download=%.1fms ocr=%.1fms ocr_msg=%.1fms extract=%.1fms preview_format=%.1fms store=%.1fms chunk_prepare=%.1fms preview_send=%.1fms list_projects=%.1fms final_send=%.1fms total=%.1fms chunks=%s',
-            message.from_user.id,
-            (after_context - started) * 1000,
-            (after_begin - after_context) * 1000,
-            (after_intro - after_begin) * 1000,
-            (after_download - after_intro) * 1000,
-            (after_ocr - after_download) * 1000,
-            (after_ocr_message - after_ocr) * 1000,
-            (after_extract - after_ocr_message) * 1000,
-            (after_preview_format - after_extract) * 1000,
-            (after_store - after_preview_format) * 1000,
-            (after_chunk_prepare - after_store) * 1000,
-            (after_preview_send - after_chunk_prepare) * 1000,
-            (after_projects - after_preview_send) * 1000,
-            (finished - after_projects) * 1000,
-            total_ms,
-            len(preview_chunks),
+    if await has_active_document_flow(message.from_user.id):
+        await message.answer(
+            f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
+            reply_markup=menu_markup,
         )
+        return
+    if not _is_supported_image_document(message):
+        file_name = message.document.file_name or 'файл'
+        if (message.document.mime_type or '').lower() == 'application/pdf' or file_name.lower().endswith('.pdf'):
+            await message.answer('PDF уже принимается как файл, но отдельный PDF OCR-flow еще не включен. Пока отправь документ как фото или изображение-файл.', reply_markup=menu_markup)
+            return
+        await message.answer('Поддерживаются изображения: JPG, JPEG, PNG, WEBP, HEIC, HEIF. Этот файл пока не поддерживается для OCR.', reply_markup=menu_markup)
+        return
+    file_service = TelegramFileService(message.bot)
+    downloaded_photo = await file_service.download_image_document(message.document)
+    await _process_uploaded_image(message, menu_markup, context, downloaded_photo, 'файл получен')
 
 
 @router.callback_query(F.data == PROJECT_CANCEL_CALLBACK)

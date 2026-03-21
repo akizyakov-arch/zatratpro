@@ -3,7 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from aiogram import Bot
-from aiogram.types import PhotoSize
+from aiogram.types import Document, PhotoSize
 from PIL import Image, ImageOps
 
 from app.config import TMP_DIR
@@ -38,6 +38,22 @@ class TelegramFileService:
             ocr_path=self._prepare_image_for_ocr(source_path),
             original_filename=original_filename,
             mime_type='image/jpeg',
+            file_ext=file_ext,
+        )
+
+
+    async def download_image_document(self, document: Document) -> DownloadedTelegramPhoto:
+        telegram_file = await self.bot.get_file(document.file_id)
+        file_ext = Path(document.file_name or '').suffix.lower() or '.jpg'
+        source_path = TMP_DIR / f'{uuid4()}-source{file_ext}'
+        await self.bot.download_file(telegram_file.file_path, destination=source_path)
+        original_filename = document.file_name or Path(telegram_file.file_path or '').name or f'telegram_document{file_ext}'
+        mime_type = document.mime_type or 'application/octet-stream'
+        return DownloadedTelegramPhoto(
+            source_path=source_path,
+            ocr_path=self._prepare_image_for_ocr(source_path),
+            original_filename=original_filename,
+            mime_type=mime_type,
             file_ext=file_ext,
         )
 
