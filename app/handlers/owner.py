@@ -34,6 +34,8 @@ from app.ui.company import (
     OWNER_USER_ASSIGN_MANAGER_PREFIX,
     OWNER_USER_REMOVE_CONFIRM_PREFIX,
     OWNER_USER_REMOVE_PREFIX,
+    OWNER_USER_UNBLOCK_CONFIRM_PREFIX,
+    OWNER_USER_UNBLOCK_PREFIX,
     OWNER_USER_VIEW_PREFIX,
     build_companies_keyboard,
     build_company_actions_keyboard,
@@ -161,7 +163,7 @@ async def user_view_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+    await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.company_member_status))
 
 
 @router.callback_query(F.data.startswith(OWNER_USER_ASSIGN_EMPLOYEE_PREFIX))
@@ -216,8 +218,8 @@ async def user_assign_company_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer('Пользователь привязан.')
-    await callback.message.answer(f'Пользователь привязан к компании как {member.role}.', reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
-    await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+    await callback.message.answer(f'Пользователь привязан к компании как {member.role}.', reply_markup=build_owner_user_card_keyboard(user.user_id, user.company_member_status))
+    await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.company_member_status))
     role_label = 'руководитель' if member.role == 'manager' else 'сотрудник'
     company_name = user.company_name or 'компания'
     await notify_membership_update(
@@ -233,7 +235,7 @@ async def user_remove_prompt(callback: CallbackQuery) -> None:
         return
     user_id = int(callback.data.removeprefix(OWNER_USER_REMOVE_PREFIX))
     await callback.answer()
-    await callback.message.answer('Подтвердить исключение пользователя из компании?', reply_markup=build_confirm_keyboard(f'{OWNER_USER_REMOVE_CONFIRM_PREFIX}{user_id}', f'{OWNER_USER_VIEW_PREFIX}{user_id}'))
+    await callback.message.answer('Подтвердить блокировку пользователя в компании?', reply_markup=build_confirm_keyboard(f'{OWNER_USER_REMOVE_CONFIRM_PREFIX}{user_id}', f'{OWNER_USER_VIEW_PREFIX}{user_id}'))
 
 
 @router.callback_query(F.data.startswith(OWNER_USER_REMOVE_CONFIRM_PREFIX))
@@ -247,16 +249,49 @@ async def user_remove_confirm(callback: CallbackQuery) -> None:
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
-    await callback.answer('Пользователь исключен.')
+    await callback.answer('Пользователь заблокирован.')
     await callback.message.answer(
-        f'Пользователь исключен из компании: {member.full_name or member.username or member.telegram_user_id}.',
-        reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company),
+        f'Пользователь заблокирован в компании: {member.full_name or member.username or member.telegram_user_id}.',
+        reply_markup=build_owner_user_card_keyboard(user.user_id, user.company_member_status),
     )
-    await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.has_company))
+    await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.company_member_status))
     await notify_membership_update(
         callback.bot,
         member.telegram_user_id,
-        'Тебя исключили из компании. Доступ к рабочим разделам отключен.',
+        'Доступ к компании приостановлен. Обратитесь к руководителю.',
+    )
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_UNBLOCK_PREFIX))
+async def user_unblock_prompt(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    user_id = int(callback.data.removeprefix(OWNER_USER_UNBLOCK_PREFIX))
+    await callback.answer()
+    await callback.message.answer('Подтвердить разблокировку пользователя в компании?', reply_markup=build_confirm_keyboard(f'{OWNER_USER_UNBLOCK_CONFIRM_PREFIX}{user_id}', f'{OWNER_USER_VIEW_PREFIX}{user_id}'))
+
+
+@router.callback_query(F.data.startswith(OWNER_USER_UNBLOCK_CONFIRM_PREFIX))
+async def user_unblock_confirm(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    user_id = int(callback.data.removeprefix(OWNER_USER_UNBLOCK_CONFIRM_PREFIX))
+    try:
+        member = await company_service.restore_user_access_by_owner(callback.from_user.id, user_id)
+        user = await view_service.get_user_card(callback.from_user.id, user_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Пользователь разблокирован.')
+    await callback.message.answer(
+        f'Пользователь разблокирован в компании: {member.full_name or member.username or member.telegram_user_id}.',
+        reply_markup=build_owner_user_card_keyboard(user.user_id, user.company_member_status),
+    )
+    await callback.message.answer(format_user_card(user), reply_markup=build_owner_user_card_keyboard(user.user_id, user.company_member_status))
+    await notify_membership_update(
+        callback.bot,
+        member.telegram_user_id,
+        'Доступ к компании восстановлен.',
     )
 
 

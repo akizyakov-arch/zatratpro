@@ -76,8 +76,11 @@ async def help_menu_kind_for_user(user) -> str:
 async def require_company_access(message: Message) -> bool:
     context = await ensure_context(message)
     if context is None or not context.has_company:
+        text = 'Сначала нужен invite-код компании. Нажми "Ввести invite-код" или выполни /join КОД.'
+        if message.from_user is not None and await company_service.has_blocked_membership(message.from_user.id):
+            text = 'Доступ к компании приостановлен. Обратитесь к руководителю.'
         await message.answer(
-            'Сначала нужен invite-код компании. Нажми "Ввести invite-код" или выполни /join КОД.',
+            text,
             reply_markup=await main_menu_markup(message),
         )
         return False
@@ -135,9 +138,11 @@ def format_project_card(project) -> str:
 def format_member_card(member) -> str:
     joined = member.joined_at.strftime('%Y-%m-%d %H:%M') if member.joined_at else '—'
     username = f'@{member.username}' if member.username else '—'
+    member_status = 'заблокирован' if getattr(member, 'status', None) == 'blocked' else 'active'
     return NL.join([
         f'Сотрудник: {member.full_name or username}',
         f'Username: {username}',
+        f'Статус участия: {member_status}',
         f'Дата вступления: {joined}',
         f'Загружено документов: {member.document_count}',
     ])
@@ -148,6 +153,7 @@ def format_user_card(user) -> str:
     full_name = user.full_name or '—'
     company_name = user.company_name or 'не привязан'
     company_role = user.company_role or '—'
+    company_member_status = getattr(user, 'company_member_status', None) or '—'
     company_status = user.company_status or '—'
     joined_at = user.joined_at.strftime('%Y-%m-%d %H:%M') if getattr(user, 'joined_at', None) else '—'
     return NL.join([
@@ -157,6 +163,7 @@ def format_user_card(user) -> str:
         f'System role: {user.system_role}',
         f'Компания: {company_name}',
         f'Роль в компании: {company_role}',
+        f'Статус участия: {company_member_status}',
         f'Статус компании: {company_status}',
         f'Дата привязки: {joined_at}',
     ])

@@ -15,6 +15,11 @@ MASTER_ROLE = "master"
 ADMIN_ROLES = {MANAGER_ROLE}
 WORKER_ROLES = {EMPLOYEE_ROLE}
 VALID_MEMBER_ROLES = {MANAGER_ROLE, EMPLOYEE_ROLE, MASTER_ROLE}
+PENDING_MEMBER_STATUS = "new"
+ACTIVE_MEMBER_STATUS = "active"
+BLOCKED_MEMBER_STATUS = "blocked"
+REMOVED_MEMBER_STATUS = "removed"
+VISIBLE_MEMBER_STATUSES = {ACTIVE_MEMBER_STATUS, BLOCKED_MEMBER_STATUS}
 EMPLOYEE_LIMIT = 10
 INVITE_TTL_HOURS = 72
 
@@ -41,6 +46,7 @@ class CompanyMember:
     company_id: int
     user_id: int
     role: str
+    status: str
     username: str | None
     first_name: str | None
     last_name: str | None
@@ -354,10 +360,11 @@ class CompanyService:
                 FROM company_members AS cm
                 JOIN users AS u ON u.id = cm.user_id
                 WHERE cm.company_id = $1
-                  AND cm.status = 'active'
-                ORDER BY cm.role, cm.joined_at, cm.id
+                  AND cm.status = ANY($2::text[])
+                ORDER BY CASE cm.status WHEN 'active' THEN 0 WHEN 'blocked' THEN 1 ELSE 2 END, cm.role, cm.joined_at, cm.id
                 """,
                 company.id,
+                list(VISIBLE_MEMBER_STATUSES),
             )
         return [self._member_from_row(row) for row in rows]
 
@@ -365,14 +372,14 @@ class CompanyService:
         company = await self.get_active_company_for_user(telegram_user_id)
         member_role = await self.ensure_member_role(telegram_user_id)
         if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError("Исключать сотрудников может только руководитель компании.")
+            raise CompanyAccessError("Блокировать сотрудников может только руководитель компании.")
 
         pool = get_pool()
         async with pool.acquire() as connection:
             row = await connection.fetchrow(
                 """
                 UPDATE company_members AS cm
-                SET status = 'removed',
+                SET status = 'blocked',
                     removed_at = NOW()
                 FROM users AS u
                 WHERE cm.user_id = u.id
@@ -383,6 +390,7 @@ class CompanyService:
                 RETURNING cm.company_id,
                           cm.user_id,
                           cm.role,
+                          cm.status,
                           cm.joined_at,
                           u.username,
                           u.first_name,
@@ -394,7 +402,44 @@ class CompanyService:
                 list(WORKER_ROLES),
             )
         if row is None:
-            raise CompanyAccessError("Сотрудник не найден в текущей компании или уже исключен.")
+            raise CompanyAccessError("Сотрудник не найден в текущей компании или уже заблокирован.")
+        return self._member_from_row(row)
+
+    async def restore_employee_access(self, telegram_user_id: int, member_user_id: int) -> CompanyMember:
+        company = await self.get_active_company_for_user(telegram_user_id)
+        member_role = await self.ensure_member_role(telegram_user_id)
+        if member_role not in ADMIN_ROLES:
+            raise CompanyAccessError("Разблокировать сотрудников может только руководитель компании.")
+
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                UPDATE company_members AS cm
+                SET status = 'active',
+                    removed_at = NULL
+                FROM users AS u
+                WHERE cm.user_id = u.id
+                  AND cm.company_id = $1
+                  AND cm.user_id = $2
+                  AND cm.role = ANY($3::text[])
+                  AND cm.status = 'blocked'
+                RETURNING cm.company_id,
+                          cm.user_id,
+                          cm.role,
+                          cm.status,
+                          cm.joined_at,
+                          u.username,
+                          u.first_name,
+                          u.last_name,
+                          u.telegram_id AS telegram_user_id
+                """,
+                company.id,
+                member_user_id,
+                list(WORKER_ROLES),
+            )
+        if row is None:
+            raise CompanyAccessError("Сотрудник не найден в текущей компании или уже активен.")
         return self._member_from_row(row)
 
     async def assign_user_to_company_by_owner(
@@ -530,6 +575,7 @@ class CompanyService:
                     SELECT cm.company_id,
                            cm.user_id,
                            cm.role,
+                           cm.status,
                            cm.joined_at,
                            u.username,
                            u.first_name,
@@ -550,7 +596,7 @@ class CompanyService:
                 await connection.execute(
                     """
                     UPDATE company_members
-                    SET status = 'removed',
+                    SET status = 'blocked',
                         removed_at = NOW()
                     WHERE company_id = $1
                       AND user_id = $2
@@ -571,6 +617,75 @@ class CompanyService:
                         membership["company_id"],
                         target_user_id,
                     )
+                membership = dict(membership)
+                membership["status"] = 'blocked'
+        return self._member_from_row(membership)
+
+    async def restore_user_access_by_owner(self, owner_telegram_user_id: int, target_user_id: int) -> CompanyMember:
+        await self._ensure_platform_owner(owner_telegram_user_id)
+
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                membership = await connection.fetchrow(
+                    """
+                    SELECT cm.company_id,
+                           cm.user_id,
+                           cm.role,
+                           cm.status,
+                           cm.joined_at,
+                           u.username,
+                           u.first_name,
+                           u.last_name,
+                           u.telegram_id AS telegram_user_id
+                    FROM company_members cm
+                    JOIN users u ON u.id = cm.user_id
+                    WHERE cm.user_id = $1
+                      AND cm.status = 'blocked'
+                    ORDER BY cm.joined_at DESC, cm.id DESC
+                    LIMIT 1
+                    """,
+                    target_user_id,
+                )
+                if membership is None:
+                    raise CompanyAccessError("Пользователь не найден среди заблокированных участников компании.")
+
+                if membership["role"] == MANAGER_ROLE:
+                    company = await connection.fetchrow(
+                        """
+                        SELECT manager_user_id
+                        FROM companies
+                        WHERE id = $1
+                        """,
+                        membership["company_id"],
+                    )
+                    if company is not None and company["manager_user_id"] not in (None, target_user_id):
+                        raise CompanyAccessError("У компании уже есть активный manager.")
+                    await connection.execute(
+                        """
+                        UPDATE companies
+                        SET manager_user_id = $2,
+                            updated_at = NOW()
+                        WHERE id = $1
+                        """,
+                        membership["company_id"],
+                        target_user_id,
+                    )
+
+                await connection.execute(
+                    """
+                    UPDATE company_members
+                    SET status = 'active',
+                        removed_at = NULL
+                    WHERE company_id = $1
+                      AND user_id = $2
+                      AND status = 'blocked'
+                    """,
+                    membership["company_id"],
+                    target_user_id,
+                )
+                membership = dict(membership)
+                membership["status"] = 'active'
         return self._member_from_row(membership)
 
     async def _insert_invite(self, connection, company_id: int, role: str, inviter_id: int) -> str:
@@ -625,6 +740,9 @@ class CompanyService:
             rows = await self._get_active_membership_rows(connection, telegram_user_id)
 
         if not rows:
+            blocked_rows = await self._get_blocked_membership_rows(telegram_user_id)
+            if blocked_rows:
+                raise CompanyAccessError("Доступ к компании приостановлен. Обратитесь к руководителю.")
             raise CompanyAccessError("У тебя пока нет доступа ни к одной компании. Нужен invite от администратора.")
 
         company_ids = {row["company_id"] for row in rows}
@@ -645,6 +763,37 @@ class CompanyService:
             FROM users AS u
             JOIN company_members AS cm
                 ON cm.user_id = u.id AND cm.status = 'active'
+            JOIN companies AS c
+                ON c.id = cm.company_id AND c.status = 'active'
+            WHERE u.telegram_id = $1
+            ORDER BY cm.joined_at DESC, cm.id DESC
+            """,
+            telegram_user_id,
+        )
+
+    async def has_blocked_membership(self, telegram_user_id: int) -> bool:
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            rows = await self._get_blocked_membership_rows_with_connection(connection, telegram_user_id)
+        return bool(rows)
+
+    async def _get_blocked_membership_rows(self, telegram_user_id: int):
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            return await self._get_blocked_membership_rows_with_connection(connection, telegram_user_id)
+
+    async def _get_blocked_membership_rows_with_connection(self, connection, telegram_user_id: int):
+        return await connection.fetch(
+            """
+            SELECT c.id AS company_id,
+                   c.name AS company_name,
+                   c.status AS company_status,
+                   c.owner_user_id,
+                   c.manager_user_id,
+                   cm.role AS member_role
+            FROM users AS u
+            JOIN company_members AS cm
+                ON cm.user_id = u.id AND cm.status = 'blocked'
             JOIN companies AS c
                 ON c.id = cm.company_id AND c.status = 'active'
             WHERE u.telegram_id = $1
@@ -718,6 +867,7 @@ class CompanyService:
             company_id=row["company_id"],
             user_id=row["user_id"],
             role=row["role"],
+            status=row["status"],
             username=row["username"],
             first_name=row["first_name"],
             last_name=row["last_name"],

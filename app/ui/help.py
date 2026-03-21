@@ -15,7 +15,7 @@ MANAGER_HELP_TOPICS = [
     ("manager_upload_document", "📥 Загрузить документ"),
     ("manager_create_project", "📁 Создать проект"),
     ("manager_invite_employee", "👥 Пригласить сотрудника"),
-    ("manager_remove_employee", "🗑 Удалить сотрудника"),
+    ("manager_remove_employee", "⛔ Заблокировать сотрудника"),
     ("manager_document_problem", "⚠️ Проблема с документом"),
     ("manager_employee_limit", "👥 Лимит сотрудников"),
     ("manager_support", "🆘 Поддержка"),

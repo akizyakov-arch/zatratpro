@@ -34,6 +34,7 @@ class UserListItem:
     company_id: int | None
     company_name: str | None
     company_role: str | None
+    company_member_status: str | None
     company_status: str | None
     created_at: datetime
 
@@ -54,6 +55,7 @@ class UserCard:
     company_id: int | None
     company_name: str | None
     company_role: str | None
+    company_member_status: str | None
     company_status: str | None
     joined_at: datetime | None
     created_at: datetime
@@ -65,7 +67,11 @@ class UserCard:
 
     @property
     def has_company(self) -> bool:
-        return self.company_id is not None and self.company_status == "active"
+        return self.company_id is not None and self.company_status == "active" and self.company_member_status in {"active", "blocked"}
+
+    @property
+    def is_blocked_member(self) -> bool:
+        return self.company_member_status == "blocked"
 
 
 @dataclass(slots=True)
@@ -100,6 +106,7 @@ class MemberCard:
     company_id: int
     user_id: int
     role: str
+    status: str
     username: str | None
     first_name: str | None
     last_name: str | None
@@ -115,6 +122,10 @@ class MemberCard:
     @property
     def telegram_user_id(self) -> int:
         return self.telegram_id
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.status == "blocked"
 
 
 @dataclass(slots=True)
@@ -189,6 +200,7 @@ class ProjectReportRow:
 class EmployeeReportRow:
     user_id: int
     role: str
+    member_status: str
     employee_name: str | None
     username: str | None
     document_count: int
@@ -306,12 +318,18 @@ class ViewService:
                        cm.company_id,
                        c.name AS company_name,
                        cm.role AS company_role,
+                       cm.status AS company_member_status,
                        c.status AS company_status,
                        u.created_at
                 FROM users u
-                LEFT JOIN company_members cm
-                    ON cm.user_id = u.id
-                   AND cm.status = 'active'
+                LEFT JOIN LATERAL (
+                    SELECT company_id, role, status
+                    FROM company_members
+                    WHERE user_id = u.id
+                      AND status IN ('active', 'blocked')
+                    ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, joined_at DESC, id DESC
+                    LIMIT 1
+                ) cm ON TRUE
                 LEFT JOIN companies c
                     ON c.id = cm.company_id
                 ORDER BY u.created_at DESC, u.id DESC
@@ -336,13 +354,19 @@ class ViewService:
                        cm.company_id,
                        c.name AS company_name,
                        cm.role AS company_role,
+                       cm.status AS company_member_status,
                        c.status AS company_status,
                        cm.joined_at,
                        u.created_at
                 FROM users u
-                LEFT JOIN company_members cm
-                    ON cm.user_id = u.id
-                   AND cm.status = 'active'
+                LEFT JOIN LATERAL (
+                    SELECT company_id, role, status, joined_at
+                    FROM company_members
+                    WHERE user_id = u.id
+                      AND status IN ('active', 'blocked')
+                    ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, joined_at DESC, id DESC
+                    LIMIT 1
+                ) cm ON TRUE
                 LEFT JOIN companies c
                     ON c.id = cm.company_id
                 WHERE u.id = $1
@@ -907,7 +931,7 @@ class ViewService:
                    AND d.created_at >= $2
                 WHERE cm.company_id = $1
                   AND cm.role IN ('employee', 'manager')
-                  AND cm.status = 'active'
+                  AND cm.status IN ('active', 'blocked')
                 """,
                 company.id,
                 start_at,
@@ -974,6 +998,7 @@ class ViewService:
                 """
                 SELECT u.id AS user_id,
                        cm.role AS member_role,
+                       cm.status AS member_status,
                        u.username,
                        u.first_name,
                        u.last_name,
@@ -1006,7 +1031,7 @@ class ViewService:
                 WHERE cm.company_id = $1
                   AND cm.role IN ('employee', 'manager')
                   AND cm.status = 'active'
-                GROUP BY u.id, cm.role, u.username, u.first_name, u.last_name
+                GROUP BY u.id, cm.role, cm.status, u.username, u.first_name, u.last_name
                 ORDER BY total_amount DESC, document_count DESC, u.id
                 """,
                 company.id,
@@ -1017,6 +1042,7 @@ class ViewService:
             result.append(EmployeeReportRow(
                 user_id=row['user_id'],
                 role=row['member_role'],
+                member_status=row['member_status'],
                 employee_name=_display_name(row['first_name'], row['last_name'], row['username']),
                 username=row['username'],
                 document_count=row['document_count'],
@@ -1378,6 +1404,7 @@ class ViewService:
                 SELECT cm.company_id,
                        cm.user_id,
                        cm.role,
+                       cm.status,
                        u.username,
                        u.first_name,
                        u.last_name,
@@ -1392,8 +1419,8 @@ class ViewService:
                     GROUP BY uploaded_by_user_id
                 ) docs ON docs.uploaded_by_user_id = cm.user_id
                 WHERE cm.company_id = $1
-                  AND cm.status = 'active'
-                ORDER BY cm.role, cm.joined_at, cm.id
+                  AND cm.status IN ('active', 'blocked')
+                ORDER BY CASE cm.status WHEN 'active' THEN 0 WHEN 'blocked' THEN 1 ELSE 2 END, cm.role, cm.joined_at, cm.id
                 """,
                 company_id,
             )
@@ -1402,6 +1429,7 @@ class ViewService:
                 company_id=row["company_id"],
                 user_id=row["user_id"],
                 role=row["role"],
+                status=row["status"],
                 username=row["username"],
                 first_name=row["first_name"],
                 last_name=row["last_name"],

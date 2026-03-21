@@ -25,6 +25,8 @@ from app.ui.company import (
     MANAGER_EMPLOYEE_INVITE_CALLBACK,
     MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX,
     MANAGER_EMPLOYEE_REMOVE_PREFIX,
+    MANAGER_EMPLOYEE_UNBLOCK_CONFIRM_PREFIX,
+    MANAGER_EMPLOYEE_UNBLOCK_PREFIX,
     MANAGER_EMPLOYEE_VIEW_PREFIX,
     MANAGER_PROJECTS_ACTIVE_CALLBACK,
     MANAGER_PROJECTS_ARCHIVED_CALLBACK,
@@ -288,7 +290,7 @@ async def employee_view_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(format_member_card(member), reply_markup=build_employee_card_keyboard(member.user_id))
+    await callback.message.answer(format_member_card(member), reply_markup=build_employee_card_keyboard(member.user_id, member.is_blocked))
 
 
 @router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_REMOVE_PREFIX))
@@ -297,7 +299,7 @@ async def employee_remove_prompt(callback: CallbackQuery) -> None:
         return
     member_user_id = int(callback.data.removeprefix(MANAGER_EMPLOYEE_REMOVE_PREFIX))
     await callback.answer()
-    await callback.message.answer('Подтвердить исключение сотрудника?', reply_markup=build_confirm_keyboard(f'{MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX}{member_user_id}', f'{MANAGER_EMPLOYEE_VIEW_PREFIX}{member_user_id}'))
+    await callback.message.answer('Подтвердить блокировку сотрудника?', reply_markup=build_confirm_keyboard(f'{MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX}{member_user_id}', f'{MANAGER_EMPLOYEE_VIEW_PREFIX}{member_user_id}'))
 
 
 @router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX))
@@ -310,12 +312,40 @@ async def employee_remove_confirm(callback: CallbackQuery) -> None:
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
-    await callback.answer('Сотрудник исключен.')
-    await callback.message.answer(f'Сотрудник исключен: {member.full_name or member.username or member.telegram_user_id}.')
+    await callback.answer('Сотрудник заблокирован.')
+    await callback.message.answer(f'Сотрудник заблокирован: {member.full_name or member.username or member.telegram_user_id}.')
     await notify_membership_update(
         callback.bot,
         member.telegram_user_id,
-        'Тебя исключили из компании. Доступ к рабочим разделам отключен.',
+        'Доступ к компании приостановлен. Обратитесь к руководителю.',
+    )
+
+
+@router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_UNBLOCK_PREFIX))
+async def employee_unblock_prompt(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    member_user_id = int(callback.data.removeprefix(MANAGER_EMPLOYEE_UNBLOCK_PREFIX))
+    await callback.answer()
+    await callback.message.answer('Подтвердить разблокировку сотрудника?', reply_markup=build_confirm_keyboard(f'{MANAGER_EMPLOYEE_UNBLOCK_CONFIRM_PREFIX}{member_user_id}', f'{MANAGER_EMPLOYEE_VIEW_PREFIX}{member_user_id}'))
+
+
+@router.callback_query(F.data.startswith(MANAGER_EMPLOYEE_UNBLOCK_CONFIRM_PREFIX))
+async def employee_unblock_confirm(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    member_user_id = int(callback.data.removeprefix(MANAGER_EMPLOYEE_UNBLOCK_CONFIRM_PREFIX))
+    try:
+        member = await company_service.restore_employee_access(callback.from_user.id, member_user_id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.answer('Сотрудник разблокирован.')
+    await callback.message.answer(f'Сотрудник разблокирован: {member.full_name or member.username or member.telegram_user_id}.')
+    await notify_membership_update(
+        callback.bot,
+        member.telegram_user_id,
+        'Доступ к компании восстановлен.',
     )
 
 

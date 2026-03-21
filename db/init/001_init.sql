@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS company_members (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_company_members_company_user UNIQUE (company_id, user_id),
     CONSTRAINT chk_company_members_role CHECK (role IN ('manager', 'employee', 'master')),
-    CONSTRAINT chk_company_members_status CHECK (status IN ('active', 'removed'))
+    CONSTRAINT chk_company_members_status CHECK (status IN ('new', 'active', 'blocked', 'removed'))
 );
 
 CREATE TABLE IF NOT EXISTS company_invites (

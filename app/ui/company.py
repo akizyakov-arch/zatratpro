@@ -22,6 +22,8 @@ OWNER_USER_ASSIGN_MANAGER_PREFIX = "owner:user:assign_manager:"
 OWNER_USER_ASSIGN_COMPANY_PREFIX = "owner:user:assign_company:"
 OWNER_USER_REMOVE_PREFIX = "owner:user:remove:"
 OWNER_USER_REMOVE_CONFIRM_PREFIX = "owner:user:remove_confirm:"
+OWNER_USER_UNBLOCK_PREFIX = "owner:user:unblock:"
+OWNER_USER_UNBLOCK_CONFIRM_PREFIX = "owner:user:unblock_confirm:"
 
 MANAGER_PROJECTS_MENU_CALLBACK = "manager:projects:menu"
 MANAGER_PROJECTS_ACTIVE_CALLBACK = "manager:projects:active"
@@ -40,6 +42,8 @@ MANAGER_EMPLOYEE_INVITE_CALLBACK = "manager:employees:invite"
 MANAGER_EMPLOYEE_VIEW_PREFIX = "manager:employee:view:"
 MANAGER_EMPLOYEE_REMOVE_PREFIX = "manager:employee:remove:"
 MANAGER_EMPLOYEE_REMOVE_CONFIRM_PREFIX = "manager:employee:remove_confirm:"
+MANAGER_EMPLOYEE_UNBLOCK_PREFIX = "manager:employee:unblock:"
+MANAGER_EMPLOYEE_UNBLOCK_CONFIRM_PREFIX = "manager:employee:unblock_confirm:"
 
 
 def build_owner_companies_menu_keyboard() -> InlineKeyboardMarkup:
@@ -84,13 +88,15 @@ def build_company_actions_keyboard(company_id: int, can_issue_invite: bool, has_
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_owner_user_card_keyboard(user_id: int, has_company: bool) -> InlineKeyboardMarkup:
+def build_owner_user_card_keyboard(user_id: int, membership_status: str | None) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="Назначить employee", callback_data=f"{OWNER_USER_ASSIGN_EMPLOYEE_PREFIX}{user_id}")],
         [InlineKeyboardButton(text="Назначить manager", callback_data=f"{OWNER_USER_ASSIGN_MANAGER_PREFIX}{user_id}")],
     ]
-    if has_company:
-        rows.append([InlineKeyboardButton(text="Исключить из компании", callback_data=f"{OWNER_USER_REMOVE_PREFIX}{user_id}")])
+    if membership_status == "active":
+        rows.append([InlineKeyboardButton(text="Заблокировать в компании", callback_data=f"{OWNER_USER_REMOVE_PREFIX}{user_id}")])
+    elif membership_status == "blocked":
+        rows.append([InlineKeyboardButton(text="Разблокировать в компании", callback_data=f"{OWNER_USER_UNBLOCK_PREFIX}{user_id}")])
     rows.append([InlineKeyboardButton(text="Назад к пользователям", callback_data=OWNER_USERS_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -163,10 +169,12 @@ def build_employees_keyboard(employees: list[Any]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_employee_card_keyboard(member_user_id: int) -> InlineKeyboardMarkup:
+def build_employee_card_keyboard(member_user_id: int, is_blocked: bool) -> InlineKeyboardMarkup:
+    action_text = "Разблокировать сотрудника" if is_blocked else "Заблокировать сотрудника"
+    action_callback = f"{MANAGER_EMPLOYEE_UNBLOCK_PREFIX}{member_user_id}" if is_blocked else f"{MANAGER_EMPLOYEE_REMOVE_PREFIX}{member_user_id}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Исключить сотрудника", callback_data=f"{MANAGER_EMPLOYEE_REMOVE_PREFIX}{member_user_id}")],
+            [InlineKeyboardButton(text=action_text, callback_data=action_callback)],
             [InlineKeyboardButton(text="Назад", callback_data=MANAGER_EMPLOYEES_LIST_CALLBACK)],
         ]
     )
@@ -195,10 +203,14 @@ def _member_button_text(member: Any) -> str:
     username = getattr(member, "username", None)
     telegram_id = getattr(member, "telegram_id", None)
     if full_name:
-        return full_name
-    if username:
-        return f"@{username}"
-    return str(telegram_id)
+        base = full_name
+    elif username:
+        base = f"@{username}"
+    else:
+        base = str(telegram_id)
+    if getattr(member, 'status', None) == 'blocked':
+        return f"{base} [заблокирован]"
+    return base
 
 
 def _owner_user_button_text(user: Any) -> str:

@@ -117,3 +117,11 @@ async def _run_runtime_migrations(pool: Pool) -> None:
             await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS stored_file_size BIGINT')
             await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS was_normalized BOOLEAN NOT NULL DEFAULT FALSE')
             await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS original_kind TEXT')
+            await connection.execute('ALTER TABLE company_members DROP CONSTRAINT IF EXISTS chk_company_members_status')
+            await connection.execute(
+                '''
+                ALTER TABLE company_members
+                ADD CONSTRAINT chk_company_members_status
+                CHECK (status IN ('new', 'active', 'blocked', 'removed'))
+                '''
+            )
