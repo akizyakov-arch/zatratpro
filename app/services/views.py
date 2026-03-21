@@ -138,6 +138,7 @@ class DocumentRow:
     id: int
     project_name: str
     vendor: str | None
+    document_number: str | None
     total_amount: Decimal | None
     document_date: date | datetime | None
     created_at: datetime
@@ -533,6 +534,7 @@ class ViewService:
                 SELECT d.id,
                        p.name AS project_name,
                        d.vendor,
+                       COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
                        d.total_amount,
                        d.document_date,
                        d.created_at,
@@ -562,6 +564,7 @@ class ViewService:
                 id=row["id"],
                 project_name=row["project_name"],
                 vendor=row["vendor"],
+                document_number=row["document_number"],
                 total_amount=row["total_amount"],
                 document_date=row["document_date"],
                 created_at=row["created_at"],
@@ -580,6 +583,7 @@ class ViewService:
                 SELECT d.id,
                        p.name AS project_name,
                        d.vendor,
+                       COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
                        d.total_amount,
                        d.document_date,
                        d.created_at,
@@ -609,6 +613,7 @@ class ViewService:
                 id=row["id"],
                 project_name=row["project_name"],
                 vendor=row["vendor"],
+                document_number=row["document_number"],
                 total_amount=row["total_amount"],
                 document_date=row["document_date"],
                 created_at=row["created_at"],
@@ -616,6 +621,18 @@ class ViewService:
             )
             for row in rows
         ]
+
+    async def get_my_document_detail(self, telegram_user_id: int, document_id: int) -> tuple[ReportDocumentDetail, list[ReportItemDetail]]:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            user_id = await connection.fetchval("SELECT id FROM users WHERE telegram_id = $1", telegram_user_id)
+        if user_id is None:
+            raise CompanyAccessError('Пользователь не найден.')
+        start_at = _report_period_start('all_time')
+        document = await self._get_report_document(company.id, start_at, document_id, uploaded_by_user_id=user_id)
+        items = await self._list_report_items(company.id, start_at, document_id=document_id, uploaded_by_user_id=user_id)
+        return document, items
 
     async def get_my_company_card(self, telegram_user_id: int) -> CompanyCard:
         return await self.get_company_card_for_manager(telegram_user_id)

@@ -7,11 +7,11 @@ from app.handlers.common import (
     company_service,
     ensure_context,
     ensure_user_context,
-    main_menu_markup_for_user,
     format_company_card,
     format_member_card,
     format_project_card,
     main_menu_markup,
+    main_menu_markup_for_user,
     notify_membership_update,
     project_service,
     view_service,
@@ -44,6 +44,14 @@ from app.ui.company import (
     build_projects_menu_keyboard,
 )
 from app.ui.main_menu import MENU_BUTTONS
+from app.ui.my_documents import (
+    MY_DOCUMENTS_ITEMS_PREFIX,
+    MY_DOCUMENTS_LIST_CALLBACK,
+    MY_DOCUMENTS_VIEW_PREFIX,
+    build_my_document_card_keyboard,
+    build_my_document_items_keyboard,
+    build_my_documents_keyboard,
+)
 
 router = Router()
 NL = chr(10)
@@ -320,20 +328,81 @@ async def my_company_entry(message: Message) -> None:
     await message.answer(format_company_card(card), reply_markup=await main_menu_markup(message))
 
 
+async def _send_my_documents_menu(message: Message, telegram_user_id: int) -> None:
+    documents = await view_service.list_my_documents(telegram_user_id)
+    if not documents:
+        await message.answer('У тебя пока нет документов.', reply_markup=await main_menu_markup_for_user(message.from_user))
+        return
+    await message.answer('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
+
+
 @router.message(F.text == MENU_BUTTONS['my_documents'])
 async def my_documents_entry(message: Message) -> None:
     if message.from_user is None:
         return
     try:
-        documents = await view_service.list_my_documents(message.from_user.id)
+        await _send_my_documents_menu(message, message.from_user.id)
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+
+
+@router.callback_query(F.data == MY_DOCUMENTS_LIST_CALLBACK)
+async def my_documents_list_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
         return
-    if not documents:
-        await message.answer('У тебя пока нет документов.', reply_markup=await main_menu_markup(message))
+    try:
+        await callback.answer()
+        await _send_my_documents_menu(callback.message, callback.from_user.id)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith(MY_DOCUMENTS_VIEW_PREFIX))
+async def my_document_view_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
         return
-    lines = ['Мои документы:', '']
-    for index, document in enumerate(documents, start=1):
-        date_line = document.document_date.isoformat() if document.document_date else 'без даты'
-        lines.append(f"{index}. {date_line} — {document.vendor or 'Без поставщика'} — {document.total_amount or 0} — {document.project_name}")
-    await message.answer(NL.join(lines), reply_markup=await main_menu_markup(message))
+    try:
+        document_id = int(callback.data.removeprefix(MY_DOCUMENTS_VIEW_PREFIX))
+        document, items = await view_service.get_my_document_detail(callback.from_user.id, document_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    first_item = items[0].name if items else (document.first_item_name or 'Позиции не найдены')
+    vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
+    number = document.document_number or 'без номера'
+    date_line = document.document_date.strftime('%d.%m.%Y') if document.document_date else 'без даты'
+    uploaded_at = document.created_at.strftime('%d.%m.%Y %H:%M') if document.created_at else '—'
+    lines = [
+        'Документ',
+        '',
+        f'Проект: {document.project_name}',
+        f'Контрагент: {vendor}',
+        f'Дата документа: {date_line}',
+        f'Номер: {number}',
+        f'Сумма: {document.total_amount or 0}',
+        f'Дата ввода: {uploaded_at}',
+        f'Первая позиция: {first_item}',
+    ]
+    await callback.message.answer(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
+
+
+@router.callback_query(F.data.startswith(MY_DOCUMENTS_ITEMS_PREFIX))
+async def my_document_items_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        document_id = int(callback.data.removeprefix(MY_DOCUMENTS_ITEMS_PREFIX))
+        document, items = await view_service.get_my_document_detail(callback.from_user.id, document_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    from app.services.report_formatters import format_report_document_items
+    await callback.message.answer(
+        format_report_document_items('Состав документа', 'all_time', document, items),
+        reply_markup=build_my_document_items_keyboard(document.id),
+        parse_mode='HTML',
+    )
