@@ -163,8 +163,15 @@ async def _get_access_context_or_reply(message: Message):
 
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
+    logger.info(
+        'Photo upload received: user_id=%s photo_count=%s caption=%s',
+        message.from_user.id if message.from_user is not None else None,
+        len(message.photo or []),
+        message.caption,
+    )
     context = await _get_access_context_or_reply(message)
     if context is None:
+        logger.info('Photo upload stopped before OCR: context unavailable')
         return
     menu_markup = build_main_menu_keyboard(
         menu_kind=context.menu_kind,
@@ -172,14 +179,17 @@ async def process_photo(message: Message) -> None:
         can_view_reports=context.can_view_reports,
     )
     if not message.photo or message.from_user is None:
+        logger.info('Photo upload rejected: photo payload missing or user missing')
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
     if await has_active_document_flow(message.from_user.id):
+        logger.info('Photo upload blocked: active pending document flow user_id=%s', message.from_user.id)
         await message.answer(
             f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
             reply_markup=menu_markup,
         )
         return
+    logger.info('Photo upload accepted for OCR: user_id=%s', message.from_user.id)
     file_service = TelegramFileService(message.bot)
     downloaded_photo = await file_service.download_best_photo(message.photo)
     await _process_uploaded_image(message, menu_markup, context, downloaded_photo, 'фото получено')
