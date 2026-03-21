@@ -251,7 +251,8 @@ async def duplicate_view_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    lines = [_format_duplicate_document_card('Документ-дубликат', duplicate_document, duplicate_items)]
+    duplicate_label = 'Точный дубль' if row.duplicate_status == 'exact' else 'Возможный дубль' if row.duplicate_status == 'probable' else 'Дубль'
+    lines = [f'<b>Тип:</b> {duplicate_label}', '', _format_duplicate_document_card('Документ-дубликат', duplicate_document, duplicate_items)]
     if source_document is not None:
         lines.extend(['', _format_duplicate_document_card('Исходный документ', source_document, source_items)])
     await callback.message.answer(

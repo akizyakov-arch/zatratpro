@@ -212,5 +212,7 @@ def _back_to_report_callback(report_kind: str, period: str) -> str:
 def _duplicate_row_text(row: Any) -> str:
     current_project = getattr(row, "project_name", None) or "Без проекта"
     base_project = getattr(row, "base_project_name", None) or "Без исходной записи"
-    return f"{current_project} | {base_project}"
+    status = getattr(row, 'duplicate_status', None)
+    prefix = 'Точный дубль' if status == 'exact' else 'Возможный дубль' if status == 'probable' else 'Дубль'
+    return f"{prefix} | {current_project} | {base_project}"
 
