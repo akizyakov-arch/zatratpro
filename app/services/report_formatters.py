@@ -112,6 +112,22 @@ def format_report_documents(title: str, period: str, documents) -> str:
     return NL.join(lines).strip()
 
 
+def format_items_only(title: str, items) -> str:
+    lines = [f'<b>{title}</b>', '', 'Позиции:']
+    if not items:
+        lines.append('Позиции не найдены.')
+        return NL.join(lines)
+    for item in items[:50]:
+        item_name = item.name or 'Без наименования'
+        qty = item.quantity if item.quantity is not None else '—'
+        price = item.price if item.price is not None else '—'
+        line_total = item.line_total if item.line_total is not None else '—'
+        lines.append(f"{item.line_no}. {item_name} | {qty} x {price} = {line_total}")
+    if len(items) > 50:
+        lines.append('Показаны только первые 50 позиций документа.')
+    return NL.join(lines)
+
+
 def format_report_document_items(title: str, period: str, document, items) -> str:
     number = document.document_number or 'без номера'
     date_line = format_date(document.document_date)

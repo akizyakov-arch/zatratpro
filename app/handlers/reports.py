@@ -9,6 +9,7 @@ from app.services.report_formatters import (
     format_project_report,
     format_report_document_items,
     format_report_documents,
+    format_items_only,
     report_period_label,
 )
 from app.ui.main_menu import MENU_BUTTONS
@@ -258,7 +259,7 @@ async def duplicate_items_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     await callback.message.answer(
-        format_report_document_items('Состав дубликата', period, document, items),
+        format_items_only('Состав дубликата', items),
         reply_markup=build_duplicate_items_back_keyboard(period, duplicate_id),
         parse_mode='HTML',
     )
@@ -283,7 +284,7 @@ async def duplicate_source_items_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     await callback.message.answer(
-        format_report_document_items('Состав исходной записи', period, document, items),
+        format_items_only('Состав исходной записи', items),
         reply_markup=build_duplicate_items_back_keyboard(period, duplicate_id),
         parse_mode='HTML',
     )
