@@ -111,12 +111,10 @@ def build_duplicate_report_keyboard(period: str, rows: list[Any]) -> InlineKeybo
 
 def build_duplicate_card_keyboard(period: str, duplicate_id: int, has_source: bool) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="Карточка дубликата", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DOCUMENT_VIEW_PREFIX}{period}:{duplicate_id}")],
         [InlineKeyboardButton(text="Оставить как отдельный", callback_data=f"{MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX}{period}:{duplicate_id}")],
         [InlineKeyboardButton(text="Удалить дубликат", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX}{period}:{duplicate_id}")],
     ]
     if has_source:
-        rows.append([InlineKeyboardButton(text="Карточка исходной записи", callback_data=f"{MANAGER_REPORTS_DUPLICATE_SOURCE_DOCUMENT_VIEW_PREFIX}{period}:{duplicate_id}")])
         rows.append([InlineKeyboardButton(text="Удалить исходную запись", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX}{period}:{duplicate_id}")])
     rows.append([InlineKeyboardButton(text="Назад к дублям", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:{period}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -136,21 +134,6 @@ def build_duplicate_delete_source_confirm_keyboard(period: str, duplicate_id: in
         inline_keyboard=[
             [InlineKeyboardButton(text="Подтвердить удаление исходной", callback_data=f"{MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX}{period}:{duplicate_id}")],
             [InlineKeyboardButton(text="Назад к карточке дубля", callback_data=f"{MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX}{period}:{duplicate_id}")],
-        ]
-    )
-
-
-def build_duplicate_document_card_keyboard(period: str, duplicate_id: int, source: bool) -> InlineKeyboardMarkup:
-    items_callback = (
-        f"{MANAGER_REPORTS_DUPLICATE_SOURCE_ITEMS_PREFIX}{period}:{duplicate_id}"
-        if source
-        else f"{MANAGER_REPORTS_DUPLICATE_ITEMS_PREFIX}{period}:{duplicate_id}"
-    )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Состав документа", callback_data=items_callback)],
-            [InlineKeyboardButton(text="Назад к карточке дубля", callback_data=f"{MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX}{period}:{duplicate_id}")],
-            [InlineKeyboardButton(text="Назад к дублям", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DUPLICATES}:{period}")],
         ]
     )
 

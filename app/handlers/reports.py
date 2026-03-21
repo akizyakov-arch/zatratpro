@@ -19,10 +19,6 @@ from app.ui.reports import (
     MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_CONFIRM_PREFIX,
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX,
-    MANAGER_REPORTS_DUPLICATE_DOCUMENT_VIEW_PREFIX,
-    MANAGER_REPORTS_DUPLICATE_ITEMS_PREFIX,
-    MANAGER_REPORTS_DUPLICATE_SOURCE_DOCUMENT_VIEW_PREFIX,
-    MANAGER_REPORTS_DUPLICATE_SOURCE_ITEMS_PREFIX,
     MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX,
     MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
@@ -43,7 +39,6 @@ from app.ui.reports import (
     build_duplicate_delete_confirm_keyboard,
     build_duplicate_delete_source_confirm_keyboard,
     build_duplicate_report_keyboard,
-    build_duplicate_document_card_keyboard,
     build_employee_report_period_keyboard,
     build_employee_report_selector_keyboard,
     build_project_report_keyboard,
@@ -238,12 +233,20 @@ async def duplicate_view_callback(callback: CallbackQuery) -> None:
         period, duplicate_id_text = payload.split(':', 1)
         duplicate_id = int(duplicate_id_text)
         row = await view_service.get_duplicate_report_row(callback.from_user.id, period, duplicate_id)
+        duplicate_document, duplicate_items = await view_service.get_report_document_items(callback.from_user.id, period, duplicate_id)
+        source_document = None
+        source_items = []
+        if row.duplicate_of_document_id is not None:
+            source_document, source_items = await view_service.get_report_document_items(callback.from_user.id, period, row.duplicate_of_document_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные дубля.'
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(format_duplicate_card(row), reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id is not None))
+    lines = [format_duplicate_card(row), '', _format_duplicate_document_card('Документ-дубликат', duplicate_document, duplicate_items)]
+    if source_document is not None:
+        lines.extend(['', _format_duplicate_document_card('Исходный документ', source_document, source_items)])
+    await callback.message.answer(NL.join(lines), reply_markup=build_duplicate_card_keyboard(period, duplicate_id, row.duplicate_of_document_id is not None))
 
 
 def _format_duplicate_document_card(title: str, document, items) -> str:
@@ -251,8 +254,7 @@ def _format_duplicate_document_card(title: str, document, items) -> str:
     number = document.document_number or 'без номера'
     date_line = document.document_date.strftime('%d.%m.%Y') if document.document_date else 'без даты'
     uploaded_at = document.created_at.strftime('%d.%m.%Y %H:%M') if document.created_at else '—'
-    first_item = items[0].name if items else (document.first_item_name or 'Позиции не найдены')
-    return NL.join([
+    lines = [
         title,
         '',
         f'Проект: {document.project_name}',
@@ -261,98 +263,10 @@ def _format_duplicate_document_card(title: str, document, items) -> str:
         f'Номер: {number}',
         f'Сумма: {document.total_amount or 0}',
         f'Дата ввода: {uploaded_at}',
-        f'Первая позиция: {first_item}',
-    ])
-
-
-@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DOCUMENT_VIEW_PREFIX))
-async def duplicate_document_view_callback(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_DOCUMENT_VIEW_PREFIX)
-    try:
-        period, duplicate_id_text = payload.split(':', 1)
-        duplicate_id = int(duplicate_id_text)
-        document, items = await view_service.get_report_document_items(callback.from_user.id, period, duplicate_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
-        await callback.answer(message, show_alert=True)
-        return
-    await callback.answer()
-    await callback.message.answer(
-        _format_duplicate_document_card('Документ-дубликат', document, items),
-        reply_markup=build_duplicate_document_card_keyboard(period, duplicate_id, source=False),
-    )
-
-
-@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_SOURCE_DOCUMENT_VIEW_PREFIX))
-async def duplicate_source_document_view_callback(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_SOURCE_DOCUMENT_VIEW_PREFIX)
-    try:
-        period, duplicate_id_text = payload.split(':', 1)
-        duplicate_id = int(duplicate_id_text)
-        row = await view_service.get_duplicate_report_row(callback.from_user.id, period, duplicate_id)
-        if row.duplicate_of_document_id is None:
-            await callback.answer('Исходная запись недоступна.', show_alert=True)
-            return
-        document, items = await view_service.get_report_document_items(callback.from_user.id, period, row.duplicate_of_document_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
-        await callback.answer(message, show_alert=True)
-        return
-    await callback.answer()
-    await callback.message.answer(
-        _format_duplicate_document_card('Исходный документ', document, items),
-        reply_markup=build_duplicate_document_card_keyboard(period, duplicate_id, source=True),
-    )
-
-
-@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_ITEMS_PREFIX))
-async def duplicate_items_callback(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_ITEMS_PREFIX)
-    try:
-        period, duplicate_id_text = payload.split(':', 1)
-        duplicate_id = int(duplicate_id_text)
-        document, items = await view_service.get_report_document_items(callback.from_user.id, period, duplicate_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
-        await callback.answer(message, show_alert=True)
-        return
-    await callback.answer()
-    await callback.message.answer(
-        format_items_only('Состав дубликата', items),
-        reply_markup=build_duplicate_document_card_keyboard(period, duplicate_id, source=False),
-        parse_mode='HTML',
-    )
-
-
-@router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_SOURCE_ITEMS_PREFIX))
-async def duplicate_source_items_callback(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_DUPLICATE_SOURCE_ITEMS_PREFIX)
-    try:
-        period, duplicate_id_text = payload.split(':', 1)
-        duplicate_id = int(duplicate_id_text)
-        row = await view_service.get_duplicate_report_row(callback.from_user.id, period, duplicate_id)
-        if row.duplicate_of_document_id is None:
-            await callback.answer('Исходная запись недоступна.', show_alert=True)
-            return
-        document, items = await view_service.get_report_document_items(callback.from_user.id, period, row.duplicate_of_document_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные документа.'
-        await callback.answer(message, show_alert=True)
-        return
-    await callback.answer()
-    await callback.message.answer(
-        format_items_only('Состав исходной записи', items),
-        reply_markup=build_duplicate_document_card_keyboard(period, duplicate_id, source=True),
-        parse_mode='HTML',
-    )
+        '',
+        format_items_only('Состав документа', items),
+    ]
+    return NL.join(lines)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_KEEP_PREFIX))
