@@ -364,6 +364,24 @@ async def duplicate_save_callback(callback: CallbackQuery) -> None:
 
 
 @router.message(~F.text)
+async def log_non_text_message(message: Message) -> None:
+    logger.info(
+        'Non-text message received: user_id=%s has_photo=%s has_document=%s has_animation=%s has_video=%s has_sticker=%s has_voice=%s has_audio=%s file_name=%s mime_type=%s caption=%s',
+        message.from_user.id if message.from_user is not None else None,
+        bool(message.photo),
+        message.document is not None,
+        message.animation is not None,
+        message.video is not None,
+        message.sticker is not None,
+        message.voice is not None,
+        message.audio is not None,
+        message.document.file_name if message.document is not None else None,
+        message.document.mime_type if message.document is not None else None,
+        message.caption,
+    )
+
+
+@router.message(~F.text)
 async def unsupported_message(message: Message) -> None:
     await message.answer(
         'Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.',
