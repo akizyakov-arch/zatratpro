@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from time import perf_counter
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
@@ -39,6 +40,7 @@ from app.ui.projects import (
 
 router = Router()
 logger = logging.getLogger(__name__)
+SLOW_DOCUMENT_STAGE_MS = 500.0
 project_service = ProjectService()
 document_service = DocumentService()
 company_service = CompanyService()
@@ -49,7 +51,7 @@ OCR_RETRY_DELAY_SECONDS = 3
 
 
 async def _main_menu_markup(message: Message) -> object:
-    return await _main_menu_markup_for_user(message.from_user)
+    return await main_menu_markup_for_user(message.from_user)
 
 
 def _person_name(user) -> str:
@@ -156,7 +158,9 @@ async def _get_access_context_or_reply(message: Message):
 
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
+    started = perf_counter()
     context = await _get_access_context_or_reply(message)
+    after_context = perf_counter()
     if context is None:
         return
     menu_markup = build_main_menu_keyboard(
@@ -179,11 +183,14 @@ async def process_photo(message: Message) -> None:
     ocr_service = OCRSpaceService()
     deepseek_service = DeepSeekService()
     await begin_document_flow(message.from_user.id)
+    after_begin = perf_counter()
 
     await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
+    after_intro = perf_counter()
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             file_path = await file_service.download_best_photo(message.photo)
+            after_download = perf_counter()
             try:
                 async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
                     ocr_text = await ocr_service.extract_text(file_path)
@@ -199,6 +206,7 @@ async def process_photo(message: Message) -> None:
                 await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
                 async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
                     ocr_text = await ocr_service.extract_text(file_path)
+            after_ocr = perf_counter()
     except TimeoutError:
         await clear_document_flow(message.from_user.id)
         logger.exception('OCR timed out')
@@ -221,12 +229,15 @@ async def process_photo(message: Message) -> None:
         return
 
     await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
+    after_ocr_message = perf_counter()
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
                 extracted_document = await deepseek_service.extract_document(ocr_text)
+        after_extract = perf_counter()
         document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
         preview_text = format_document_preview(document)
+        after_preview_format = perf_counter()
     except TimeoutError:
         await clear_document_flow(message.from_user.id)
         logger.exception('DeepSeek extraction timed out')
@@ -255,11 +266,18 @@ async def process_photo(message: Message) -> None:
             extracted_document=document,
         ),
     )
-    for chunk in chunk_message(preview_text):
-        await message.answer(chunk, reply_markup=menu_markup)
+    after_store = perf_counter()
+    preview_chunks = list(chunk_message(preview_text))
+    preview_message = preview_chunks[0]
+    if len(preview_chunks) > 1:
+        preview_message += '\n\n... Превью сокращено. Полный текст не отправляется в чат.'
+    after_chunk_prepare = perf_counter()
+    await message.answer(preview_message, reply_markup=menu_markup)
+    after_preview_send = perf_counter()
 
     try:
         projects = await project_service.list_active_projects(message.from_user.id)
+        after_projects = perf_counter()
     except CompanyAccessError as exc:
         await clear_document_flow(message.from_user.id)
         await message.answer(str(exc), reply_markup=menu_markup)
@@ -274,6 +292,28 @@ async def process_photo(message: Message) -> None:
         f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
         reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
     )
+    finished = perf_counter()
+    total_ms = (finished - started) * 1000
+    if total_ms >= SLOW_DOCUMENT_STAGE_MS:
+        logger.warning(
+            'Document stages: user_id=%s context=%.1fms begin=%.1fms intro=%.1fms download=%.1fms ocr=%.1fms ocr_msg=%.1fms extract=%.1fms preview_format=%.1fms store=%.1fms chunk_prepare=%.1fms preview_send=%.1fms list_projects=%.1fms final_send=%.1fms total=%.1fms chunks=%s',
+            message.from_user.id,
+            (after_context - started) * 1000,
+            (after_begin - after_context) * 1000,
+            (after_intro - after_begin) * 1000,
+            (after_download - after_intro) * 1000,
+            (after_ocr - after_download) * 1000,
+            (after_ocr_message - after_ocr) * 1000,
+            (after_extract - after_ocr_message) * 1000,
+            (after_preview_format - after_extract) * 1000,
+            (after_store - after_preview_format) * 1000,
+            (after_chunk_prepare - after_store) * 1000,
+            (after_preview_send - after_chunk_prepare) * 1000,
+            (after_projects - after_preview_send) * 1000,
+            (finished - after_projects) * 1000,
+            total_ms,
+            len(preview_chunks),
+        )
 
 
 @router.callback_query(F.data == PROJECT_CANCEL_CALLBACK)
@@ -282,7 +322,7 @@ async def cancel_project_selection(callback: CallbackQuery) -> None:
         return
     await clear_document_flow(callback.from_user.id)
     await callback.answer('Загрузка отменена.')
-    await callback.message.answer('Подготовка документа отменена.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
+    await callback.message.answer('Подготовка документа отменена.', reply_markup=await main_menu_markup_for_user(callback.from_user))
 
 
 @router.callback_query(F.data == PROJECT_CREATE_CALLBACK)
@@ -298,7 +338,7 @@ async def create_project_from_document(callback: CallbackQuery) -> None:
 async def process_project_selection(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    menu_markup = await _main_menu_markup_for_user(callback.from_user)
+    menu_markup = await main_menu_markup_for_user(callback.from_user)
     pending_document = await get_pending_document(callback.from_user.id)
     if pending_document is None:
         await callback.answer('Нет подготовленного документа. Отправь фото заново.', show_alert=True)
@@ -386,7 +426,7 @@ async def duplicate_cancel_callback(callback: CallbackQuery) -> None:
         return
     await clear_document_flow(callback.from_user.id)
     await callback.answer('Загрузка отменена.')
-    await callback.message.answer('Документ не сохранен. Можно отправить новый файл.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
+    await callback.message.answer('Документ не сохранен. Можно отправить новый файл.', reply_markup=await main_menu_markup_for_user(callback.from_user))
 
 
 @router.callback_query(F.data == DOCUMENT_DUPLICATE_SAVE_CALLBACK)
@@ -398,7 +438,7 @@ async def duplicate_save_callback(callback: CallbackQuery) -> None:
         await callback.answer('Нет документа для подтверждения. Отправь фото заново.', show_alert=True)
         return
     await callback.answer()
-    await _save_pending_document(callback, pending_document, await _main_menu_markup_for_user(callback.from_user))
+    await _save_pending_document(callback, pending_document, await main_menu_markup_for_user(callback.from_user))
 
 
 @router.message(~F.text)
