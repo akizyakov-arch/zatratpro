@@ -9,6 +9,7 @@ from aiogram.types import User
 from app.schemas.document import ALLOWED_DOCUMENT_TYPES, DocumentItem, DocumentSchema
 from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyService, WORKER_ROLES
 from app.services.database import get_pool
+from app.services.document_storage import DocumentStorageService
 from app.services.projects import Project
 
 
@@ -78,6 +79,7 @@ class DuplicateDocumentInfo:
 class DocumentService:
     def __init__(self) -> None:
         self.company_service = CompanyService()
+        self.document_storage = DocumentStorageService()
 
     async def save_document(
         self,
@@ -87,6 +89,10 @@ class DocumentService:
         document: DocumentSchema,
         duplicate_check: DuplicateCheckResult | None = None,
         source_type: str = "photo",
+        source_temp_path: str | None = None,
+        source_original_name: str | None = None,
+        source_mime_type: str | None = None,
+        source_file_ext: str | None = None,
     ) -> int:
         member_role = await self.company_service.ensure_member_role(telegram_user.id)
         if member_role not in ADMIN_ROLES | WORKER_ROLES:
@@ -180,6 +186,50 @@ class DocumentService:
                     duplicate_check.status,
                     duplicate_check.duplicate_document_id,
                 )
+                if source_temp_path is not None:
+                    stored_source = self.document_storage.save_source(
+                        company_id=project.company_id,
+                        document_id=document_id,
+                        source_path=source_temp_path,
+                        original_filename=source_original_name,
+                        mime_type=source_mime_type,
+                        file_ext=source_file_ext,
+                    )
+                    await connection.execute(
+                        """
+                        INSERT INTO document_files (
+                            document_id,
+                            file_role,
+                            page_no,
+                            storage_key,
+                            mime_type,
+                            original_filename,
+                            file_ext,
+                            file_size
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        """,
+                        document_id,
+                        stored_source.file_role,
+                        stored_source.page_no,
+                        stored_source.storage_key,
+                        stored_source.mime_type,
+                        stored_source.original_filename,
+                        stored_source.file_ext,
+                        stored_source.file_size,
+                    )
+                    await connection.execute(
+                        """
+                        UPDATE documents
+                        SET source_file_path = $2,
+                            source_file_id = $3,
+                            updated_at = NOW()
+                        WHERE id = $1
+                        """,
+                        document_id,
+                        stored_source.storage_key,
+                        stored_source.file_role,
+                    )
                 if items:
                     await connection.executemany(
                         """

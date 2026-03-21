@@ -14,7 +14,7 @@ from app.services.documents import DocumentService, DocumentValidationError
 from app.services.json_formatter import chunk_message, format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
-from app.services.telegram_files import TelegramFileService
+from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileService
 from app.state.pending_actions import set_pending_action
 from app.state.pending_documents import (
     PendingDocument,
@@ -110,6 +110,10 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
             document=pending_document.extracted_document,
             duplicate_check=pending_document.duplicate_check,
             source_type='photo',
+            source_temp_path=pending_document.source_temp_path,
+            source_original_name=pending_document.source_original_name,
+            source_mime_type=pending_document.source_mime_type,
+            source_file_ext=pending_document.source_file_ext,
         )
     except DocumentValidationError as exc:
         await clear_document_flow(callback.from_user.id)
@@ -187,44 +191,57 @@ async def process_photo(message: Message) -> None:
 
     await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
     after_intro = perf_counter()
+    downloaded_photo: DownloadedTelegramPhoto | None = None
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            file_path = await file_service.download_best_photo(message.photo)
+            downloaded_photo = await file_service.download_best_photo(message.photo)
             after_download = perf_counter()
             try:
                 async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(file_path)
+                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
             except TimeoutError:
                 await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
                 await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
                 async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(file_path)
+                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
             except OCRSpaceError as exc:
                 if 'E101' not in str(exc):
                     raise
                 await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
                 await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
                 async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(file_path)
+                    ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
             after_ocr = perf_counter()
     except TimeoutError:
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         logger.exception('OCR timed out')
         await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except OCRSpaceError as exc:
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         logger.exception('OCR failed')
         await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         logger.exception('Unexpected error while processing photo')
         await message.answer(f'Не удалось обработать фото: {exc}', reply_markup=menu_markup)
         return
 
     if not ocr_text.strip():
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
         return
 
@@ -240,23 +257,38 @@ async def process_photo(message: Message) -> None:
         after_preview_format = perf_counter()
     except TimeoutError:
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         logger.exception('DeepSeek extraction timed out')
         await message.answer('Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except DeepSeekError as exc:
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         logger.exception('DeepSeek extraction failed')
         await message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
         return
     except DocumentValidationError as exc:
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         await message.answer(str(exc), reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
         await clear_document_flow(message.from_user.id)
+        if downloaded_photo is not None:
+            file_service.delete_temp_file(downloaded_photo.ocr_path)
+            file_service.delete_temp_file(downloaded_photo.source_path)
         logger.exception('Extraction failed')
         await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
         return
+
+    if downloaded_photo is not None:
+        file_service.delete_temp_file(downloaded_photo.ocr_path)
 
     await store_pending_document(
         message.from_user.id,
@@ -264,6 +296,10 @@ async def process_photo(message: Message) -> None:
             ocr_text=ocr_text,
             normalized_text=preview_text,
             extracted_document=document,
+            source_temp_path=str(downloaded_photo.source_path) if downloaded_photo is not None else None,
+            source_original_name=downloaded_photo.original_filename if downloaded_photo is not None else None,
+            source_mime_type=downloaded_photo.mime_type if downloaded_photo is not None else None,
+            source_file_ext=downloaded_photo.file_ext if downloaded_photo is not None else None,
         ),
     )
     after_store = perf_counter()
@@ -392,6 +428,10 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             document=document,
             duplicate_check=duplicate_check,
             source_type='photo',
+            source_temp_path=pending_document.source_temp_path,
+            source_original_name=pending_document.source_original_name,
+            source_mime_type=pending_document.source_mime_type,
+            source_file_ext=pending_document.source_file_ext,
         )
     except DocumentValidationError as exc:
         await clear_document_flow(callback.from_user.id)
