@@ -1,8 +1,4 @@
-from datetime import datetime
-import logging
-
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 
 from app.config import TMP_DIR
@@ -22,7 +18,6 @@ from app.services.report_formatters import (
     report_period_label,
 )
 from app.ui.main_menu import MENU_BUTTONS
-from app.state.pending_actions import PendingAction, set_pending_action
 from app.ui.reports import (
     MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX,
     MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX,
@@ -42,7 +37,6 @@ from app.ui.reports import (
     MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX,
     MANAGER_REPORTS_EXPORT_CALLBACK,
     MANAGER_REPORTS_MENU_CALLBACK,
-    MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX,
     MANAGER_REPORTS_PERIOD_PREFIX,
     MANAGER_REPORTS_PROJECTS_CALLBACK,
     MANAGER_REPORTS_PROJECT_DETAIL_PREFIX,
@@ -65,19 +59,12 @@ from app.ui.reports import (
     build_report_documents_keyboard,
     build_report_period_keyboard,
     build_reports_menu_keyboard,
-    build_custom_report_period_input_keyboard,
 )
 
 router = Router()
 NL = '\n'
 document_storage_service = DocumentStorageService()
-logger = logging.getLogger(__name__)
 
-async def _edit_or_answer(message: Message, text: str, reply_markup, parse_mode: str | None = None) -> None:
-    try:
-        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-    except TelegramBadRequest:
-        await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def _send_duplicate_report(message, period: str, summary, rows) -> None:
     await message.answer(
@@ -85,73 +72,6 @@ async def _send_duplicate_report(message, period: str, summary, rows) -> None:
         reply_markup=build_duplicate_report_keyboard(period, rows),
         parse_mode='HTML',
     )
-
-
-async def _send_custom_period_result(message: Message, telegram_user_id: int, report_kind: str, period: str) -> None:
-    logger.info('Custom report result start: user_id=%s report_kind=%s period=%s', telegram_user_id, report_kind, period)
-    if report_kind == REPORT_KIND_DOCUMENTS:
-        rows = await view_service.list_report_documents_for_company(telegram_user_id, period)
-        await message.answer(
-            format_report_documents('Документы компании', period, rows),
-            reply_markup=build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
-            parse_mode='HTML',
-        )
-        return
-    if report_kind == REPORT_KIND_SCANS_EXPORT:
-        job_dir = None
-        try:
-            rows = await view_service.list_report_document_sources_for_company(telegram_user_id, period)
-            logger.info('Custom report scan export rows loaded: user_id=%s period=%s count=%s', telegram_user_id, period, len(rows))
-            if not rows:
-                await message.answer('За период нет документов со сканами.', reply_markup=build_reports_menu_keyboard())
-                return
-            job_dir, archive_name, archive_path = build_document_scans_archive(period, rows, document_storage_service, TMP_DIR)
-            await message.answer_document(FSInputFile(archive_path, filename=archive_name), caption=f'Сканы документов за период: {report_period_label(period)}')
-        except Exception as exc:
-            logger.exception('Custom report scan export failed: user_id=%s period=%s', telegram_user_id, period)
-            await message.answer(f'Не удалось собрать выгрузку сканов: {exc}', reply_markup=build_reports_menu_keyboard())
-        finally:
-            if job_dir is not None:
-                import shutil
-                shutil.rmtree(job_dir, ignore_errors=True)
-        return
-    raise CompanyAccessError('Произвольный период поддерживается только для документов и выгрузки сканов.')
-
-
-def _parse_report_input_date(value: str) -> datetime.date:
-    try:
-        return datetime.strptime(value, '%Y-%m-%d').date()
-    except ValueError as exc:
-        raise CompanyAccessError('Некорректная дата. Используйте формат YYYY-MM-DD.') from exc
-
-
-def _build_custom_period_token(date_from, date_to) -> str:
-    return f'custom_{date_from.isoformat()}_{date_to.isoformat()}'
-
-
-async def handle_custom_report_period_input(message: Message, pending_action: PendingAction, text_value: str) -> None:
-    report_kind = str(pending_action.payload.get('report_kind', '') or '')
-    logger.info('Custom report period input: user_id=%s action=%s report_kind=%s text=%s', message.from_user.id if message.from_user else None, pending_action.action, report_kind, text_value)
-    if pending_action.action == 'report_custom_period_from':
-        date_from = _parse_report_input_date(text_value)
-        await set_pending_action(message.from_user.id, 'report_custom_period_to', {'report_kind': report_kind, 'date_from': date_from.isoformat()})
-        await message.answer('Введите дату окончания в формате YYYY-MM-DD.', reply_markup=build_custom_report_period_input_keyboard(report_kind))
-        return
-    if pending_action.action == 'report_custom_period_to':
-        date_from_text = str(pending_action.payload.get('date_from', '') or '')
-        date_from = _parse_report_input_date(date_from_text)
-        date_to = _parse_report_input_date(text_value)
-        if date_from > date_to:
-            await set_pending_action(message.from_user.id, 'report_custom_period_to', {'report_kind': report_kind, 'date_from': date_from.isoformat()})
-            raise CompanyAccessError('Дата окончания не может быть раньше даты начала.')
-        period = _build_custom_period_token(date_from, date_to)
-        try:
-            await _send_custom_period_result(message, message.from_user.id, report_kind, period)
-        except CompanyAccessError as exc:
-            logger.warning('Custom report result failed: user_id=%s report_kind=%s period=%s error=%s', message.from_user.id if message.from_user else None, report_kind, period, exc)
-            await message.answer(str(exc), reply_markup=build_custom_report_period_input_keyboard(report_kind))
-        return
-    raise CompanyAccessError('Неизвестное действие произвольного периода.')
 
 
 @router.message(F.text == MENU_BUTTONS['reports'])
@@ -188,7 +108,6 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
         MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
     }[callback.data]
-    logger.info('Report kind callback: user_id=%s report_kind=%s data=%s', callback.from_user.id if callback.from_user else None, report_kind, callback.data)
     if report_kind == REPORT_KIND_PROJECTS:
         await callback.answer()
         summary = await view_service.get_manager_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
@@ -217,17 +136,6 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
     await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
 
 
-@router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX))
-async def report_custom_period_prompt(callback: CallbackQuery) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    report_kind = callback.data.removeprefix(MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX)
-    logger.info('Report custom period prompt: user_id=%s report_kind=%s data=%s', callback.from_user.id if callback.from_user else None, report_kind, callback.data)
-    await set_pending_action(callback.from_user.id, 'report_custom_period_from', {'report_kind': report_kind})
-    await callback.answer()
-    await _edit_or_answer(callback.message, 'Введите дату начала в формате YYYY-MM-DD.', build_custom_report_period_input_keyboard(report_kind))
-
-
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_PREFIX))
 async def report_period_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
@@ -238,7 +146,6 @@ async def report_period_callback(callback: CallbackQuery) -> None:
     except ValueError:
         await callback.answer('Некорректный период отчета.', show_alert=True)
         return
-    logger.info('Report period callback: user_id=%s report_kind=%s period=%s data=%s', callback.from_user.id if callback.from_user else None, report_kind, period, callback.data)
     if period == '_back':
         await callback.answer()
         await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
@@ -248,7 +155,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             await callback.answer()
             summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
             rows = await view_service.list_report_projects(callback.from_user.id, period)
-            await _edit_or_answer(callback.message, format_project_report(summary, rows), build_project_report_keyboard(period, rows), parse_mode='HTML')
+            await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_DUPLICATES:
             await callback.answer()
@@ -259,7 +166,6 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         if report_kind == REPORT_KIND_DOCUMENTS:
             await callback.answer()
             rows = await view_service.list_report_documents_for_company(callback.from_user.id, period)
-            logger.info('Report documents loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
             await callback.message.answer(
                 format_report_documents('Документы компании', period, rows),
                 reply_markup=build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
@@ -270,7 +176,6 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             job_dir = None
             try:
                 rows = await view_service.list_report_document_sources_for_company(callback.from_user.id, period)
-                logger.info('Report scan export rows loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
                 if not rows:
                     await callback.answer('За период нет документов со сканами.', show_alert=True)
                     return
@@ -279,10 +184,6 @@ async def report_period_callback(callback: CallbackQuery) -> None:
                 await callback.message.answer_document(FSInputFile(archive_path, filename=archive_name), caption=f'Сканы документов за период: {report_period_label(period)}')
             except CompanyAccessError as exc:
                 await callback.answer(str(exc), show_alert=True)
-                return
-            except Exception as exc:
-                logger.exception('Report scan export failed: user_id=%s period=%s', callback.from_user.id, period)
-                await _edit_or_answer(callback.message, f'Не удалось собрать выгрузку сканов: {exc}', build_reports_menu_keyboard())
                 return
             finally:
                 if job_dir is not None:

@@ -286,7 +286,7 @@ class ViewService:
         pool = get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(
-                f"""
+                """
                 SELECT c.id,
                        c.name,
                        c.status,
@@ -1124,9 +1124,9 @@ class ViewService:
         project_id: int | None = None,
         uploaded_by_user_id: int | None = None,
     ) -> tuple[ReportDocumentDetail, list[ReportItemDetail]]:
-        company, start_at, end_at = await self._get_manager_company_and_period_bounds(telegram_user_id, period)
-        document = await self._get_report_document(company.id, start_at, document_id, project_id=project_id, uploaded_by_user_id=uploaded_by_user_id, end_at=end_at)
-        items = await self._list_report_items(company.id, start_at, document_id=document_id, project_id=project_id, uploaded_by_user_id=uploaded_by_user_id, end_at=end_at)
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        document = await self._get_report_document(company.id, start_at, document_id, project_id=project_id, uploaded_by_user_id=uploaded_by_user_id)
+        items = await self._list_report_items(company.id, start_at, document_id=document_id, project_id=project_id, uploaded_by_user_id=uploaded_by_user_id)
         return document, items
 
     async def list_duplicate_report_rows(self, telegram_user_id: int, period: str) -> list[DuplicateReportRow]:
@@ -1205,28 +1205,23 @@ class ViewService:
         raise CompanyAccessError('Дубль больше не актуален: исходная запись удалена, статус снят.')
 
     async def list_report_documents_for_company(self, telegram_user_id: int, period: str) -> list[ReportDocumentDetail]:
-        company, start_at, end_at = await self._get_manager_company_and_period_bounds(telegram_user_id, period)
-        return await self._list_report_documents(company.id, start_at, end_at=end_at)
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        return await self._list_report_documents(company.id, start_at)
 
     async def list_report_items_for_company(self, telegram_user_id: int, period: str) -> list[ReportItemDetail]:
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         return await self._list_report_items(company.id, start_at)
 
     async def list_report_document_sources_for_company(self, telegram_user_id: int, period: str) -> list[ReportDocumentSourceDetail]:
-        company, start_at, end_at = await self._get_manager_company_and_period_bounds(telegram_user_id, period)
-        return await self._list_report_document_sources(company.id, start_at, end_at=end_at)
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        return await self._list_report_document_sources(company.id, start_at)
 
     async def _get_manager_company_and_period(self, telegram_user_id: int, period: str):
-        company, start_at, _end_at = await self._get_manager_company_and_period_bounds(telegram_user_id, period)
-        return company, start_at
-
-    async def _get_manager_company_and_period_bounds(self, telegram_user_id: int, period: str):
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         role = await self.company_service.ensure_member_role(telegram_user_id)
         if role != 'manager':
             raise CompanyAccessError('Действие доступно только manager.')
-        start_at, end_at = _report_period_bounds(period)
-        return company, start_at, end_at
+        return company, _report_period_start(period)
 
     async def _list_report_documents(
         self,
@@ -1234,16 +1229,11 @@ class ViewService:
         start_at: datetime,
         project_id: int | None = None,
         uploaded_by_user_id: int | None = None,
-        end_at: datetime | None = None,
     ) -> list[ReportDocumentDetail]:
         pool = get_pool()
         conditions = ['d.company_id = $1', 'd.created_at >= $2']
         params: list[object] = [company_id, start_at]
         index = 3
-        if end_at is not None:
-            conditions.append(f'd.created_at < ${index}')
-            params.append(end_at)
-            index += 1
         if project_id is not None:
             conditions.append(f'd.project_id = ${index}')
             params.append(project_id)
@@ -1302,14 +1292,8 @@ class ViewService:
         self,
         company_id: int,
         start_at: datetime,
-        end_at: datetime | None = None,
     ) -> list[ReportDocumentSourceDetail]:
         pool = get_pool()
-        conditions = ['d.company_id = $1', 'd.created_at >= $2']
-        params: list[object] = [company_id, start_at]
-        if end_at is not None:
-            conditions.append('d.created_at < $3')
-            params.append(end_at)
         async with pool.acquire() as connection:
             rows = await connection.fetch(
                 """
@@ -1337,11 +1321,13 @@ class ViewService:
                   ON df.document_id = d.id
                  AND df.file_role = 'source'
                  AND df.page_no = 0
-                WHERE {' AND '.join(conditions)}
+                WHERE d.company_id = $1
+                  AND d.created_at >= $2
                 ORDER BY d.document_date DESC NULLS LAST, d.created_at DESC, d.id DESC
                 LIMIT 500
                 """,
-                *params,
+                company_id,
+                start_at,
             )
         result: list[ReportDocumentSourceDetail] = []
         for row in rows:
@@ -1380,16 +1366,11 @@ class ViewService:
         document_id: int,
         project_id: int | None = None,
         uploaded_by_user_id: int | None = None,
-        end_at: datetime | None = None,
     ) -> ReportDocumentDetail:
         pool = get_pool()
         conditions = ['d.company_id = $1', 'd.created_at >= $2', 'd.id = $3']
         params: list[object] = [company_id, start_at, document_id]
         index = 4
-        if end_at is not None:
-            conditions.append(f'd.created_at < ${index}')
-            params.append(end_at)
-            index += 1
         if project_id is not None:
             conditions.append(f'd.project_id = ${index}')
             params.append(project_id)
@@ -1449,16 +1430,11 @@ class ViewService:
         document_id: int | None = None,
         project_id: int | None = None,
         uploaded_by_user_id: int | None = None,
-        end_at: datetime | None = None,
     ) -> list[ReportItemDetail]:
         pool = get_pool()
         conditions = ['d.company_id = $1', 'd.created_at >= $2']
         params: list[object] = [company_id, start_at]
         index = 3
-        if end_at is not None:
-            conditions.append(f'd.created_at < ${index}')
-            params.append(end_at)
-            index += 1
         if document_id is not None:
             conditions.append(f'd.id = ${index}')
             params.append(document_id)
@@ -1638,22 +1614,7 @@ class ViewService:
 
 
 def _report_period_start(period: str) -> datetime:
-    start_at, _end_at = _report_period_bounds(period)
-    return start_at
-
-
-def _report_period_bounds(period: str) -> tuple[datetime, datetime | None]:
     now = datetime.now(timezone.utc)
-    if period.startswith('custom_'):
-        try:
-            _, date_from_text, date_to_text = period.split('_', 2)
-            start_date = datetime.strptime(date_from_text, '%Y-%m-%d').date()
-            end_date = datetime.strptime(date_to_text, '%Y-%m-%d').date()
-        except ValueError as exc:
-            raise CompanyAccessError('Неизвестный период отчета.') from exc
-        start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
-        end_at = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
-        return start_at, end_at
     if period == 'all_time':
         start_date = date(2000, 1, 1)
     elif period == 'week':
@@ -1670,7 +1631,7 @@ def _report_period_bounds(period: str) -> tuple[datetime, datetime | None]:
         start_date = date(now.year, 1, 1)
     else:
         raise CompanyAccessError('Неизвестный период отчета.')
-    return datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc), None
+    return datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
 
 
 

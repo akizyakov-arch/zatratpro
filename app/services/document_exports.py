@@ -59,7 +59,7 @@ def _build_manifest_workbook(period: str, selected_rows) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = 'Scans'
-    sheet.append(['Период', _export_period_label(period)])
+    sheet.append(['Период', REPORT_PERIOD_LABELS.get(period, period)])
     sheet.append([])
     sheet.append([
         'ID документа',

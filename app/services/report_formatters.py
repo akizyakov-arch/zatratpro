@@ -22,12 +22,6 @@ def format_date(value) -> str:
 
 
 def report_period_label(period: str) -> str:
-    if period.startswith('custom_'):
-        try:
-            _, date_from, date_to = period.split('_', 2)
-            return f'{date_from} — {date_to}'
-        except ValueError:
-            return period
     return REPORT_PERIOD_LABELS.get(period, period)
 
 
