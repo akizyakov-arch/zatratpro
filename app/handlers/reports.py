@@ -214,7 +214,7 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         await callback.message.answer('Выбери сотрудника.', reply_markup=build_employee_report_selector_keyboard(rows))
         return
     await callback.answer()
-    await _edit_or_answer(callback.message, 'Выбери период отчета.', build_report_period_keyboard(report_kind))
+    await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX))
@@ -241,7 +241,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
     logger.info('Report period callback: user_id=%s report_kind=%s period=%s data=%s', callback.from_user.id if callback.from_user else None, report_kind, period, callback.data)
     if period == '_back':
         await callback.answer()
-        await _edit_or_answer(callback.message, 'Выбери период отчета.', build_report_period_keyboard(report_kind))
+        await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
         return
     try:
         if report_kind == REPORT_KIND_PROJECTS:
@@ -258,26 +258,23 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             return
         if report_kind == REPORT_KIND_DOCUMENTS:
             await callback.answer()
-            await _edit_or_answer(callback.message, f'Ищу документы за период: {report_period_label(period)}...', build_reports_menu_keyboard())
             rows = await view_service.list_report_documents_for_company(callback.from_user.id, period)
             logger.info('Report documents loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
-            await _edit_or_answer(
-                callback.message,
+            await callback.message.answer(
                 format_report_documents('Документы компании', period, rows),
-                build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
+                reply_markup=build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
                 parse_mode='HTML',
             )
             return
         if report_kind == REPORT_KIND_SCANS_EXPORT:
             job_dir = None
             try:
-                await callback.answer()
-                await _edit_or_answer(callback.message, f'Собираю сканы за период: {report_period_label(period)}...', build_reports_menu_keyboard())
                 rows = await view_service.list_report_document_sources_for_company(callback.from_user.id, period)
                 logger.info('Report scan export rows loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
                 if not rows:
-                    await _edit_or_answer(callback.message, 'За период нет документов со сканами.', build_reports_menu_keyboard())
+                    await callback.answer('За период нет документов со сканами.', show_alert=True)
                     return
+                await callback.answer()
                 job_dir, archive_name, archive_path = build_document_scans_archive(period, rows, document_storage_service, TMP_DIR)
                 await callback.message.answer_document(FSInputFile(archive_path, filename=archive_name), caption=f'Сканы документов за период: {report_period_label(period)}')
             except CompanyAccessError as exc:
