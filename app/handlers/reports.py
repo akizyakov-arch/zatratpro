@@ -107,6 +107,9 @@ async def _send_custom_period_result(message: Message, telegram_user_id: int, re
                 return
             job_dir, archive_name, archive_path = build_document_scans_archive(period, rows, document_storage_service, TMP_DIR)
             await message.answer_document(FSInputFile(archive_path, filename=archive_name), caption=f'Сканы документов за период: {report_period_label(period)}')
+        except Exception as exc:
+            logger.exception('Custom report scan export failed: user_id=%s period=%s', telegram_user_id, period)
+            await message.answer(f'Не удалось собрать выгрузку сканов: {exc}', reply_markup=build_reports_menu_keyboard())
         finally:
             if job_dir is not None:
                 import shutil
@@ -279,6 +282,10 @@ async def report_period_callback(callback: CallbackQuery) -> None:
                 await callback.message.answer_document(FSInputFile(archive_path, filename=archive_name), caption=f'Сканы документов за период: {report_period_label(period)}')
             except CompanyAccessError as exc:
                 await callback.answer(str(exc), show_alert=True)
+                return
+            except Exception as exc:
+                logger.exception('Report scan export failed: user_id=%s period=%s', callback.from_user.id, period)
+                await _edit_or_answer(callback.message, f'Не удалось собрать выгрузку сканов: {exc}', build_reports_menu_keyboard())
                 return
             finally:
                 if job_dir is not None:
