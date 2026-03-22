@@ -276,9 +276,6 @@ async def _send_report_document_source(callback: CallbackQuery, document_id: int
     await callback.answer()
     input_file = FSInputFile(file_path, filename=source.original_filename or file_path.name)
     caption = 'Исходный файл документа'
-    if source.mime_type and source.mime_type.startswith('image/'):
-        await callback.message.answer_photo(input_file, caption=caption)
-        return
     await callback.message.answer_document(input_file, caption=caption)
 
 
