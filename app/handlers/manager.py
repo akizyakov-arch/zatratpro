@@ -384,12 +384,18 @@ async def my_company_entry(message: Message) -> None:
     await message.answer(format_company_card(card), reply_markup=await main_menu_markup(message))
 
 
-async def _send_my_documents_menu(message: Message, telegram_user_id: int) -> None:
+async def _send_my_documents_menu(message: Message, telegram_user_id: int, *, edit: bool = False) -> None:
     documents = await view_service.list_my_documents(telegram_user_id)
     if not documents:
-        await message.answer('У тебя пока нет документов.', reply_markup=await main_menu_markup_for_user(message.from_user))
+        if edit:
+            await message.edit_text('У тебя пока нет документов.', reply_markup=await main_menu_markup_for_user(message.from_user))
+        else:
+            await message.answer('У тебя пока нет документов.', reply_markup=await main_menu_markup_for_user(message.from_user))
         return
-    await message.answer('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
+    if edit:
+        await message.edit_text('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
+    else:
+        await message.answer('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
 
 
 @router.message(F.text == MENU_BUTTONS['my_documents'])
@@ -408,7 +414,7 @@ async def my_documents_list_callback(callback: CallbackQuery) -> None:
         return
     try:
         await callback.answer()
-        await _send_my_documents_menu(callback.message, callback.from_user.id)
+        await _send_my_documents_menu(callback.message, callback.from_user.id, edit=True)
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
 
@@ -441,7 +447,7 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
         f'Дата ввода: {uploaded_at}',
         f'Первая позиция: {first_item}',
     ]
-    await callback.message.answer(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
+    await callback.message.edit_text(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
 
 
 @router.callback_query(F.data.startswith(MY_DOCUMENTS_OPEN_PREFIX))
@@ -481,7 +487,7 @@ async def my_document_items_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     from app.services.report_formatters import format_report_document_items
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_report_document_items('Состав документа', 'all_time', document, items),
         reply_markup=build_my_document_items_keyboard(document.id),
         parse_mode='HTML',

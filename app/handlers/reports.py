@@ -184,7 +184,7 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_report_documents(f'Проект: {project.name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_PROJECTS, period, project.id, documents),
         parse_mode='HTML',
@@ -225,7 +225,7 @@ async def report_employee_period_callback(callback: CallbackQuery) -> None:
     await callback.answer()
     employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
     title_prefix = 'Руководитель' if member.role == 'manager' else 'Сотрудник'
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_report_documents(f'{title_prefix}: {employee_name}', period, documents),
         reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
         parse_mode='HTML',
@@ -415,7 +415,7 @@ async def report_document_detail_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_report_document_card('Документ', document, items),
         reply_markup=build_report_document_card_keyboard(report_kind, period, target_id, document_id),
         parse_mode='HTML',
@@ -460,7 +460,7 @@ async def report_document_items_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_items_only('Состав документа', items),
         reply_markup=build_report_document_items_back_keyboard(report_kind, period, target_id, document_id),
         parse_mode='HTML',
