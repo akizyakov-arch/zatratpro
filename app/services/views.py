@@ -286,7 +286,7 @@ class ViewService:
         pool = get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(
-                """
+                f"""
                 SELECT c.id,
                        c.name,
                        c.status,
