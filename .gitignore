@@ -8,3 +8,5 @@ tmp/*
 !tmp/.gitkeep
 
 bot.log
+
+backups/
