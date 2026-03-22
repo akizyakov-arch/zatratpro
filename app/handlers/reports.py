@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 
 from app.config import TMP_DIR
