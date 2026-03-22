@@ -88,6 +88,7 @@ async def _send_duplicate_report(message, period: str, summary, rows) -> None:
 
 
 async def _send_custom_period_result(message: Message, telegram_user_id: int, report_kind: str, period: str) -> None:
+    logger.info('Custom report result start: user_id=%s report_kind=%s period=%s', telegram_user_id, report_kind, period)
     if report_kind == REPORT_KIND_DOCUMENTS:
         rows = await view_service.list_report_documents_for_company(telegram_user_id, period)
         await message.answer(
@@ -141,7 +142,11 @@ async def handle_custom_report_period_input(message: Message, pending_action: Pe
             await set_pending_action(message.from_user.id, 'report_custom_period_to', {'report_kind': report_kind, 'date_from': date_from.isoformat()})
             raise CompanyAccessError('Дата окончания не может быть раньше даты начала.')
         period = _build_custom_period_token(date_from, date_to)
-        await _send_custom_period_result(message, message.from_user.id, report_kind, period)
+        try:
+            await _send_custom_period_result(message, message.from_user.id, report_kind, period)
+        except CompanyAccessError as exc:
+            logger.warning('Custom report result failed: user_id=%s report_kind=%s period=%s error=%s', message.from_user.id if message.from_user else None, report_kind, period, exc)
+            await message.answer(str(exc), reply_markup=build_custom_report_period_input_keyboard(report_kind))
         return
     raise CompanyAccessError('Неизвестное действие произвольного периода.')
 
