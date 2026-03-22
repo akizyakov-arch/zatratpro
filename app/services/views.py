@@ -235,6 +235,24 @@ class ReportItemDetail:
 
 
 @dataclass(slots=True)
+class ReportDocumentSourceDetail:
+    document_id: int
+    project_name: str
+    vendor: str | None
+    vendor_inn: str | None
+    document_number: str | None
+    document_date: date | datetime | None
+    total_amount: Decimal | None
+    duplicate_status: str
+    uploaded_by_name: str | None
+    created_at: datetime
+    storage_key: str
+    original_filename: str | None
+    mime_type: str | None
+    file_ext: str | None
+
+
+@dataclass(slots=True)
 class DuplicateReportRow:
     id: int
     project_name: str
@@ -1194,6 +1212,10 @@ class ViewService:
         company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
         return await self._list_report_items(company.id, start_at)
 
+    async def list_report_document_sources_for_company(self, telegram_user_id: int, period: str) -> list[ReportDocumentSourceDetail]:
+        company, start_at = await self._get_manager_company_and_period(telegram_user_id, period)
+        return await self._list_report_document_sources(company.id, start_at)
+
     async def _get_manager_company_and_period(self, telegram_user_id: int, period: str):
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         role = await self.company_service.ensure_member_role(telegram_user_id)
@@ -1265,6 +1287,77 @@ class ViewService:
             )
             for row in rows
         ]
+
+    async def _list_report_document_sources(
+        self,
+        company_id: int,
+        start_at: datetime,
+    ) -> list[ReportDocumentSourceDetail]:
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT d.id AS document_id,
+                       p.name AS project_name,
+                       d.vendor,
+                       d.vendor_inn,
+                       COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
+                       d.document_date,
+                       d.total_amount,
+                       d.duplicate_status,
+                       d.created_at,
+                       uploader.username AS uploader_username,
+                       uploader.first_name AS uploader_first_name,
+                       uploader.last_name AS uploader_last_name,
+                       df.storage_key,
+                       df.original_filename,
+                       df.mime_type,
+                       df.file_ext,
+                       d.source_file_path
+                FROM documents d
+                JOIN projects p ON p.id = d.project_id
+                LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+                LEFT JOIN document_files df
+                  ON df.document_id = d.id
+                 AND df.file_role = 'source'
+                 AND df.page_no = 0
+                WHERE d.company_id = $1
+                  AND d.created_at >= $2
+                ORDER BY d.document_date DESC NULLS LAST, d.created_at DESC, d.id DESC
+                LIMIT 500
+                """,
+                company_id,
+                start_at,
+            )
+        result: list[ReportDocumentSourceDetail] = []
+        for row in rows:
+            storage_key = self._resolve_document_storage_key(
+                company_id,
+                row['document_id'],
+                row['storage_key'],
+                row['source_file_path'],
+            )
+            if not storage_key:
+                continue
+            result.append(
+                ReportDocumentSourceDetail(
+                    document_id=row['document_id'],
+                    project_name=row['project_name'],
+                    vendor=row['vendor'],
+                    vendor_inn=row['vendor_inn'],
+                    document_number=row['document_number'],
+                    document_date=row['document_date'],
+                    total_amount=row['total_amount'],
+                    duplicate_status=row['duplicate_status'],
+                    uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
+                    created_at=row['created_at'],
+                    storage_key=storage_key,
+                    original_filename=row['original_filename'],
+                    mime_type=row['mime_type'],
+                    file_ext=row['file_ext'],
+                )
+            )
+        return result
 
     async def _get_report_document(
         self,

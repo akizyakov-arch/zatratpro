@@ -1,8 +1,11 @@
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 
+from app.config import TMP_DIR
+
 from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
 from app.services.companies import CompanyAccessError
+from app.services.document_exports import build_document_scans_archive
 from app.services.document_storage import DocumentStorageService
 from app.services.report_exports import build_manager_report_workbook
 from app.services.report_formatters import (
@@ -28,6 +31,7 @@ from app.ui.reports import (
     MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
     MANAGER_REPORTS_DOCUMENTS_CALLBACK,
+    MANAGER_REPORTS_SCANS_EXPORT_CALLBACK,
     MANAGER_REPORTS_EMPLOYEES_CALLBACK,
     MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX,
     MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX,
@@ -38,6 +42,7 @@ from app.ui.reports import (
     MANAGER_REPORTS_PROJECT_DETAIL_PREFIX,
     REPORT_KIND_DOCUMENTS,
     REPORT_KIND_DUPLICATES,
+    REPORT_KIND_SCANS_EXPORT,
     REPORT_KIND_EMPLOYEES,
     REPORT_KIND_EXPORT,
     REPORT_KIND_PROJECTS,
@@ -91,7 +96,7 @@ async def reports_menu_callback(callback: CallbackQuery) -> None:
     await callback.message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
 
 
-@router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DOCUMENTS_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
+@router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DOCUMENTS_CALLBACK, MANAGER_REPORTS_SCANS_EXPORT_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
 async def report_kind_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
@@ -99,6 +104,7 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         MANAGER_REPORTS_PROJECTS_CALLBACK: REPORT_KIND_PROJECTS,
         MANAGER_REPORTS_EMPLOYEES_CALLBACK: REPORT_KIND_EMPLOYEES,
         MANAGER_REPORTS_DOCUMENTS_CALLBACK: REPORT_KIND_DOCUMENTS,
+        MANAGER_REPORTS_SCANS_EXPORT_CALLBACK: REPORT_KIND_SCANS_EXPORT,
         MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
         MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
     }[callback.data]
@@ -165,6 +171,24 @@ async def report_period_callback(callback: CallbackQuery) -> None:
                 reply_markup=build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
                 parse_mode='HTML',
             )
+            return
+        if report_kind == REPORT_KIND_SCANS_EXPORT:
+            job_dir = None
+            try:
+                rows = await view_service.list_report_document_sources_for_company(callback.from_user.id, period)
+                if not rows:
+                    await callback.answer('За период нет документов со сканами.', show_alert=True)
+                    return
+                await callback.answer()
+                job_dir, archive_name, archive_path = build_document_scans_archive(period, rows, document_storage_service, TMP_DIR)
+                await callback.message.answer_document(FSInputFile(archive_path, filename=archive_name), caption=f'Сканы документов за период: {report_period_label(period)}')
+            except CompanyAccessError as exc:
+                await callback.answer(str(exc), show_alert=True)
+                return
+            finally:
+                if job_dir is not None:
+                    import shutil
+                    shutil.rmtree(job_dir, ignore_errors=True)
             return
         if report_kind == REPORT_KIND_EXPORT:
             await callback.answer()
