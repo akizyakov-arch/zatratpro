@@ -27,6 +27,7 @@ from app.ui.reports import (
     MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX,
     MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX,
     MANAGER_REPORTS_DUPLICATES_CALLBACK,
+    MANAGER_REPORTS_DOCUMENTS_CALLBACK,
     MANAGER_REPORTS_EMPLOYEES_CALLBACK,
     MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX,
     MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX,
@@ -35,6 +36,7 @@ from app.ui.reports import (
     MANAGER_REPORTS_PERIOD_PREFIX,
     MANAGER_REPORTS_PROJECTS_CALLBACK,
     MANAGER_REPORTS_PROJECT_DETAIL_PREFIX,
+    REPORT_KIND_DOCUMENTS,
     REPORT_KIND_DUPLICATES,
     REPORT_KIND_EMPLOYEES,
     REPORT_KIND_EXPORT,
@@ -89,13 +91,14 @@ async def reports_menu_callback(callback: CallbackQuery) -> None:
     await callback.message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
 
 
-@router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
+@router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DOCUMENTS_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
 async def report_kind_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     report_kind = {
         MANAGER_REPORTS_PROJECTS_CALLBACK: REPORT_KIND_PROJECTS,
         MANAGER_REPORTS_EMPLOYEES_CALLBACK: REPORT_KIND_EMPLOYEES,
+        MANAGER_REPORTS_DOCUMENTS_CALLBACK: REPORT_KIND_DOCUMENTS,
         MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
         MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
     }[callback.data]
@@ -153,6 +156,15 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
             duplicate_summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
             await _send_duplicate_report(callback.message, period, duplicate_summary, rows)
+            return
+        if report_kind == REPORT_KIND_DOCUMENTS:
+            await callback.answer()
+            rows = await view_service.list_report_documents_for_company(callback.from_user.id, period)
+            await callback.message.answer(
+                format_report_documents('Документы компании', period, rows),
+                reply_markup=build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
+                parse_mode='HTML',
+            )
             return
         if report_kind == REPORT_KIND_EXPORT:
             await callback.answer()
@@ -405,6 +417,8 @@ async def report_document_detail_callback(callback: CallbackQuery) -> None:
             document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id, project_id=target_id)
         elif report_kind == REPORT_KIND_EMPLOYEES:
             document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id, uploaded_by_user_id=target_id)
+        elif report_kind == REPORT_KIND_DOCUMENTS:
+            document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id)
         else:
             await callback.answer('Некорректный источник отчета.', show_alert=True)
             return
@@ -427,7 +441,7 @@ async def report_document_open_callback(callback: CallbackQuery) -> None:
     payload = callback.data.removeprefix(MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX)
     try:
         report_kind, _period, _target_id_text, document_id_text = payload.split(':', 3)
-        if report_kind not in {REPORT_KIND_PROJECTS, REPORT_KIND_EMPLOYEES}:
+        if report_kind not in {REPORT_KIND_PROJECTS, REPORT_KIND_EMPLOYEES, REPORT_KIND_DOCUMENTS}:
             await callback.answer('Некорректный источник отчета.', show_alert=True)
             return
         document_id = int(document_id_text)
@@ -450,6 +464,8 @@ async def report_document_items_callback(callback: CallbackQuery) -> None:
             document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id, project_id=target_id)
         elif report_kind == REPORT_KIND_EMPLOYEES:
             document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id, uploaded_by_user_id=target_id)
+        elif report_kind == REPORT_KIND_DOCUMENTS:
+            document, items = await view_service.get_report_document_items(callback.from_user.id, period, document_id)
         else:
             await callback.answer('Некорректный источник отчета.', show_alert=True)
             return

@@ -7,6 +7,7 @@ MANAGER_REPORTS_MENU_CALLBACK = "manager:reports:menu"
 MANAGER_REPORTS_PROJECTS_CALLBACK = "manager:reports:projects"
 MANAGER_REPORTS_EMPLOYEES_CALLBACK = "manager:reports:employees"
 MANAGER_REPORTS_DUPLICATES_CALLBACK = "manager:reports:duplicates"
+MANAGER_REPORTS_DOCUMENTS_CALLBACK = "manager:reports:documents"
 MANAGER_REPORTS_EXPORT_CALLBACK = "manager:reports:export"
 MANAGER_REPORTS_PERIOD_PREFIX = "manager:reports:period:"
 MANAGER_REPORTS_PROJECT_DETAIL_PREFIX = "manager:reports:project_detail:"
@@ -31,6 +32,7 @@ MANAGER_REPORTS_DUPLICATE_SOURCE_DOCUMENT_VIEW_PREFIX = "manager:reports:duplica
 REPORT_KIND_PROJECTS = "projects"
 REPORT_KIND_EMPLOYEES = "employees"
 REPORT_KIND_DUPLICATES = "duplicates"
+REPORT_KIND_DOCUMENTS = "documents"
 REPORT_KIND_EXPORT = "export"
 
 REPORT_PERIOD_WEEK = "week"
@@ -54,6 +56,7 @@ def build_reports_menu_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="По проектам", callback_data=MANAGER_REPORTS_PROJECTS_CALLBACK)],
             [InlineKeyboardButton(text="По сотрудникам", callback_data=MANAGER_REPORTS_EMPLOYEES_CALLBACK)],
+            [InlineKeyboardButton(text="Все документы", callback_data=MANAGER_REPORTS_DOCUMENTS_CALLBACK)],
             [InlineKeyboardButton(text="Дубли документов", callback_data=MANAGER_REPORTS_DUPLICATES_CALLBACK)],
             [InlineKeyboardButton(text="Excel выгрузка", callback_data=MANAGER_REPORTS_EXPORT_CALLBACK)],
             [InlineKeyboardButton(text="Назад", callback_data="nav:main")],
@@ -160,8 +163,10 @@ def build_report_documents_keyboard(report_kind: str, period: str, target_id: in
 def build_report_document_card_keyboard(report_kind: str, period: str, target_id: int, document_id: int) -> InlineKeyboardMarkup:
     if report_kind == REPORT_KIND_PROJECTS:
         back_callback = f"{MANAGER_REPORTS_PROJECT_DETAIL_PREFIX}{period}:{target_id}"
-    else:
+    elif report_kind == REPORT_KIND_EMPLOYEES:
         back_callback = f"{MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX}{target_id}:{period}"
+    else:
+        back_callback = f"{MANAGER_REPORTS_PERIOD_PREFIX}{REPORT_KIND_DOCUMENTS}:{period}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Открыть документ", callback_data=f"{MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX}{report_kind}:{period}:{target_id}:{document_id}")],
