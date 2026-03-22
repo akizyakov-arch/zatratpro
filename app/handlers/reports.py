@@ -413,7 +413,7 @@ async def report_document_detail_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_report_document_card('Документ', document, items),
         reply_markup=build_report_document_card_keyboard(report_kind, period, target_id, document_id),
         parse_mode='HTML',
@@ -458,7 +458,7 @@ async def report_document_items_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_items_only('Состав документа', items),
         reply_markup=build_report_document_items_back_keyboard(report_kind, period, target_id, document_id),
         parse_mode='HTML',

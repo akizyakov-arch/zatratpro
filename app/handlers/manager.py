@@ -391,6 +391,14 @@ async def _send_my_documents_menu(message: Message, telegram_user_id: int) -> No
     await message.answer('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
 
 
+async def _edit_my_documents_menu(message: Message, telegram_user_id: int) -> None:
+    documents = await view_service.list_my_documents(telegram_user_id)
+    if not documents:
+        await message.edit_text('У тебя пока нет документов.', reply_markup=await main_menu_markup_for_user(message.from_user))
+        return
+    await message.edit_text('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
+
+
 @router.message(F.text == MENU_BUTTONS['my_documents'])
 async def my_documents_entry(message: Message) -> None:
     if message.from_user is None:
@@ -407,7 +415,7 @@ async def my_documents_list_callback(callback: CallbackQuery) -> None:
         return
     try:
         await callback.answer()
-        await _send_my_documents_menu(callback.message, callback.from_user.id)
+        await _edit_my_documents_menu(callback.message, callback.from_user.id)
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
 
@@ -426,6 +434,7 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
     await callback.answer()
     first_item = items[0].name if items else (document.first_item_name or 'Позиции не найдены')
     vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
+    uploader = document.uploaded_by_name or 'не указан'
     number = document.document_number or 'без номера'
     date_line = document.document_date.strftime('%d.%m.%Y') if document.document_date else 'без даты'
     uploaded_at = document.created_at.strftime('%d.%m.%Y %H:%M') if document.created_at else '—'
@@ -437,10 +446,11 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
         f'Дата документа: {date_line}',
         f'Номер: {number}',
         f'Сумма: {document.total_amount or 0}',
+        f'Внес: {uploader}',
         f'Дата ввода: {uploaded_at}',
         f'Первая позиция: {first_item}',
     ]
-    await callback.message.answer(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
+    await callback.message.edit_text(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
 
 
 @router.callback_query(F.data.startswith(MY_DOCUMENTS_OPEN_PREFIX))
@@ -477,7 +487,7 @@ async def my_document_items_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     from app.services.report_formatters import format_report_document_items
-    await callback.message.answer(
+    await callback.message.edit_text(
         format_report_document_items('Состав документа', 'all_time', document, items),
         reply_markup=build_my_document_items_keyboard(document.id),
         parse_mode='HTML',
