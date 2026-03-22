@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -61,16 +62,16 @@ def _build_manifest_workbook(period: str, selected_rows) -> bytes:
     sheet.append(['Период', REPORT_PERIOD_LABELS.get(period, period)])
     sheet.append([])
     sheet.append([
-        'document_id',
-        'project_name',
-        'uploaded_by_name',
-        'created_at',
-        'document_date',
-        'document_number',
-        'vendor',
-        'total_amount',
-        'duplicate_status',
-        'file_name_in_archive',
+        'ID документа',
+        'Проект',
+        'Сотрудник',
+        'Дата загрузки',
+        'Дата документа',
+        'Номер документа',
+        'Поставщик',
+        'Сумма',
+        'Статус дубля',
+        'Файл в архиве',
     ])
     for row, file_path in selected_rows:
         ext = row.file_ext or file_path.suffix or '.jpg'
@@ -80,8 +81,8 @@ def _build_manifest_workbook(period: str, selected_rows) -> bytes:
             row.document_id,
             row.project_name or '',
             row.uploaded_by_name or '',
-            row.created_at.isoformat() if row.created_at else '',
-            row.document_date.isoformat() if row.document_date else '',
+            _format_export_datetime(row.created_at),
+            _format_export_date(row.document_date),
             row.document_number or '',
             row.vendor or '',
             float(row.total_amount or 0),
