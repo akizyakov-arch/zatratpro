@@ -155,7 +155,8 @@ def build_report_documents_keyboard(report_kind: str, period: str, target_id: in
         ]
         for document in documents[:20]
     ]
-    rows.append([InlineKeyboardButton(text="Назад к отчету", callback_data=_back_to_report_callback(report_kind, period))])
+    if report_kind != REPORT_KIND_DOCUMENTS:
+        rows.append([InlineKeyboardButton(text="Назад к отчету", callback_data=_back_to_report_callback(report_kind, period))])
     rows.append([InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
