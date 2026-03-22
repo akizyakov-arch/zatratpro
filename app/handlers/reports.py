@@ -250,6 +250,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             return
         if report_kind == REPORT_KIND_DOCUMENTS:
             await callback.answer()
+            await _edit_or_answer(callback.message, f'Ищу документы за период: {report_period_label(period)}...', build_reports_menu_keyboard())
             rows = await view_service.list_report_documents_for_company(callback.from_user.id, period)
             logger.info('Report documents loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
             await _edit_or_answer(
@@ -262,13 +263,13 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         if report_kind == REPORT_KIND_SCANS_EXPORT:
             job_dir = None
             try:
+                await callback.answer()
+                await _edit_or_answer(callback.message, f'Собираю сканы за период: {report_period_label(period)}...', build_reports_menu_keyboard())
                 rows = await view_service.list_report_document_sources_for_company(callback.from_user.id, period)
                 logger.info('Report scan export rows loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
                 if not rows:
-                    await callback.answer()
-                    await callback.message.answer('За период нет документов со сканами.', reply_markup=build_reports_menu_keyboard())
+                    await _edit_or_answer(callback.message, 'За период нет документов со сканами.', build_reports_menu_keyboard())
                     return
-                await callback.answer()
                 job_dir, archive_name, archive_path = build_document_scans_archive(period, rows, document_storage_service, TMP_DIR)
                 await callback.message.answer_document(FSInputFile(archive_path, filename=archive_name), caption=f'Сканы документов за период: {report_period_label(period)}')
             except CompanyAccessError as exc:
