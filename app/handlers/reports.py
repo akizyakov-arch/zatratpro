@@ -70,6 +70,11 @@ router = Router()
 NL = '\n'
 document_storage_service = DocumentStorageService()
 
+async def _edit_or_answer(message: Message, text: str, reply_markup, parse_mode: str | None = None) -> None:
+    try:
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except TelegramBadRequest:
+        await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def _send_duplicate_report(message, period: str, summary, rows) -> None:
     await message.answer(
@@ -195,7 +200,7 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         await callback.message.answer('Выбери сотрудника.', reply_markup=build_employee_report_selector_keyboard(rows))
         return
     await callback.answer()
-    await callback.message.edit_text('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
+    await _edit_or_answer(callback.message, 'Выбери период отчета.', build_report_period_keyboard(report_kind))
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX))
@@ -205,7 +210,7 @@ async def report_custom_period_prompt(callback: CallbackQuery) -> None:
     report_kind = callback.data.removeprefix(MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX)
     await set_pending_action(callback.from_user.id, 'report_custom_period_from', {'report_kind': report_kind})
     await callback.answer()
-    await callback.message.edit_text('Введите дату начала в формате YYYY-MM-DD.', reply_markup=build_custom_report_period_input_keyboard(report_kind))
+    await _edit_or_answer(callback.message, 'Введите дату начала в формате YYYY-MM-DD.', build_custom_report_period_input_keyboard(report_kind))
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_PREFIX))
@@ -220,14 +225,14 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         return
     if period == '_back':
         await callback.answer()
-        await callback.message.edit_text('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
+        await _edit_or_answer(callback.message, 'Выбери период отчета.', build_report_period_keyboard(report_kind))
         return
     try:
         if report_kind == REPORT_KIND_PROJECTS:
             await callback.answer()
             summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
             rows = await view_service.list_report_projects(callback.from_user.id, period)
-            await callback.message.edit_text(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
+            await _edit_or_answer(callback.message, format_project_report(summary, rows), build_project_report_keyboard(period, rows), parse_mode='HTML')
             return
         if report_kind == REPORT_KIND_DUPLICATES:
             await callback.answer()
@@ -238,9 +243,10 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         if report_kind == REPORT_KIND_DOCUMENTS:
             await callback.answer()
             rows = await view_service.list_report_documents_for_company(callback.from_user.id, period)
-            await callback.message.edit_text(
+            await _edit_or_answer(
+                callback.message,
                 format_report_documents('Документы компании', period, rows),
-                reply_markup=build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
+                build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
                 parse_mode='HTML',
             )
             return
