@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -5,6 +6,8 @@ from decimal import Decimal
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.documents import DocumentService
 from app.services.database import get_pool
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
