@@ -35,6 +35,9 @@ MANAGER_PROJECT_ARCHIVE_PREFIX = "manager:project:archive:"
 MANAGER_PROJECT_ARCHIVE_CONFIRM_PREFIX = "manager:project:archive_confirm:"
 MANAGER_PROJECT_RESTORE_PREFIX = "manager:project:restore:"
 MANAGER_PROJECT_DOCUMENTS_PREFIX = "manager:project:documents:"
+MANAGER_PROJECT_DOCUMENT_VIEW_PREFIX = "manager:project:document:view:"
+MANAGER_PROJECT_DOCUMENT_OPEN_PREFIX = "manager:project:document:open:"
+MANAGER_PROJECT_DOCUMENT_ITEMS_PREFIX = "manager:project:document:items:"
 
 MANAGER_EMPLOYEES_MENU_CALLBACK = "manager:employees:menu"
 MANAGER_EMPLOYEES_LIST_CALLBACK = "manager:employees:list"
@@ -154,6 +157,37 @@ def build_project_card_keyboard(project_id: int, archived: bool) -> InlineKeyboa
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_project_documents_keyboard(project_id: int, documents: list[Any]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=_project_document_row_text(document), callback_data=f"{MANAGER_PROJECT_DOCUMENT_VIEW_PREFIX}{project_id}:{document.id}")]
+        for document in documents
+    ]
+    rows.append([InlineKeyboardButton(text="Назад к проекту", callback_data=f"{MANAGER_PROJECT_VIEW_PREFIX}{project_id}")])
+    rows.append([InlineKeyboardButton(text="Назад к проектам", callback_data=MANAGER_PROJECTS_ACTIVE_CALLBACK)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_project_document_card_keyboard(project_id: int, document_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть документ", callback_data=f"{MANAGER_PROJECT_DOCUMENT_OPEN_PREFIX}{project_id}:{document_id}")],
+            [InlineKeyboardButton(text="Состав документа", callback_data=f"{MANAGER_PROJECT_DOCUMENT_ITEMS_PREFIX}{project_id}:{document_id}")],
+            [InlineKeyboardButton(text="Назад к документам проекта", callback_data=f"{MANAGER_PROJECT_DOCUMENTS_PREFIX}{project_id}")],
+            [InlineKeyboardButton(text="Назад к проекту", callback_data=f"{MANAGER_PROJECT_VIEW_PREFIX}{project_id}")],
+        ]
+    )
+
+
+def build_project_document_items_keyboard(project_id: int, document_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назад к карточке", callback_data=f"{MANAGER_PROJECT_DOCUMENT_VIEW_PREFIX}{project_id}:{document_id}")],
+            [InlineKeyboardButton(text="Назад к документам проекта", callback_data=f"{MANAGER_PROJECT_DOCUMENTS_PREFIX}{project_id}")],
+            [InlineKeyboardButton(text="Назад к проекту", callback_data=f"{MANAGER_PROJECT_VIEW_PREFIX}{project_id}")],
+        ]
+    )
+
+
 def build_employees_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -212,6 +246,15 @@ def build_confirm_keyboard(confirm_callback: str, cancel_callback: str) -> Inlin
         ]
     )
 
+
+
+
+def _project_document_row_text(document: Any) -> str:
+    created_line = document.created_at.strftime('%Y-%m-%d') if getattr(document, 'created_at', None) else '—'
+    total_amount = getattr(document, 'total_amount', 0) or 0
+    vendor = getattr(document, 'vendor', None) or 'Без поставщика'
+    uploader = getattr(document, 'uploaded_by_name', None) or 'не указан'
+    return f"{created_line} | {total_amount} | {vendor} | {uploader}"
 
 def _member_button_text(member: Any) -> str:
     full_name = getattr(member, "full_name", None)

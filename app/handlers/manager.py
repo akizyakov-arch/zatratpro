@@ -37,6 +37,9 @@ from app.ui.company import (
     MANAGER_PROJECT_ARCHIVE_PREFIX,
     MANAGER_PROJECT_CREATE_CALLBACK,
     MANAGER_PROJECT_DOCUMENTS_PREFIX,
+    MANAGER_PROJECT_DOCUMENT_ITEMS_PREFIX,
+    MANAGER_PROJECT_DOCUMENT_OPEN_PREFIX,
+    MANAGER_PROJECT_DOCUMENT_VIEW_PREFIX,
     MANAGER_PROJECT_RENAME_PREFIX,
     MANAGER_PROJECT_RESTORE_PREFIX,
     MANAGER_PROJECT_VIEW_PREFIX,
@@ -45,6 +48,9 @@ from app.ui.company import (
     build_employees_keyboard,
     build_employees_menu_keyboard,
     build_project_card_keyboard,
+    build_project_document_card_keyboard,
+    build_project_document_items_keyboard,
+    build_project_documents_keyboard,
     build_projects_keyboard,
     build_projects_menu_keyboard,
 )
@@ -209,24 +215,105 @@ async def project_restore_callback(callback: CallbackQuery) -> None:
     await callback.message.answer(f'Проект возвращен: {project.name}.')
 
 
+async def _edit_project_documents_menu(message: Message, telegram_user_id: int, project_id: int) -> None:
+    documents = await view_service.list_project_documents(telegram_user_id, project_id)
+    if not documents:
+        await message.edit_text('В проекте пока нет документов.', reply_markup=build_project_card_keyboard(project_id, archived=False))
+        return
+    await message.edit_text('Документы проекта:', reply_markup=build_project_documents_keyboard(project_id, documents))
+
+
 @router.callback_query(F.data.startswith(MANAGER_PROJECT_DOCUMENTS_PREFIX))
 async def project_documents_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     project_id = int(callback.data.removeprefix(MANAGER_PROJECT_DOCUMENTS_PREFIX))
     try:
-        documents = await view_service.list_project_documents(callback.from_user.id, project_id)
+        await callback.answer()
+        await _edit_project_documents_menu(callback.message, callback.from_user.id, project_id)
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_DOCUMENT_VIEW_PREFIX))
+async def project_document_view_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_PROJECT_DOCUMENT_VIEW_PREFIX)
+    try:
+        project_id_text, document_id_text = payload.split(':', 1)
+        project_id = int(project_id_text)
+        document_id = int(document_id_text)
+        document, items = await view_service.get_report_document_items(callback.from_user.id, 'all_time', document_id, project_id=project_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        await callback.answer(message, show_alert=True)
         return
     await callback.answer()
-    if not documents:
-        await callback.message.answer('В проекте пока нет документов.')
+    first_item = items[0].name if items else (document.first_item_name or 'Позиции не найдены')
+    vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
+    uploader = document.uploaded_by_name or 'не указан'
+    number = document.document_number or 'без номера'
+    date_line = document.document_date.strftime('%d.%m.%Y') if document.document_date else 'без даты'
+    uploaded_at = document.created_at.strftime('%d.%m.%Y %H:%M') if document.created_at else '—'
+    lines = [
+        'Документ',
+        '',
+        f'Проект: {document.project_name}',
+        f'Контрагент: {vendor}',
+        f'Дата документа: {date_line}',
+        f'Номер: {number}',
+        f'Сумма: {document.total_amount or 0}',
+        f'Внес: {uploader}',
+        f'Дата ввода: {uploaded_at}',
+        f'Первая позиция: {first_item}',
+    ]
+    await callback.message.edit_text(NL.join(lines), reply_markup=build_project_document_card_keyboard(project_id, document.id))
+
+
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_DOCUMENT_OPEN_PREFIX))
+async def project_document_open_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
         return
-    lines = ['Документы проекта:', '']
-    for index, document in enumerate(documents, start=1):
-        lines.append(f"{index}. {document.vendor or 'Без поставщика'} — {document.total_amount or 0} — {document.project_name}")
-    await callback.message.answer(NL.join(lines))
+    payload = callback.data.removeprefix(MANAGER_PROJECT_DOCUMENT_OPEN_PREFIX)
+    try:
+        _project_id_text, document_id_text = payload.split(':', 1)
+        document_id = int(document_id_text)
+        source = await view_service.get_manager_document_source(callback.from_user.id, document_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        await callback.answer(message, show_alert=True)
+        return
+    file_path = document_storage_service.resolve_path(source.storage_key)
+    if not file_path.exists():
+        await callback.answer('Файл документа не найден в storage.', show_alert=True)
+        return
+    await callback.answer()
+    input_file = FSInputFile(file_path, filename=source.original_filename or file_path.name)
+    await callback.message.answer_document(input_file, caption='Исходный файл документа')
+
+
+@router.callback_query(F.data.startswith(MANAGER_PROJECT_DOCUMENT_ITEMS_PREFIX))
+async def project_document_items_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    payload = callback.data.removeprefix(MANAGER_PROJECT_DOCUMENT_ITEMS_PREFIX)
+    try:
+        project_id_text, document_id_text = payload.split(':', 1)
+        project_id = int(project_id_text)
+        document_id = int(document_id_text)
+        document, items = await view_service.get_report_document_items(callback.from_user.id, 'all_time', document_id, project_id=project_id)
+    except (ValueError, CompanyAccessError) as exc:
+        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        await callback.answer(message, show_alert=True)
+        return
+    await callback.answer()
+    from app.services.report_formatters import format_report_document_items
+    await callback.message.edit_text(
+        format_report_document_items('Состав документа', 'all_time', document, items),
+        reply_markup=build_project_document_items_keyboard(project_id, document.id),
+        parse_mode='HTML',
+    )
 
 
 @router.message(F.text == MENU_BUTTONS['employees'])
