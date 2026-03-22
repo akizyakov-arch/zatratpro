@@ -7,6 +7,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
+from app.config import get_settings
 from app.schemas.document import DocumentSchema
 from app.services.access import AccessService
 from app.services.companies import CompanyAccessError, CompanyService
@@ -49,6 +50,29 @@ access_service = AccessService()
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
+
+MAX_UPLOAD_BYTES = get_settings().max_upload_bytes
+
+
+def _format_upload_limit_message() -> str:
+    limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+    limit_label = f'{limit_mb:.0f}' if float(limit_mb).is_integer() else f'{limit_mb:.1f}'
+    return f'Файл слишком большой. Максимальный размер загрузки: {limit_label} МБ.'
+
+
+def _get_message_photo_size(message: Message) -> int | None:
+    if not message.photo:
+        return None
+    return message.photo[-1].file_size
+
+
+def _is_message_upload_too_large(message: Message) -> bool:
+    file_size = None
+    if message.document is not None:
+        file_size = message.document.file_size
+    elif message.photo:
+        file_size = _get_message_photo_size(message)
+    return bool(file_size is not None and file_size > MAX_UPLOAD_BYTES)
 
 
 async def _main_menu_markup(message: Message) -> object:
@@ -330,6 +354,10 @@ async def process_photo(message: Message) -> None:
         logger.info('Photo upload rejected: photo payload missing or user missing')
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
+    if _is_message_upload_too_large(message):
+        logger.info('Photo upload rejected: user_id=%s reason=file_too_large size=%s limit=%s', message.from_user.id, _get_message_photo_size(message), MAX_UPLOAD_BYTES)
+        await message.answer(_format_upload_limit_message(), reply_markup=menu_markup)
+        return
     logger.info('Photo upload checking active pending flow: user_id=%s', message.from_user.id)
     has_active_flow = await has_active_document_flow(message.from_user.id)
     logger.info('Photo upload active pending flow result: user_id=%s active=%s', message.from_user.id, has_active_flow)
@@ -365,6 +393,10 @@ async def process_document_file(message: Message) -> None:
     )
     if message.document is None or message.from_user is None:
         await message.answer('Файл не найден в сообщении.', reply_markup=menu_markup)
+        return
+    if _is_message_upload_too_large(message):
+        logger.info('Document upload rejected: user_id=%s reason=file_too_large size=%s limit=%s', message.from_user.id, message.document.file_size, MAX_UPLOAD_BYTES)
+        await message.answer(_format_upload_limit_message(), reply_markup=menu_markup)
         return
     logger.info('Photo upload checking active pending flow: user_id=%s', message.from_user.id)
     has_active_flow = await has_active_document_flow(message.from_user.id)
