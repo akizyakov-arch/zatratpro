@@ -446,8 +446,10 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
         f'Дата документа: {date_line}',
         f'Номер: {number}',
         f'Сумма: {document.total_amount or 0}',
+        '',
         f'Внес: {uploader}',
         f'Дата ввода: {uploaded_at}',
+        '',
         f'Первая позиция: {first_item}',
     ]
     await callback.message.edit_text(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
