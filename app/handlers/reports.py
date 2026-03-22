@@ -70,6 +70,7 @@ from app.ui.reports import (
 router = Router()
 NL = '\n'
 document_storage_service = DocumentStorageService()
+logger = logging.getLogger(__name__)
 
 async def _edit_or_answer(message: Message, text: str, reply_markup, parse_mode: str | None = None) -> None:
     try:
@@ -124,6 +125,7 @@ def _build_custom_period_token(date_from, date_to) -> str:
 
 async def handle_custom_report_period_input(message: Message, pending_action: PendingAction, text_value: str) -> None:
     report_kind = str(pending_action.payload.get('report_kind', '') or '')
+    logger.info('Custom report period input: user_id=%s action=%s report_kind=%s text=%s', message.from_user.id if message.from_user else None, pending_action.action, report_kind, text_value)
     if pending_action.action == 'report_custom_period_from':
         date_from = _parse_report_input_date(text_value)
         await set_pending_action(message.from_user.id, 'report_custom_period_to', {'report_kind': report_kind, 'date_from': date_from.isoformat()})
@@ -176,6 +178,7 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
         MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
     }[callback.data]
+    logger.info('Report kind callback: user_id=%s report_kind=%s data=%s', callback.from_user.id if callback.from_user else None, report_kind, callback.data)
     if report_kind == REPORT_KIND_PROJECTS:
         await callback.answer()
         summary = await view_service.get_manager_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
@@ -209,6 +212,7 @@ async def report_custom_period_prompt(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     report_kind = callback.data.removeprefix(MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX)
+    logger.info('Report custom period prompt: user_id=%s report_kind=%s data=%s', callback.from_user.id if callback.from_user else None, report_kind, callback.data)
     await set_pending_action(callback.from_user.id, 'report_custom_period_from', {'report_kind': report_kind})
     await callback.answer()
     await _edit_or_answer(callback.message, 'Введите дату начала в формате YYYY-MM-DD.', build_custom_report_period_input_keyboard(report_kind))
@@ -224,6 +228,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
     except ValueError:
         await callback.answer('Некорректный период отчета.', show_alert=True)
         return
+    logger.info('Report period callback: user_id=%s report_kind=%s period=%s data=%s', callback.from_user.id if callback.from_user else None, report_kind, period, callback.data)
     if period == '_back':
         await callback.answer()
         await _edit_or_answer(callback.message, 'Выбери период отчета.', build_report_period_keyboard(report_kind))
@@ -244,6 +249,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         if report_kind == REPORT_KIND_DOCUMENTS:
             await callback.answer()
             rows = await view_service.list_report_documents_for_company(callback.from_user.id, period)
+            logger.info('Report documents loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
             await _edit_or_answer(
                 callback.message,
                 format_report_documents('Документы компании', period, rows),
@@ -255,6 +261,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             job_dir = None
             try:
                 rows = await view_service.list_report_document_sources_for_company(callback.from_user.id, period)
+                logger.info('Report scan export rows loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
                 if not rows:
                     await callback.answer('За период нет документов со сканами.', show_alert=True)
                     return
