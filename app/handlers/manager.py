@@ -49,6 +49,7 @@ from app.ui.company import (
     build_projects_menu_keyboard,
 )
 from app.ui.main_menu import MENU_BUTTONS
+from app.ui.reports import REPORT_KIND_PROJECTS, build_report_documents_keyboard
 from app.ui.my_documents import (
     MY_DOCUMENTS_ITEMS_PREFIX,
     MY_DOCUMENTS_LIST_CALLBACK,
@@ -223,10 +224,10 @@ async def project_documents_callback(callback: CallbackQuery) -> None:
     if not documents:
         await callback.message.answer('В проекте пока нет документов.')
         return
-    lines = ['Документы проекта:', '']
-    for index, document in enumerate(documents, start=1):
-        lines.append(f"{index}. {document.vendor or 'Без поставщика'} — {document.total_amount or 0} — {document.project_name}")
-    await callback.message.answer(NL.join(lines))
+    await callback.message.answer(
+        'Документы проекта:',
+        reply_markup=build_report_documents_keyboard(REPORT_KIND_PROJECTS, 'all_time', project_id, documents),
+    )
 
 
 @router.message(F.text == MENU_BUTTONS['employees'])
