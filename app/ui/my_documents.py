@@ -41,8 +41,8 @@ def build_my_document_items_keyboard(document_id: int) -> InlineKeyboardMarkup:
 
 
 def _document_button_text(document: Any) -> str:
-    created_line = document.created_at.strftime('%Y-%m-%d') if getattr(document, 'created_at', None) else '—'
-    number = getattr(document, 'document_number', None) or 'без №'
-    check_date = document.document_date.strftime('%Y-%m-%d') if getattr(document, 'document_date', None) else 'без даты'
+    created_line = document.created_at.strftime('%d.%m.%Y') if getattr(document, 'created_at', None) else '—'
     total_amount = getattr(document, 'total_amount', 0) or 0
-    return f"{created_line} | {number} | {check_date} | {total_amount}"
+    vendor = getattr(document, 'vendor', None) or getattr(document, 'vendor_inn', None) or 'Без поставщика'
+    uploader = getattr(document, 'uploaded_by_name', None) or 'не указан'
+    return f"{created_line} | {total_amount} | {vendor} | {uploader}"
