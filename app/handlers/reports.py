@@ -100,6 +100,7 @@ async def _send_custom_period_result(message: Message, telegram_user_id: int, re
         job_dir = None
         try:
             rows = await view_service.list_report_document_sources_for_company(telegram_user_id, period)
+            logger.info('Custom report scan export rows loaded: user_id=%s period=%s count=%s', telegram_user_id, period, len(rows))
             if not rows:
                 await message.answer('За период нет документов со сканами.', reply_markup=build_reports_menu_keyboard())
                 return
@@ -264,7 +265,8 @@ async def report_period_callback(callback: CallbackQuery) -> None:
                 rows = await view_service.list_report_document_sources_for_company(callback.from_user.id, period)
                 logger.info('Report scan export rows loaded: user_id=%s period=%s count=%s', callback.from_user.id, period, len(rows))
                 if not rows:
-                    await callback.answer('За период нет документов со сканами.', show_alert=True)
+                    await callback.answer()
+                    await callback.message.answer('За период нет документов со сканами.', reply_markup=build_reports_menu_keyboard())
                     return
                 await callback.answer()
                 job_dir, archive_name, archive_path = build_document_scans_archive(period, rows, document_storage_service, TMP_DIR)
