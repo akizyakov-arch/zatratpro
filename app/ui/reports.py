@@ -79,6 +79,22 @@ def build_report_period_keyboard(report_kind: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_custom_report_period_input_keyboard(report_kind: str) -> InlineKeyboardMarkup:
+    callback_map = {
+        REPORT_KIND_DOCUMENTS: MANAGER_REPORTS_DOCUMENTS_CALLBACK,
+        REPORT_KIND_SCANS_EXPORT: MANAGER_REPORTS_SCANS_EXPORT_CALLBACK,
+    }
+    back_callback = callback_map.get(report_kind, MANAGER_REPORTS_MENU_CALLBACK)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назад к периодам", callback_data=back_callback)],
+            [InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)],
+        ]
+    )
+
+
+
+
 def build_employee_report_selector_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=_employee_row_text(row), callback_data=f"{MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX}{row.user_id}")]
@@ -227,4 +243,3 @@ def _duplicate_row_text(row: Any) -> str:
     status = getattr(row, 'duplicate_status', None)
     prefix = 'Точный дубль' if status == 'exact' else 'Возможный дубль' if status == 'probable' else 'Дубль'
     return f"{prefix} | {current_project} | {base_project}"
-
