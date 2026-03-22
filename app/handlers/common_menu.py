@@ -3,6 +3,7 @@ from aiogram.types import Message
 
 from app.handlers.common import build_main_menu_markup_from_context, company_service, ensure_context, main_menu_markup, person_name, project_service, require_company_access, view_service
 from app.handlers.onboarding import join_company
+from app.handlers.reports import handle_custom_report_period_input
 from app.services.companies import CompanyAccessError
 from app.state.pending_actions import pop_pending_action
 from app.state.pending_documents import get_pending_document
@@ -63,6 +64,9 @@ async def handle_pending_text(message: Message) -> None:
             project_id = int(pending_action.payload['project_id'])
             await view_service.rename_project(message.from_user.id, project_id, text_value)
             await message.answer('Проект переименован.', reply_markup=await main_menu_markup(message))
+            return
+        if pending_action.action in {'report_custom_period_from', 'report_custom_period_to'}:
+            await handle_custom_report_period_input(message, pending_action, text_value)
             return
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))

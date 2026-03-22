@@ -11,6 +11,7 @@ MANAGER_REPORTS_DOCUMENTS_CALLBACK = "manager:reports:documents"
 MANAGER_REPORTS_SCANS_EXPORT_CALLBACK = "manager:reports:scans_export"
 MANAGER_REPORTS_EXPORT_CALLBACK = "manager:reports:export"
 MANAGER_REPORTS_PERIOD_PREFIX = "manager:reports:period:"
+MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX = "manager:reports:period_custom:"
 MANAGER_REPORTS_PROJECT_DETAIL_PREFIX = "manager:reports:project_detail:"
 MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX = "manager:reports:employee_select:"
 MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX = "manager:reports:employee_period:"
@@ -72,6 +73,8 @@ def build_report_period_keyboard(report_kind: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=label, callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{report_kind}:{period}")]
         for period, label in REPORT_PERIOD_LABELS.items()
     ]
+    if report_kind in {REPORT_KIND_DOCUMENTS, REPORT_KIND_SCANS_EXPORT}:
+        rows.append([InlineKeyboardButton(text="Произвольный период", callback_data=f"{MANAGER_REPORTS_PERIOD_CUSTOM_PREFIX}{report_kind}")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
