@@ -1102,6 +1102,7 @@ class ViewService:
                 exact_duplicate_count=row['exact_duplicate_count'],
                 probable_duplicate_count=row['probable_duplicate_count'],
             ))
+        logger.info('Report document sources: company_id=%s raw=%s skipped_no_storage=%s ready=%s', company_id, len(rows), skipped_no_storage, len(result))
         return result
 
     async def get_project_report_detail(self, telegram_user_id: int, period: str, project_id: int) -> tuple[ProjectCard, list[ReportDocumentDetail]]:
@@ -1330,6 +1331,7 @@ class ViewService:
                 start_at,
             )
         result: list[ReportDocumentSourceDetail] = []
+        skipped_no_storage = 0
         for row in rows:
             storage_key = self._resolve_document_storage_key(
                 company_id,
@@ -1338,6 +1340,7 @@ class ViewService:
                 row['source_file_path'],
             )
             if not storage_key:
+                skipped_no_storage += 1
                 continue
             result.append(
                 ReportDocumentSourceDetail(
@@ -1357,6 +1360,7 @@ class ViewService:
                     file_ext=row['file_ext'],
                 )
             )
+        logger.info('Report document sources: company_id=%s raw=%s skipped_no_storage=%s ready=%s', company_id, len(rows), skipped_no_storage, len(result))
         return result
 
     async def _get_report_document(

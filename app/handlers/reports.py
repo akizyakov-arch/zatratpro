@@ -64,6 +64,7 @@ from app.ui.reports import (
 router = Router()
 NL = '\n'
 document_storage_service = DocumentStorageService()
+logger = logging.getLogger(__name__)
 
 
 async def _send_duplicate_report(message, period: str, summary, rows) -> None:
@@ -166,6 +167,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         if report_kind == REPORT_KIND_DOCUMENTS:
             await callback.answer()
             rows = await view_service.list_report_documents_for_company(callback.from_user.id, period)
+            logger.info('Report documents period result: user_id=%s period=%s rows=%s', callback.from_user.id, period, len(rows))
             await callback.message.answer(
                 format_report_documents('Документы компании', period, rows),
                 reply_markup=build_report_documents_keyboard(REPORT_KIND_DOCUMENTS, period, 0, rows),
@@ -176,6 +178,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             job_dir = None
             try:
                 rows = await view_service.list_report_document_sources_for_company(callback.from_user.id, period)
+                logger.info('Report scan export period result: user_id=%s period=%s rows=%s', callback.from_user.id, period, len(rows))
                 if not rows:
                     await callback.answer('За период нет документов со сканами.', show_alert=True)
                     return
