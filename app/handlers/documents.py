@@ -13,6 +13,7 @@ from app.services.access import AccessService
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService, DocumentValidationError
+from app.services.pdf_files import PDFFileService
 from app.services.json_formatter import chunk_message, format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
@@ -52,6 +53,33 @@ EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
 
 MAX_UPLOAD_BYTES = get_settings().max_upload_bytes
+SUPPORTED_IMAGE_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'}
+SUPPORTED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
+
+
+def _document_extension(message: Message) -> str:
+    if message.document is None:
+        return ''
+    return Path(message.document.file_name or '').suffix.lower()
+
+
+def _is_pdf_document(message: Message) -> bool:
+    if message.document is None:
+        return False
+    mime_type = (message.document.mime_type or '').lower()
+    return mime_type == 'application/pdf' or _document_extension(message) == '.pdf'
+
+
+def _is_supported_image_document(message: Message) -> bool:
+    if message.document is None:
+        return False
+    mime_type = (message.document.mime_type or '').lower()
+    file_ext = _document_extension(message)
+    return mime_type in SUPPORTED_IMAGE_MIME_TYPES or file_ext in SUPPORTED_IMAGE_EXTENSIONS
+
+
+def _pending_source_type(pending_document: PendingDocument) -> str:
+    return 'pdf' if pending_document.source_original_kind == 'pdf' else 'photo'
 
 
 def _format_upload_limit_message() -> str:
@@ -134,7 +162,7 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
             normalized_text=pending_document.normalized_text,
             document=pending_document.extracted_document,
             duplicate_check=pending_document.duplicate_check,
-            source_type='photo',
+            source_type=_pending_source_type(pending_document),
             source_temp_path=pending_document.source_temp_path,
             source_original_name=pending_document.source_original_name,
             source_mime_type=pending_document.source_mime_type,
@@ -261,7 +289,7 @@ async def _process_uploaded_image(
     if not ocr_text.strip():
         file_service.delete_temp_file(downloaded_photo.source_path)
         await clear_document_flow(message.from_user.id)
-        await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
+        await message.answer('OCR не вернул текст. Попробуй отправить более четкий документ.', reply_markup=menu_markup)
         return
 
     await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
@@ -407,7 +435,8 @@ async def process_document_file(message: Message) -> None:
             reply_markup=menu_markup,
         )
         return
-    if not _is_supported_image_document(message):
+    is_pdf_document = _is_pdf_document(message)
+    if not is_pdf_document and not _is_supported_image_document(message):
         file_name = message.document.file_name or 'файл'
         logger.info(
             'Document upload rejected: user_id=%s file_name=%s mime_type=%s',
@@ -415,20 +444,29 @@ async def process_document_file(message: Message) -> None:
             file_name,
             message.document.mime_type,
         )
-        if (message.document.mime_type or '').lower() == 'application/pdf' or file_name.lower().endswith('.pdf'):
-            await message.answer('PDF уже принимается как файл, но отдельный PDF OCR-flow еще не включен. Пока отправь документ как фото или изображение-файл.', reply_markup=menu_markup)
-            return
-        await message.answer('Поддерживаются изображения: JPG, JPEG, PNG, WEBP, HEIC, HEIF. Этот файл пока не поддерживается для OCR.', reply_markup=menu_markup)
+        await message.answer('Поддерживаются PDF и изображения: JPG, JPEG, PNG, WEBP, HEIC, HEIF. Этот файл пока не поддерживается для OCR.', reply_markup=menu_markup)
         return
     logger.info(
-        'Document upload accepted for OCR: user_id=%s file_name=%s mime_type=%s',
+        'Document upload accepted for OCR: user_id=%s file_name=%s mime_type=%s original_kind=%s',
         message.from_user.id,
         message.document.file_name,
         message.document.mime_type,
+        'pdf' if is_pdf_document else 'image_file',
     )
-    file_service = TelegramFileService(message.bot)
-    downloaded_photo = await file_service.download_image_document(message.document)
-    await _process_uploaded_image(message, menu_markup, context, downloaded_photo, 'файл получен')
+    try:
+        if is_pdf_document:
+            file_service = PDFFileService(message.bot)
+            downloaded_photo = await file_service.download_pdf_document(message.document)
+            received_label = 'PDF получен'
+        else:
+            file_service = TelegramFileService(message.bot)
+            downloaded_photo = await file_service.download_image_document(message.document)
+            received_label = 'файл получен'
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('Document upload preprocessing failed')
+        await message.answer(f'Не удалось подготовить файл: {exc}', reply_markup=menu_markup)
+        return
+    await _process_uploaded_image(message, menu_markup, context, downloaded_photo, received_label)
 
 
 @router.callback_query(F.data == PROJECT_CANCEL_CALLBACK)
@@ -506,7 +544,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             normalized_text=pending_document.normalized_text,
             document=document,
             duplicate_check=duplicate_check,
-            source_type='photo',
+            source_type=_pending_source_type(pending_document),
             source_temp_path=pending_document.source_temp_path,
             source_original_name=pending_document.source_original_name,
             source_mime_type=pending_document.source_mime_type,
@@ -585,6 +623,6 @@ async def log_non_text_message(message: Message) -> None:
 @router.message(~F.text)
 async def unsupported_message(message: Message) -> None:
     await message.answer(
-        'Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.',
+        'Поддерживаются кнопки главного меню, /start, /help, /join, а также фото, изображения и PDF документов.',
         reply_markup=await _main_menu_markup(message),
     )
