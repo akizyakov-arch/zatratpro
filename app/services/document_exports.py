@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -39,13 +39,20 @@ class DocumentExportService:
         self.company_service = CompanyService()
         self.document_storage = document_storage or DocumentStorageService()
 
-    async def build_accountant_archive_for_manager(self, telegram_user_id: int) -> tuple[Path, str, int]:
+    async def build_accountant_archive_for_manager(
+        self,
+        telegram_user_id: int,
+        *,
+        period: str | None = None,
+        custom_year: int | None = None,
+    ) -> tuple[Path, str, int, str]:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         role = await self.company_service.ensure_member_role(telegram_user_id)
         if role != 'manager':
             raise CompanyAccessError('Действие доступно только manager.')
 
-        rows = await self._list_company_source_rows(company.id)
+        start_at, end_at, period_label, file_label = _resolve_export_period(period, custom_year)
+        rows = await self._list_company_source_rows(company.id, start_at, end_at)
         export_rows: list[tuple[AccountantArchiveRow, Path, str]] = []
         for row in rows:
             source_path = self.document_storage.resolve_path(row.storage_key)
@@ -65,15 +72,28 @@ class DocumentExportService:
             manifest = _build_manifest([(_row, archive_name) for _row, _source_path, archive_name in export_rows])
             archive.writestr('manifest.xlsx', manifest)
 
-        filename = f'accountant_documents_company_{company.id}_{datetime.now().strftime("%Y%m%d_%H%M")}.zip'
-        return archive_path, filename, len(export_rows)
+        filename = f'accountant_documents_company_{company.id}_{file_label}_{datetime.now().strftime("%Y%m%d_%H%M")}.zip'
+        return archive_path, filename, len(export_rows), period_label
 
-    async def _list_company_source_rows(self, company_id: int) -> list[AccountantArchiveRow]:
+    async def _list_company_source_rows(
+        self,
+        company_id: int,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> list[AccountantArchiveRow]:
         pool = get_pool()
-        async with pool.acquire() as connection:
-            rows = await connection.fetch(
-                """
-                SELECT d.id AS document_id,
+        conditions = ['d.company_id = $1']
+        params: list[object] = [company_id]
+        index = 2
+        if start_at is not None:
+            conditions.append(f'd.created_at >= ${index}')
+            params.append(start_at)
+            index += 1
+        if end_at is not None:
+            conditions.append(f'd.created_at < ${index}')
+            params.append(end_at)
+            index += 1
+        query = f'''                SELECT d.id AS document_id,
                        d.company_id,
                        d.source_file_path,
                        df.storage_key,
@@ -98,11 +118,11 @@ class DocumentExportService:
                   ON df.document_id = d.id
                  AND df.file_role = 'source'
                  AND df.page_no = 0
-                WHERE d.company_id = $1
+                WHERE {' AND '.join(conditions)}
                 ORDER BY d.created_at DESC, d.id DESC
-                """,
-                company_id,
-            )
+        '''
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(query, *params)
         result: list[AccountantArchiveRow] = []
         for row in rows:
             storage_key = _resolve_document_storage_key(
@@ -132,6 +152,43 @@ class DocumentExportService:
                 )
             )
         return result
+
+
+def _resolve_export_period(period: str | None, custom_year: int | None) -> tuple[datetime | None, datetime | None, str, str]:
+    now = datetime.now(timezone.utc)
+    if custom_year is not None:
+        start = datetime.combine(date(custom_year, 1, 1), time.min, tzinfo=timezone.utc)
+        end = datetime.combine(date(custom_year + 1, 1, 1), time.min, tzinfo=timezone.utc)
+        return start, end, f'Год {custom_year}', f'year_{custom_year}'
+    if period == 'week':
+        start_date = (now - timedelta(days=now.weekday())).date()
+        end_date = start_date + timedelta(days=7)
+        return _to_dt(start_date), _to_dt(end_date), 'Неделя', 'week'
+    if period == 'month':
+        start_date = date(now.year, now.month, 1)
+        if now.month == 12:
+            end_date = date(now.year + 1, 1, 1)
+        else:
+            end_date = date(now.year, now.month + 1, 1)
+        return _to_dt(start_date), _to_dt(end_date), 'Месяц', f'month_{now.year}_{now.month:02d}'
+    if period == 'quarter':
+        quarter_month = ((now.month - 1) // 3) * 3 + 1
+        start_date = date(now.year, quarter_month, 1)
+        if quarter_month == 10:
+            end_date = date(now.year + 1, 1, 1)
+        else:
+            end_date = date(now.year, quarter_month + 3, 1)
+        quarter_no = ((now.month - 1) // 3) + 1
+        return _to_dt(start_date), _to_dt(end_date), f'Квартал {quarter_no} {now.year}', f'quarter_{now.year}_q{quarter_no}'
+    if period == 'year':
+        start_date = date(now.year, 1, 1)
+        end_date = date(now.year + 1, 1, 1)
+        return _to_dt(start_date), _to_dt(end_date), f'Текущий год ({now.year})', f'year_{now.year}'
+    return None, None, 'Все документы', 'all_time'
+
+
+def _to_dt(value: date) -> datetime:
+    return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
 def _resolve_document_storage_key(company_id: int, document_id: int, document_file_storage_key: str | None, source_file_path: str | None) -> str | None:

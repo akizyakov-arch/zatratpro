@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
@@ -8,6 +9,7 @@ from app.services.companies import CompanyAccessError
 from app.services.document_exports import DocumentExportService
 from app.services.document_storage import DocumentStorageService
 from app.services.report_exports import build_manager_report_workbook
+from app.state.pending_actions import set_pending_action
 from app.services.report_formatters import (
     format_duplicate_report,
     format_project_report,
@@ -21,6 +23,9 @@ from app.ui.main_menu import MENU_BUTTONS
 from app.ui.reports import (
     MANAGER_REPORTS_ACCOUNTANT_EXPORT_CALLBACK,
     MANAGER_REPORTS_ACCOUNTANT_EXPORT_CONFIRM_CALLBACK,
+    MANAGER_REPORTS_ACCOUNTANT_EXPORT_PERIOD_PREFIX,
+    MANAGER_REPORTS_ACCOUNTANT_EXPORT_YEAR_CURRENT_CALLBACK,
+    MANAGER_REPORTS_ACCOUNTANT_EXPORT_YEAR_CUSTOM_CALLBACK,
     MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX,
     MANAGER_REPORTS_DOCUMENT_OPEN_PREFIX,
     MANAGER_REPORTS_DOCUMENT_ITEMS_PREFIX,
@@ -46,6 +51,7 @@ from app.ui.reports import (
     REPORT_KIND_PROJECTS,
     REPORT_PERIOD_ALL,
     build_accountant_export_keyboard,
+    build_accountant_export_year_keyboard,
     build_duplicate_card_keyboard,
     build_duplicate_delete_confirm_keyboard,
     build_duplicate_delete_source_confirm_keyboard,
@@ -73,6 +79,28 @@ async def _send_duplicate_report(message, period: str, summary, rows) -> None:
         reply_markup=build_duplicate_report_keyboard(period, rows),
         parse_mode='HTML',
     )
+
+
+async def _send_accountant_export(message: Message, telegram_user_id: int, *, period: str | None = None, custom_year: int | None = None) -> None:
+    archive_path = None
+    try:
+        archive_path, filename, document_count, period_label = await document_export_service.build_accountant_archive_for_manager(
+            telegram_user_id,
+            period=period,
+            custom_year=custom_year,
+        )
+        await message.answer_document(
+            FSInputFile(archive_path, filename=filename),
+            caption=f'Архив чеков готов. Период: {period_label}. Документов: {document_count}.',
+        )
+    except CompanyAccessError as exc:
+        await message.answer(str(exc), reply_markup=build_reports_menu_keyboard())
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('Accountant export build failed')
+        await message.answer(f'Не удалось собрать архив чеков: {exc}', reply_markup=build_reports_menu_keyboard())
+    finally:
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
 
 
 @router.message(F.text == MENU_BUTTONS['reports'])
@@ -141,31 +169,45 @@ async def accountant_export_prompt_callback(callback: CallbackQuery) -> None:
         return
     await callback.answer()
     await callback.message.edit_text(
-        'Собрать архив чеков и документов компании для передачи бухгалтеру?',
+        'Выбери период выгрузки для бухгалтера.',
         reply_markup=build_accountant_export_keyboard(),
     )
 
 
-@router.callback_query(F.data == MANAGER_REPORTS_ACCOUNTANT_EXPORT_CONFIRM_CALLBACK)
-async def accountant_export_confirm_callback(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith(MANAGER_REPORTS_ACCOUNTANT_EXPORT_PERIOD_PREFIX))
+async def accountant_export_period_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    period = callback.data.removeprefix(MANAGER_REPORTS_ACCOUNTANT_EXPORT_PERIOD_PREFIX)
+    if period == 'year':
+        await callback.answer()
+        await callback.message.edit_text(
+            'Выбери вариант выгрузки за год.',
+            reply_markup=build_accountant_export_year_keyboard(datetime.now().year),
+        )
+        return
+    if period not in {'week', 'month', 'quarter'}:
+        await callback.answer('Некорректный период.', show_alert=True)
+        return
+    await callback.answer('Собираю архив...')
+    await _send_accountant_export(callback.message, callback.from_user.id, period=period)
+
+
+@router.callback_query(F.data == MANAGER_REPORTS_ACCOUNTANT_EXPORT_YEAR_CURRENT_CALLBACK)
+async def accountant_export_current_year_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     await callback.answer('Собираю архив...')
-    archive_path = None
-    try:
-        archive_path, filename, document_count = await document_export_service.build_accountant_archive_for_manager(callback.from_user.id)
-        await callback.message.answer_document(
-            FSInputFile(archive_path, filename=filename),
-            caption=f'Архив чеков компании готов. Документов: {document_count}.',
-        )
-    except CompanyAccessError as exc:
-        await callback.message.answer(str(exc), reply_markup=build_reports_menu_keyboard())
-    except Exception as exc:  # noqa: BLE001
-        logger.exception('Accountant export build failed')
-        await callback.message.answer(f'Не удалось собрать архив чеков: {exc}', reply_markup=build_reports_menu_keyboard())
-    finally:
-        if archive_path is not None:
-            archive_path.unlink(missing_ok=True)
+    await _send_accountant_export(callback.message, callback.from_user.id, period='year')
+
+
+@router.callback_query(F.data == MANAGER_REPORTS_ACCOUNTANT_EXPORT_YEAR_CUSTOM_CALLBACK)
+async def accountant_export_custom_year_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    await set_pending_action(callback.from_user.id, 'accountant_export_custom_year')
+    await callback.answer()
+    await callback.message.answer('Введи год вручную, например 2024.')
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_PREFIX))

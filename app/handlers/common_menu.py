@@ -1,15 +1,20 @@
+from pathlib import Path
+
 from aiogram import F, Router
-from aiogram.types import Message
+from aiogram.types import FSInputFile, Message
 
 from app.handlers.common import build_main_menu_markup_from_context, company_service, ensure_context, main_menu_markup, person_name, project_service, require_company_access, view_service
 from app.handlers.onboarding import join_company
 from app.services.companies import CompanyAccessError
-from app.state.pending_actions import pop_pending_action
+from app.services.document_exports import DocumentExportService
+from app.state.pending_actions import pop_pending_action, set_pending_action
 from app.state.pending_documents import get_pending_document
 from app.ui.main_menu import MENU_BUTTONS
 from app.ui.projects import build_projects_keyboard as build_document_projects_keyboard
+from app.ui.reports import build_reports_menu_keyboard
 
 router = Router()
+document_export_service = DocumentExportService()
 
 
 @router.message(F.text == MENU_BUTTONS['upload_document'])
@@ -63,6 +68,34 @@ async def handle_pending_text(message: Message) -> None:
             project_id = int(pending_action.payload['project_id'])
             await view_service.rename_project(message.from_user.id, project_id, text_value)
             await message.answer('Проект переименован.', reply_markup=await main_menu_markup(message))
+            return
+        if pending_action.action == 'accountant_export_custom_year':
+            if not text_value.isdigit() or len(text_value) != 4:
+                await set_pending_action(message.from_user.id, 'accountant_export_custom_year')
+                await message.answer('Укажи год четырьмя цифрами, например 2024.')
+                return
+            year = int(text_value)
+            if year < 2000 or year > 2100:
+                await set_pending_action(message.from_user.id, 'accountant_export_custom_year')
+                await message.answer('Укажи корректный год в диапазоне 2000-2100.')
+                return
+            archive_path = None
+            try:
+                archive_path, filename, document_count, period_label = await document_export_service.build_accountant_archive_for_manager(
+                    message.from_user.id,
+                    custom_year=year,
+                )
+                await message.answer_document(
+                    FSInputFile(archive_path, filename=filename),
+                    caption=f'Архив чеков готов. Период: {period_label}. Документов: {document_count}.',
+                )
+            except CompanyAccessError as exc:
+                await message.answer(str(exc), reply_markup=build_reports_menu_keyboard())
+            except Exception as exc:  # noqa: BLE001
+                await message.answer(f'Не удалось собрать архив чеков: {exc}', reply_markup=build_reports_menu_keyboard())
+            finally:
+                if archive_path is not None:
+                    Path(archive_path).unlink(missing_ok=True)
             return
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))
