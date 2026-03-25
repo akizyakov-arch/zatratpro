@@ -166,6 +166,7 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
         'Кто внес',
         'Статус дубля',
         'Файл в архиве',
+        'Открыть файл',
     ])
     for row, archive_name in rows:
         sheet.append([
@@ -180,7 +181,11 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
             row.uploaded_by_name or '',
             _duplicate_status_label(row.duplicate_status),
             archive_name,
+            'Открыть файл',
         ])
+        link_cell = sheet.cell(row=sheet.max_row, column=12)
+        link_cell.hyperlink = archive_name
+        link_cell.style = 'Hyperlink'
 
     for column_cells in sheet.columns:
         max_length = 0
