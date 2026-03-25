@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -25,6 +26,15 @@ CURRENCY_SYMBOLS = {
 }
 
 
+RETRYABLE_HTTP_EXCEPTIONS = (
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.ConnectError,
+    httpx.ProxyError,
+    httpx.RemoteProtocolError,
+)
+
+
 class DeepSeekService:
     async def normalize_document_text(self, ocr_text: str) -> str:
         settings = get_settings()
@@ -37,17 +47,7 @@ class DeepSeekService:
             ],
         }
 
-        try:
-            async with httpx.AsyncClient(
-                base_url=settings.deepseek_base_url,
-                timeout=60,
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-            ) as client:
-                response = await client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise DeepSeekError(f"Ошибка сети DeepSeek: {exc}") from exc
-
+        response = await _post_chat_completion(payload, settings)
         content = (
             response.json()
             .get("choices", [{}])[0]
@@ -73,18 +73,8 @@ class DeepSeekService:
         }
         after_payload = perf_counter()
 
-        try:
-            async with httpx.AsyncClient(
-                base_url=settings.deepseek_base_url,
-                timeout=60,
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-            ) as client:
-                response = await client.post("/chat/completions", json=payload)
-            after_post = perf_counter()
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise DeepSeekError(f"Ошибка сети DeepSeek: {exc}") from exc
-
+        response = await _post_chat_completion(payload, settings)
+        after_post = perf_counter()
         response_data = response.json()
         after_json = perf_counter()
         content = (
@@ -119,6 +109,43 @@ class DeepSeekService:
                 len(content),
             )
         return parsed
+
+
+async def _post_chat_completion(payload: dict, settings) -> httpx.Response:
+    timeout = httpx.Timeout(settings.deepseek_read_timeout, connect=settings.deepseek_connect_timeout)
+    client_kwargs = {
+        "base_url": settings.deepseek_base_url,
+        "timeout": timeout,
+        "headers": {"Authorization": f"Bearer {settings.deepseek_api_key}"},
+    }
+    proxy_url = settings.effective_deepseek_proxy_url
+    if proxy_url:
+        client_kwargs["proxy"] = proxy_url
+
+    attempts = max(settings.deepseek_max_retries + 1, 1)
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                response = await client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+            return response
+        except RETRYABLE_HTTP_EXCEPTIONS as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            logger.warning(
+                "DeepSeek request retrying: attempt=%s/%s proxy=%s reason=%s",
+                attempt + 1,
+                attempts,
+                "on" if proxy_url else "off",
+                exc.__class__.__name__,
+            )
+            await asyncio.sleep(min(attempt, 3))
+        except httpx.HTTPError as exc:
+            raise DeepSeekError(f"Ошибка сети DeepSeek: {exc}") from exc
+
+    raise DeepSeekError(f"Ошибка сети DeepSeek: {last_exc}") from last_exc
 
 
 def _apply_currency_symbols(text: str) -> str:
