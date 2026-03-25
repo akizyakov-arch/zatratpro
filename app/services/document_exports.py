@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -51,8 +51,8 @@ class DocumentExportService:
         if role != 'manager':
             raise CompanyAccessError('Действие доступно только manager.')
 
-        start_at, end_at, period_label, file_label = _resolve_export_period(period, custom_year)
-        rows = await self._list_company_source_rows(company.id, start_at, end_at)
+        start_date, end_date, period_label, file_label = _resolve_export_period(period, custom_year)
+        rows = await self._list_company_source_rows(company.id, start_date, end_date)
         export_rows: list[tuple[AccountantArchiveRow, Path, str]] = []
         for row in rows:
             source_path = self.document_storage.resolve_path(row.storage_key)
@@ -78,20 +78,20 @@ class DocumentExportService:
     async def _list_company_source_rows(
         self,
         company_id: int,
-        start_at: datetime | None = None,
-        end_at: datetime | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> list[AccountantArchiveRow]:
         pool = get_pool()
         conditions = ['d.company_id = $1']
         params: list[object] = [company_id]
         index = 2
-        if start_at is not None:
-            conditions.append(f'd.created_at >= ${index}')
-            params.append(start_at)
+        if start_date is not None:
+            conditions.append(f'd.document_date >= ${index}')
+            params.append(start_date)
             index += 1
-        if end_at is not None:
-            conditions.append(f'd.created_at < ${index}')
-            params.append(end_at)
+        if end_date is not None:
+            conditions.append(f'd.document_date < ${index}')
+            params.append(end_date)
             index += 1
         query = f'''                SELECT d.id AS document_id,
                        d.company_id,
@@ -119,7 +119,7 @@ class DocumentExportService:
                  AND df.file_role = 'source'
                  AND df.page_no = 0
                 WHERE {' AND '.join(conditions)}
-                ORDER BY d.created_at DESC, d.id DESC
+                ORDER BY d.document_date DESC NULLS LAST, d.created_at DESC, d.id DESC
         '''
         async with pool.acquire() as connection:
             rows = await connection.fetch(query, *params)
@@ -154,23 +154,23 @@ class DocumentExportService:
         return result
 
 
-def _resolve_export_period(period: str | None, custom_year: int | None) -> tuple[datetime | None, datetime | None, str, str]:
+def _resolve_export_period(period: str | None, custom_year: int | None) -> tuple[date | None, date | None, str, str]:
     now = datetime.now(timezone.utc)
     if custom_year is not None:
-        start = datetime.combine(date(custom_year, 1, 1), time.min, tzinfo=timezone.utc)
-        end = datetime.combine(date(custom_year + 1, 1, 1), time.min, tzinfo=timezone.utc)
+        start = date(custom_year, 1, 1)
+        end = date(custom_year + 1, 1, 1)
         return start, end, f'Год {custom_year}', f'year_{custom_year}'
     if period == 'week':
         start_date = (now - timedelta(days=now.weekday())).date()
         end_date = start_date + timedelta(days=7)
-        return _to_dt(start_date), _to_dt(end_date), 'Неделя', 'week'
+        return start_date, end_date, 'Неделя', 'week'
     if period == 'month':
         start_date = date(now.year, now.month, 1)
         if now.month == 12:
             end_date = date(now.year + 1, 1, 1)
         else:
             end_date = date(now.year, now.month + 1, 1)
-        return _to_dt(start_date), _to_dt(end_date), 'Месяц', f'month_{now.year}_{now.month:02d}'
+        return start_date, end_date, 'Месяц', f'month_{now.year}_{now.month:02d}'
     if period == 'quarter':
         quarter_month = ((now.month - 1) // 3) * 3 + 1
         start_date = date(now.year, quarter_month, 1)
@@ -179,16 +179,12 @@ def _resolve_export_period(period: str | None, custom_year: int | None) -> tuple
         else:
             end_date = date(now.year, quarter_month + 3, 1)
         quarter_no = ((now.month - 1) // 3) + 1
-        return _to_dt(start_date), _to_dt(end_date), f'Квартал {quarter_no} {now.year}', f'quarter_{now.year}_q{quarter_no}'
+        return start_date, end_date, f'Квартал {quarter_no} {now.year}', f'quarter_{now.year}_q{quarter_no}'
     if period == 'year':
         start_date = date(now.year, 1, 1)
         end_date = date(now.year + 1, 1, 1)
-        return _to_dt(start_date), _to_dt(end_date), f'Текущий год ({now.year})', f'year_{now.year}'
+        return start_date, end_date, f'Текущий год ({now.year})', f'year_{now.year}'
     return None, None, 'Все документы', 'all_time'
-
-
-def _to_dt(value: date) -> datetime:
-    return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
 def _resolve_document_storage_key(company_id: int, document_id: int, document_file_storage_key: str | None, source_file_path: str | None) -> str | None:
