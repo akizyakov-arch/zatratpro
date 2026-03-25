@@ -57,8 +57,8 @@ def build_reports_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="По проектам", callback_data=MANAGER_REPORTS_PROJECTS_CALLBACK)],
             [InlineKeyboardButton(text="По сотрудникам", callback_data=MANAGER_REPORTS_EMPLOYEES_CALLBACK)],
             [InlineKeyboardButton(text="Дубли документов", callback_data=MANAGER_REPORTS_DUPLICATES_CALLBACK)],
-            [InlineKeyboardButton(text="Архив чеков для бухгалтера", callback_data=MANAGER_REPORTS_ACCOUNTANT_EXPORT_CALLBACK)],
-            [InlineKeyboardButton(text="Excel выгрузка", callback_data=MANAGER_REPORTS_EXPORT_CALLBACK)],
+            [InlineKeyboardButton(text="Excel Отчет", callback_data=MANAGER_REPORTS_EXPORT_CALLBACK)],
+            [InlineKeyboardButton(text="Выгрузка для бухгалтера", callback_data=MANAGER_REPORTS_ACCOUNTANT_EXPORT_CALLBACK)],
             [InlineKeyboardButton(text="Назад", callback_data="nav:main")],
         ]
     )
