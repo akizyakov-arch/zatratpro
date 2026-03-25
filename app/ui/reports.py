@@ -8,6 +8,8 @@ MANAGER_REPORTS_PROJECTS_CALLBACK = "manager:reports:projects"
 MANAGER_REPORTS_EMPLOYEES_CALLBACK = "manager:reports:employees"
 MANAGER_REPORTS_DUPLICATES_CALLBACK = "manager:reports:duplicates"
 MANAGER_REPORTS_EXPORT_CALLBACK = "manager:reports:export"
+MANAGER_REPORTS_ACCOUNTANT_EXPORT_CALLBACK = "manager:reports:accountant_export"
+MANAGER_REPORTS_ACCOUNTANT_EXPORT_CONFIRM_CALLBACK = "manager:reports:accountant_export:confirm"
 MANAGER_REPORTS_PERIOD_PREFIX = "manager:reports:period:"
 MANAGER_REPORTS_PROJECT_DETAIL_PREFIX = "manager:reports:project_detail:"
 MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX = "manager:reports:employee_select:"
@@ -55,6 +57,7 @@ def build_reports_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="По проектам", callback_data=MANAGER_REPORTS_PROJECTS_CALLBACK)],
             [InlineKeyboardButton(text="По сотрудникам", callback_data=MANAGER_REPORTS_EMPLOYEES_CALLBACK)],
             [InlineKeyboardButton(text="Дубли документов", callback_data=MANAGER_REPORTS_DUPLICATES_CALLBACK)],
+            [InlineKeyboardButton(text="Архив чеков для бухгалтера", callback_data=MANAGER_REPORTS_ACCOUNTANT_EXPORT_CALLBACK)],
             [InlineKeyboardButton(text="Excel выгрузка", callback_data=MANAGER_REPORTS_EXPORT_CALLBACK)],
             [InlineKeyboardButton(text="Назад", callback_data="nav:main")],
         ]
@@ -68,6 +71,15 @@ def build_report_period_keyboard(report_kind: str) -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text="Назад", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_accountant_export_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Собрать архив", callback_data=MANAGER_REPORTS_ACCOUNTANT_EXPORT_CONFIRM_CALLBACK)],
+            [InlineKeyboardButton(text="Назад к отчетам", callback_data=MANAGER_REPORTS_MENU_CALLBACK)],
+        ]
+    )
 
 
 def build_employee_report_selector_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
