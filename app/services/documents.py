@@ -120,6 +120,8 @@ class DocumentService:
         pool = get_pool()
         document_date = duplicate_check.fields.document_date
         items = [item for item in document.items if _item_has_value(item)]
+        vat_total_amount = _resolve_document_vat_total(document, items)
+        vat_scope = _resolve_document_vat_scope(document, items)
 
         async with pool.acquire() as connection:
             async with connection.transaction():
@@ -155,6 +157,8 @@ class DocumentService:
                         document_date,
                         currency,
                         total_amount,
+                        vat_total_amount,
+                        vat_scope,
                         raw_text,
                         preview_text,
                         duplicate_status,
@@ -168,7 +172,7 @@ class DocumentService:
                     VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8,
                         $9, $10, $11, $12, $13, $14, $15,
-                        $16, $17, NOW(), 'ocr_space', 'deepseek', NULL, NULL
+                        $16, $17, $18, $19, NOW(), 'ocr_space', 'deepseek', NULL, NULL
                     )
                     RETURNING id
                     """,
@@ -185,6 +189,8 @@ class DocumentService:
                     document_date,
                     document.currency,
                     duplicate_check.fields.total_amount,
+                    vat_total_amount,
+                    vat_scope,
                     document.raw_text,
                     normalized_text,
                     duplicate_check.status,
@@ -254,9 +260,11 @@ class DocumentService:
                             name,
                             quantity,
                             price,
-                            line_total
+                            line_total,
+                            vat_label,
+                            vat_amount
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                         """,
                         [
                             (
@@ -266,6 +274,8 @@ class DocumentService:
                                 _as_decimal(item.quantity, "0.001"),
                                 _as_decimal(item.price, "0.01"),
                                 _as_decimal(item.line_total, "0.01"),
+                                _normalize_vat_label(item.vat_label),
+                                _as_decimal(item.vat_amount, "0.01"),
                             )
                             for index, item in enumerate(items, start=1)
                         ],
@@ -729,6 +739,44 @@ def _parse_document_datetime(value: str | None) -> datetime | None:
 
 def _item_has_value(item: DocumentItem) -> bool:
     return any(value is not None for value in (item.name, item.quantity, item.price, item.line_total))
+
+
+def _resolve_document_vat_total(document: DocumentSchema, items: list[DocumentItem]) -> Decimal | None:
+    vat_total = _as_decimal(document.vat_total_amount, "0.01")
+    if vat_total is not None:
+        return vat_total
+    present_amounts = [
+        amount
+        for amount in (_as_decimal(item.vat_amount, "0.01") for item in items)
+        if amount is not None
+    ]
+    if not present_amounts:
+        return None
+    return sum(present_amounts, Decimal("0.00"))
+
+
+def _resolve_document_vat_scope(document: DocumentSchema, items: list[DocumentItem]) -> str | None:
+    if document.vat_scope in {"document", "mixed", "no_vat", "unknown"}:
+        return document.vat_scope
+    labels = {
+        normalized
+        for normalized in (_normalize_vat_label(item.vat_label) for item in items)
+        if normalized is not None
+    }
+    if not labels:
+        return None
+    if labels == {"без ндс"}:
+        return "no_vat"
+    if len(labels) > 1:
+        return "mixed"
+    return "document"
+
+
+def _normalize_vat_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.strip().split()).lower()
+    return normalized or None
 
 
 def _as_decimal(value: float | int | None, quantize_to: str) -> Decimal | None:
