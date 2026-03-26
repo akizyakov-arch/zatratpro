@@ -22,8 +22,10 @@ class DocumentItem(BaseModel):
     quantity: float | None = None
     price: float | None = None
     line_total: float | None = None
+    vat_label: str | None = None
+    vat_amount: float | None = None
 
-    @field_validator("quantity", "price", "line_total", mode="before")
+    @field_validator("quantity", "price", "line_total", "vat_amount", mode="before")
     @classmethod
     def normalize_numbers(cls, value: Any) -> Any:
         return _coerce_number(value)
@@ -40,6 +42,13 @@ ALLOWED_DOCUMENT_TYPES = {
     "cash_out_order",
 }
 
+ALLOWED_VAT_SCOPES = {
+    "document",
+    "mixed",
+    "no_vat",
+    "unknown",
+}
+
 
 class DocumentSchema(BaseModel):
     document_type: str = "cash_receipt"
@@ -51,13 +60,27 @@ class DocumentSchema(BaseModel):
     date: str | None = None
     currency: str = "RUB"
     total: float | None = None
+    vat_total_amount: float | None = None
+    vat_scope: str | None = None
     items: list[DocumentItem] = Field(default_factory=lambda: [DocumentItem()])
     raw_text: str | None = None
 
-    @field_validator("total", mode="before")
+    @field_validator("total", "vat_total_amount", mode="before")
     @classmethod
     def normalize_total(cls, value: Any) -> Any:
         return _coerce_number(value)
+
+    @field_validator("vat_scope", mode="before")
+    @classmethod
+    def normalize_vat_scope(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return "unknown"
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        return normalized if normalized in ALLOWED_VAT_SCOPES else "unknown"
 
     @model_validator(mode="after")
     def normalize_document_type(self) -> "DocumentSchema":
