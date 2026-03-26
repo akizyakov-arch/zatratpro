@@ -56,6 +56,11 @@ def format_document_preview(document: DocumentSchema) -> str:
         lines.append("")
         lines.append(f"Итого: {_format_amount(document.total)} {currency_display}")
 
+    vat_lines = _format_vat_lines(document, currency_display)
+    if vat_lines:
+        lines.append("")
+        lines.extend(vat_lines)
+
     return "\n".join(lines).strip()
 
 
@@ -93,6 +98,32 @@ def _format_amount(value: float | int | None) -> str:
 
     quantized = amount.quantize(Decimal("0.01"))
     return f"{quantized:.2f}"
+
+
+def _format_vat_lines(document: DocumentSchema, currency_display: str) -> list[str]:
+    vat_scope = _vat_scope_label(document.vat_scope)
+    vat_amount = document.vat_total_amount
+
+    if vat_amount is None and vat_scope is None:
+        return []
+
+    lines: list[str] = []
+    if vat_amount is not None:
+        lines.append(f"НДС: {_format_amount(vat_amount)} {currency_display}")
+    elif document.vat_scope == "no_vat":
+        lines.append("НДС: без НДС")
+
+    if vat_scope is not None:
+        lines.append(f"Тип НДС: {vat_scope}")
+    return lines
+
+
+def _vat_scope_label(scope: str | None) -> str | None:
+    return {
+        "document": "весь документ",
+        "mixed": "смешанный",
+        "no_vat": "без НДС",
+    }.get(scope)
 
 
 def _format_currency(currency_code: str | None) -> str:
