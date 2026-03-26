@@ -13,12 +13,16 @@ EXTRACTION_PROMPT = """
   "date": null,
   "currency": "RUB",
   "total": null,
+  "vat_total_amount": null,
+  "vat_scope": null,
   "items": [
     {
       "name": null,
       "quantity": null,
       "price": null,
-      "line_total": null
+      "line_total": null,
+      "vat_label": null,
+      "vat_amount": null
     }
   ]
 }
@@ -35,6 +39,13 @@ EXTRACTION_PROMPT = """
 - cash_out_order — расходный кассовый ордер
 - unknown — любой другой документ
 
+Допустимые vat_scope:
+
+- document — НДС один на весь документ или одинаковый режим НДС у всех позиций
+- mixed — в документе смешанные позиции с разным НДС или часть позиций без НДС
+- no_vat — документ явно без НДС
+- unknown — определить НДС надежно нельзя
+
 Правило классификации:
 если в тексте нет явных признаков допустимого первичного документа — верни "unknown".
 
@@ -45,9 +56,16 @@ EXTRACTION_PROMPT = """
 - извлекай все найденные позиции в items
 - дата в формате YYYY-MM-DD
 - ИНН и КПП — только цифры
-- числовые поля (total, quantity, price, line_total) — числа без валюты
+- числовые поля (total, quantity, price, line_total, vat_amount, vat_total_amount) — числа без валюты
 - vendor очисти от OCR-мусора и служебных слов
 - если явно указан номер документа, заполни external_document_number или incoming_number
+- если НДС указан общим итогом по документу, заполни vat_total_amount
+- если у всех позиций один и тот же режим НДС, используй vat_scope = "document"
+- если у позиций смешанные режимы НДС, используй vat_scope = "mixed"
+- если документ явно помечен как без НДС, используй vat_scope = "no_vat"
+- если режим НДС определить нельзя, используй vat_scope = "unknown"
+- для каждой позиции заполняй vat_label, если в тексте есть фразы вроде "НДС 22/122", "НДС 20%", "Без НДС"
+- для каждой позиции заполняй vat_amount, если сумма НДС по строке явно видна
 
 Не добавляй текст вне JSON.
 """.strip()
