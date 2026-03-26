@@ -402,9 +402,6 @@ class ManagerExcelReportBuilder:
             'Цена',
             'Сумма позиции',
             'Количество позиций в документе',
-            'Имя исходного файла',
-            'preview_text',
-            'raw_text',
         ]
         rows = [
             [
@@ -433,9 +430,6 @@ class ManagerExcelReportBuilder:
                 row.item_price,
                 row.item_total,
                 row.item_count,
-                row.original_filename or '',
-                self._clip(row.preview_text, 500),
-                self._clip(row.raw_text, 1000),
             ]
             for row in report.registry_rows
         ]
@@ -455,7 +449,7 @@ class ManagerExcelReportBuilder:
             1: 12, 2: 18, 3: 16, 4: 20, 5: 20, 6: 12, 7: 20, 8: 14,
             9: 18, 10: 18, 11: 16, 12: 16, 13: 20, 14: 14, 15: 14, 16: 14,
             17: 16, 18: 14, 19: 12, 20: 14, 21: 26, 22: 12, 23: 12, 24: 14,
-            25: 18, 26: 22, 27: 28, 28: 36,
+            25: 18,
         })
 
     def _build_table_sheet(
