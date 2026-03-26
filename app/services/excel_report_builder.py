@@ -366,11 +366,11 @@ class ManagerExcelReportBuilder:
             money_columns={12},
             date_columns={5},
             datetime_columns={4},
-            max_width=40,
+            max_width=32,
         )
         self._set_column_widths(sheet, {
-            1: 12, 2: 14, 3: 18, 4: 18, 5: 16, 6: 22, 7: 22, 8: 16,
-            9: 24, 10: 14, 11: 18, 12: 14, 13: 24, 14: 16, 15: 28, 16: 40,
+            1: 12, 2: 14, 3: 18, 4: 18, 5: 16, 6: 20, 7: 20, 8: 14,
+            9: 20, 10: 14, 11: 16, 12: 14, 13: 20, 14: 14, 15: 22, 16: 28,
         })
 
     def _build_registry_sheet(self, sheet, report: ManagerReportData) -> None:
@@ -401,10 +401,6 @@ class ManagerExcelReportBuilder:
             'Сумма позиции',
             'Количество позиций в документе',
             'Имя исходного файла',
-            'MIME type',
-            'Storage key',
-            'original_kind',
-            'was_normalized',
             'preview_text',
             'raw_text',
         ]
@@ -436,10 +432,6 @@ class ManagerExcelReportBuilder:
                 row.item_total,
                 row.item_count,
                 row.original_filename or '',
-                row.mime_type or '',
-                row.storage_key or '',
-                row.original_kind or '',
-                'Да' if row.was_normalized else 'Нет',
                 self._clip(row.preview_text, 500),
                 self._clip(row.raw_text, 1000),
             ]
@@ -453,13 +445,13 @@ class ManagerExcelReportBuilder:
             money_columns={16, 23, 24},
             date_columns={3},
             datetime_columns={2},
-            max_width=48,
+            max_width=36,
         )
         self._set_column_widths(sheet, {
-            1: 12, 2: 18, 3: 16, 4: 22, 5: 22, 6: 12, 7: 22, 8: 16,
-            9: 18, 10: 20, 11: 18, 12: 18, 13: 24, 14: 16, 15: 16, 16: 14,
-            17: 18, 18: 14, 19: 12, 20: 14, 21: 30, 22: 12, 23: 12, 24: 14,
-            25: 18, 26: 24, 27: 16, 28: 28, 29: 16, 30: 14, 31: 40, 32: 48,
+            1: 12, 2: 18, 3: 16, 4: 20, 5: 20, 6: 12, 7: 20, 8: 14,
+            9: 18, 10: 18, 11: 16, 12: 16, 13: 20, 14: 14, 15: 14, 16: 14,
+            17: 16, 18: 14, 19: 12, 20: 14, 21: 26, 22: 12, 23: 12, 24: 14,
+            25: 18, 26: 22, 27: 28, 28: 36,
         })
 
     def _build_table_sheet(
