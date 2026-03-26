@@ -22,6 +22,8 @@ def format_date(value) -> str:
 
 
 def report_period_label(period: str) -> str:
+    if period == 'all_time':
+        return 'Все время'
     return REPORT_PERIOD_LABELS.get(period, period)
 
 

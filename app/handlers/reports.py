@@ -2,13 +2,13 @@ import logging
 from datetime import datetime
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
 from app.services.companies import CompanyAccessError
 from app.services.document_exports import DocumentExportService
 from app.services.document_storage import DocumentStorageService
-from app.services.report_exports import build_manager_report_workbook
+from app.services.report_exports import ManagerReportExportService
 from app.state.pending_actions import set_pending_action
 from app.services.report_formatters import (
     format_duplicate_report,
@@ -17,7 +17,6 @@ from app.services.report_formatters import (
     format_report_document_items,
     format_report_documents,
     format_items_only,
-    report_period_label,
 )
 from app.ui.main_menu import MENU_BUTTONS
 from app.ui.reports import (
@@ -71,6 +70,7 @@ logger = logging.getLogger(__name__)
 NL = '\n'
 document_storage_service = DocumentStorageService()
 document_export_service = DocumentExportService(document_storage_service)
+manager_report_export_service = ManagerReportExportService()
 
 
 async def _send_duplicate_report(message, period: str, summary, rows) -> None:
@@ -238,15 +238,23 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             await _send_duplicate_report(callback.message, period, duplicate_summary, rows)
             return
         if report_kind == REPORT_KIND_EXPORT:
-            await callback.answer()
-            summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
-            projects = await view_service.list_report_projects(callback.from_user.id, period)
-            employees = await view_service.list_report_employees(callback.from_user.id, period)
-            duplicates = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
-            documents = await view_service.list_report_documents_for_company(callback.from_user.id, period)
-            items = await view_service.list_report_items_for_company(callback.from_user.id, period)
-            filename, payload_bytes = build_manager_report_workbook(period, summary, projects, employees, duplicates, documents, items)
-            await callback.message.answer_document(BufferedInputFile(payload_bytes, filename=filename), caption=f'Выгрузка отчетов за период: {report_period_label(period)}')
+            export_path = None
+            await callback.answer('Собираю Excel...')
+            try:
+                export_result = await manager_report_export_service.build_for_manager(callback.from_user.id, period=period)
+                export_path = export_result.file_path
+                await callback.message.answer_document(
+                    FSInputFile(export_path, filename=export_result.filename),
+                    caption=export_result.caption,
+                )
+            except CompanyAccessError as exc:
+                await callback.message.answer(str(exc), reply_markup=build_reports_menu_keyboard())
+            except Exception as exc:  # noqa: BLE001
+                logger.exception('Manager Excel export build failed')
+                await callback.message.answer(f'Не удалось собрать Excel-отчет: {exc}', reply_markup=build_reports_menu_keyboard())
+            finally:
+                if export_path is not None:
+                    export_path.unlink(missing_ok=True)
             return
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
