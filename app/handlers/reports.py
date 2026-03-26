@@ -122,7 +122,7 @@ async def reports_menu_callback(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
     await callback.answer()
-    await callback.message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
+    await callback.message.edit_text('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
 
 
 @router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
@@ -160,7 +160,7 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
         await callback.message.answer('Выбери сотрудника.', reply_markup=build_employee_report_selector_keyboard(rows))
         return
     await callback.answer()
-    await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
+    await callback.message.edit_text('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
 
 
 @router.callback_query(F.data == MANAGER_REPORTS_ACCOUNTANT_EXPORT_CALLBACK)
@@ -222,7 +222,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         return
     if period == '_back':
         await callback.answer()
-        await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
+        await callback.message.edit_text('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
         return
     try:
         if report_kind == REPORT_KIND_PROJECTS:
@@ -239,19 +239,24 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             return
         if report_kind == REPORT_KIND_EXPORT:
             export_path = None
+            logger.info('Manager Excel export started: user_id=%s period=%s', callback.from_user.id, period)
             await callback.answer('Собираю Excel...')
+            await callback.message.edit_text('Собираю Excel-отчет. Это может занять до минуты.', reply_markup=build_reports_menu_keyboard())
             try:
                 export_result = await manager_report_export_service.build_for_manager(callback.from_user.id, period=period)
                 export_path = export_result.file_path
+                logger.info('Manager Excel export ready: user_id=%s period=%s path=%s', callback.from_user.id, period, export_path.name)
                 await callback.message.answer_document(
                     FSInputFile(export_path, filename=export_result.filename),
                     caption=export_result.caption,
                 )
+                await callback.message.edit_text('Excel-отчет сформирован.', reply_markup=build_reports_menu_keyboard())
             except CompanyAccessError as exc:
-                await callback.message.answer(str(exc), reply_markup=build_reports_menu_keyboard())
+                logger.warning('Manager Excel export access error: user_id=%s period=%s error=%s', callback.from_user.id, period, exc)
+                await callback.message.edit_text(str(exc), reply_markup=build_reports_menu_keyboard())
             except Exception as exc:  # noqa: BLE001
                 logger.exception('Manager Excel export build failed')
-                await callback.message.answer(f'Не удалось собрать Excel-отчет: {exc}', reply_markup=build_reports_menu_keyboard())
+                await callback.message.edit_text(f'Не удалось собрать Excel-отчет: {exc}', reply_markup=build_reports_menu_keyboard())
             finally:
                 if export_path is not None:
                     export_path.unlink(missing_ok=True)
