@@ -220,8 +220,8 @@ class ManagerExcelReportBuilder:
         pie_chart.set_categories(pie_labels)
         sheet.add_chart(pie_chart, 'M49')
 
-        sheet.freeze_panes = 'A19'
-        sheet.auto_filter.ref = f"A{project_table['header_row']}:C{project_table['last_row']}"
+        sheet.freeze_panes = None
+        sheet.auto_filter.ref = f"A{project_table['header_row']}:D{project_table['last_row']}"
         self._set_dashboard_widths(sheet)
 
     def _build_projects_sheet(self, sheet, report: ManagerReportData) -> None:
@@ -229,6 +229,7 @@ class ManagerExcelReportBuilder:
             'Проект',
             'Количество документов',
             'Общая сумма',
+            'НДС',
             'Сумма без дублей',
             'Средняя сумма документа',
             'Количество сотрудников',
@@ -244,6 +245,7 @@ class ManagerExcelReportBuilder:
                 row.project_name,
                 row.document_count,
                 row.total_amount,
+                row.vat_total_amount,
                 row.non_duplicate_amount,
                 row.average_amount,
                 row.employee_count,
@@ -261,14 +263,14 @@ class ManagerExcelReportBuilder:
             title='Отчет по проектам',
             headers=headers,
             rows=rows,
-            money_columns={3, 4, 5},
-            percent_columns={10},
-            date_columns={11, 12},
+            money_columns={3, 4, 5, 6},
+            percent_columns={11},
+            date_columns={12, 13},
             max_width=28,
         )
         self._set_column_widths(sheet, {
-            1: 28, 2: 18, 3: 16, 4: 18, 5: 18, 6: 18,
-            7: 20, 8: 14, 9: 18, 10: 14, 11: 16, 12: 18,
+            1: 28, 2: 18, 3: 16, 4: 14, 5: 18, 6: 18,
+            7: 18, 8: 20, 9: 14, 10: 18, 11: 14, 12: 16, 13: 18,
         })
 
     def _build_employees_sheet(self, sheet, report: ManagerReportData) -> None:
@@ -278,6 +280,7 @@ class ManagerExcelReportBuilder:
             'Статус участника',
             'Количество документов',
             'Общая сумма',
+            'НДС',
             'Сумма без дублей',
             'Средняя сумма документа',
             'Количество проектов',
@@ -295,6 +298,7 @@ class ManagerExcelReportBuilder:
                 row.member_status,
                 row.document_count,
                 row.total_amount,
+                row.vat_total_amount,
                 row.non_duplicate_amount,
                 row.average_amount,
                 row.project_count,
@@ -312,14 +316,14 @@ class ManagerExcelReportBuilder:
             title='Отчет по сотрудникам',
             headers=headers,
             rows=rows,
-            money_columns={5, 6, 7},
-            percent_columns={12},
-            date_columns={13, 14},
+            money_columns={5, 6, 7, 8},
+            percent_columns={13},
+            date_columns={14, 15},
             max_width=26,
         )
         self._set_column_widths(sheet, {
-            1: 24, 2: 16, 3: 18, 4: 18, 5: 16, 6: 18, 7: 18,
-            8: 18, 9: 20, 10: 14, 11: 18, 12: 14, 13: 16, 14: 18,
+            1: 24, 2: 16, 3: 18, 4: 18, 5: 16, 6: 14, 7: 18, 8: 18,
+            9: 18, 10: 20, 11: 14, 12: 18, 13: 14, 14: 16, 15: 18,
         })
 
     def _build_duplicates_sheet(self, sheet, report: ManagerReportData) -> None:
@@ -336,6 +340,7 @@ class ManagerExcelReportBuilder:
             'ИНН поставщика',
             'Номер документа',
             'Сумма',
+            'НДС',
             'Имя исходного файла',
             'MIME type',
             'Storage key / путь',
@@ -355,6 +360,7 @@ class ManagerExcelReportBuilder:
                 row.vendor_inn or '',
                 row.document_number or '',
                 row.total_amount,
+                row.vat_total_amount,
                 row.original_filename or '',
                 row.mime_type or '',
                 row.storage_key or '',
@@ -367,7 +373,7 @@ class ManagerExcelReportBuilder:
             title='Дубли документов',
             headers=headers,
             rows=rows,
-            money_columns={12},
+            money_columns={12, 13},
             date_columns={5},
             datetime_columns={4},
             max_width=32,
@@ -376,7 +382,7 @@ class ManagerExcelReportBuilder:
         )
         self._set_column_widths(sheet, {
             1: 12, 2: 14, 3: 18, 4: 18, 5: 16, 6: 20, 7: 20, 8: 14,
-            9: 20, 10: 14, 11: 16, 12: 14, 13: 20, 14: 14, 15: 22, 16: 28,
+            9: 20, 10: 14, 11: 16, 12: 14, 13: 14, 14: 20, 15: 14, 16: 22, 17: 28,
         })
 
     def _build_registry_sheet(self, sheet, report: ManagerReportData) -> None:

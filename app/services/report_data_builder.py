@@ -149,6 +149,7 @@ class DuplicateSheetRow:
     vendor_inn: str | None
     document_number: str | None
     total_amount: Decimal | None
+    vat_total_amount: Decimal | None
     original_filename: str | None
     mime_type: str | None
     storage_key: str | None
@@ -658,6 +659,7 @@ class ManagerReportDataBuilder:
                 vendor_inn=document.vendor_inn,
                 document_number=_document_number(document),
                 total_amount=document.total_amount,
+                vat_total_amount=document.vat_total_amount,
                 original_filename=document.original_filename,
                 mime_type=document.mime_type,
                 storage_key=document.storage_key,
