@@ -29,6 +29,8 @@ class AccountantArchiveRow:
     document_number: str | None
     document_date: date | datetime | None
     total_amount: Decimal | None
+    vat_total_amount: Decimal | None
+    vat_scope: str | None
     created_at: datetime
     uploaded_by_name: str | None
     duplicate_status: str
@@ -106,6 +108,8 @@ class DocumentExportService:
                        COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
                        d.document_date,
                        d.total_amount,
+                       d.vat_total_amount,
+                       d.vat_scope,
                        d.created_at,
                        d.duplicate_status,
                        uploader.username AS uploader_username,
@@ -146,6 +150,8 @@ class DocumentExportService:
                     document_number=row['document_number'],
                     document_date=row['document_date'],
                     total_amount=row['total_amount'],
+                    vat_total_amount=row['vat_total_amount'],
+                    vat_scope=row['vat_scope'],
                     created_at=row['created_at'],
                     uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
                     duplicate_status=row['duplicate_status'],
@@ -215,6 +221,8 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
         'Номер документа',
         'Дата документа',
         'Сумма',
+        'НДС по документу',
+        'Тип НДС',
         'Дата ввода',
         'Кто внес',
         'Статус дубля',
@@ -230,13 +238,15 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
             row.document_number or '',
             _format_date(row.document_date),
             float(row.total_amount or 0),
+            float(row.vat_total_amount) if row.vat_total_amount is not None else '',
+            _vat_scope_label(row.vat_scope),
             _format_datetime(row.created_at),
             row.uploaded_by_name or '',
             _duplicate_status_label(row.duplicate_status),
             archive_name,
             'Открыть файл',
         ])
-        link_cell = sheet.cell(row=sheet.max_row, column=12)
+        link_cell = sheet.cell(row=sheet.max_row, column=14)
         link_cell.hyperlink = archive_name
         link_cell.style = 'Hyperlink'
 
@@ -267,6 +277,17 @@ def _format_datetime(value: datetime | None) -> str:
     if value is None:
         return ''
     return value.strftime('%d.%m.%Y %H:%M')
+
+
+def _vat_scope_label(scope: str | None) -> str:
+    return {
+        'document': 'весь документ',
+        'mixed': 'смешанный',
+        'no_vat': 'без НДС',
+        'unknown': 'не определен',
+        None: 'не определен',
+        '': 'не определен',
+    }.get(scope, scope or 'не определен')
 
 
 def _duplicate_status_label(status: str | None) -> str:
