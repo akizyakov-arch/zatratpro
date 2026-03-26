@@ -40,7 +40,7 @@ class ManagerExcelReportBuilder:
         self.header_font = Font(bold=True)
         self.metric_title_font = Font(bold=True, color='1F1F1F')
         self.metric_value_font = Font(bold=True, size=14, color='1F1F1F')
-        self.sheet_title_font = Font(bold=True, size=13)
+        self.sheet_title_font = Font(color='FFFFFF', bold=True, size=13)
 
     def build(self, report: ManagerReportData, output_path: Path) -> None:
         workbook = Workbook()
@@ -96,39 +96,39 @@ class ManagerExcelReportBuilder:
         self._write_kpi_grid(sheet, metric_specs, start_row=7)
 
         top_projects = report.top_projects or [
-            ProjectAggregateRow('Нет данных', 0, Decimal('0'), Decimal('0'), Decimal('0'), 0, 0, 0, 0, 0.0, None, None)
+            ProjectAggregateRow('Нет данных', 0, Decimal('0'), Decimal('0'), Decimal('0'), Decimal('0'), 0, 0, 0, 0, 0.0, None, None)
         ]
         top_employees = report.top_employees or [
-            EmployeeAggregateRow('Нет данных', None, 'Не найден', 0, Decimal('0'), Decimal('0'), Decimal('0'), 0, 0, 0, 0, 0.0, None, None)
+            EmployeeAggregateRow('Нет данных', None, 'Не найден', 0, Decimal('0'), Decimal('0'), Decimal('0'), Decimal('0'), 0, 0, 0, 0, 0.0, None, None)
         ]
-        top_suppliers = report.top_suppliers or [SupplierAggregateRow('Нет данных', 0, Decimal('0'))]
+        top_suppliers = report.top_suppliers or [SupplierAggregateRow('Нет данных', 0, Decimal('0'), Decimal('0'))]
 
         project_table = self._write_dashboard_table(
             sheet,
             title='Топ проектов',
             start_row=19,
             start_col=1,
-            headers=['Проект', 'Сумма', 'Документов'],
-            rows=[[row.project_name, row.total_amount, row.document_count] for row in top_projects],
-            money_columns={2},
+            headers=['Проект', 'Сумма', 'НДС', 'Документов'],
+            rows=[[row.project_name, row.total_amount, row.vat_total_amount, row.document_count] for row in top_projects],
+            money_columns={2, 3},
         )
         employee_table = self._write_dashboard_table(
             sheet,
             title='Топ сотрудников',
             start_row=19,
             start_col=5,
-            headers=['Сотрудник', 'Сумма', 'Документов'],
-            rows=[[row.employee_name, row.total_amount, row.document_count] for row in top_employees],
-            money_columns={2},
+            headers=['Сотрудник', 'Сумма', 'НДС', 'Документов'],
+            rows=[[row.employee_name, row.total_amount, row.vat_total_amount, row.document_count] for row in top_employees],
+            money_columns={2, 3},
         )
         supplier_table = self._write_dashboard_table(
             sheet,
             title='Топ поставщиков',
             start_row=19,
             start_col=9,
-            headers=['Поставщик', 'Сумма', 'Документов'],
-            rows=[[row.supplier_name, row.total_amount, row.document_count] for row in top_suppliers],
-            money_columns={2},
+            headers=['Поставщик', 'Сумма', 'НДС', 'Документов'],
+            rows=[[row.supplier_name, row.total_amount, row.vat_total_amount, row.document_count] for row in top_suppliers],
+            money_columns={2, 3},
         )
 
         duplicate_control = [
@@ -157,22 +157,23 @@ class ManagerExcelReportBuilder:
                 row.employee_name,
                 row.vendor or '',
                 row.total_amount,
+                row.vat_total_amount,
                 row.document_date,
                 row.created_at,
                 row.duplicate_status,
             ]
             for row in report.largest_documents
-        ] or [['', 'Нет данных', '', '', Decimal('0'), None, None, '']]
+        ] or [['', 'Нет данных', '', '', Decimal('0'), Decimal('0'), None, None, '']]
         largest_table = self._write_dashboard_table(
             sheet,
             title='Крупнейшие документы',
             start_row=29,
             start_col=5,
-            headers=['ID', 'Проект', 'Кто внес', 'Поставщик', 'Сумма', 'Дата документа', 'Дата ввода', 'Статус дубля'],
+            headers=['ID', 'Проект', 'Кто внес', 'Поставщик', 'Сумма', 'НДС', 'Дата документа', 'Дата ввода', 'Статус дубля'],
             rows=largest_rows,
-            money_columns={5},
-            date_columns={6},
-            datetime_columns={7},
+            money_columns={5, 6},
+            date_columns={7},
+            datetime_columns={8},
         )
 
         project_chart = BarChart()

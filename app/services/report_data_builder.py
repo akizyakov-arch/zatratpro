@@ -96,6 +96,7 @@ class ProjectAggregateRow:
     project_name: str
     document_count: int
     total_amount: Decimal
+    vat_total_amount: Decimal
     non_duplicate_amount: Decimal
     average_amount: Decimal
     employee_count: int
@@ -114,6 +115,7 @@ class EmployeeAggregateRow:
     member_status: str
     document_count: int
     total_amount: Decimal
+    vat_total_amount: Decimal
     non_duplicate_amount: Decimal
     average_amount: Decimal
     project_count: int
@@ -130,6 +132,7 @@ class SupplierAggregateRow:
     supplier_name: str
     document_count: int
     total_amount: Decimal
+    vat_total_amount: Decimal
 
 
 @dataclass(slots=True)
@@ -197,6 +200,7 @@ class LargestDocumentRow:
     employee_name: str
     vendor: str | None
     total_amount: Decimal
+    vat_total_amount: Decimal
     document_date: date | None
     created_at: datetime
     duplicate_status: str
@@ -480,6 +484,7 @@ class ManagerReportDataBuilder:
                     'project_name': document.project_name,
                     'document_count': 0,
                     'total_amount': ZERO,
+                    'vat_total_amount': ZERO,
                     'non_duplicate_amount': ZERO,
                     'employee_ids': set(),
                     'supplier_keys': set(),
@@ -492,6 +497,7 @@ class ManagerReportDataBuilder:
             total_amount = _amount(document.total_amount)
             bucket['document_count'] += 1
             bucket['total_amount'] += total_amount
+            bucket['vat_total_amount'] += _amount(document.vat_total_amount)
             if not _is_duplicate_document(document):
                 bucket['non_duplicate_amount'] += total_amount
             bucket['employee_ids'].add(document.uploaded_by_user_id)
@@ -521,6 +527,7 @@ class ManagerReportDataBuilder:
                     project_name=str(bucket['project_name']),
                     document_count=document_count,
                     total_amount=total_amount,
+                    vat_total_amount=bucket['vat_total_amount'],
                     non_duplicate_amount=bucket['non_duplicate_amount'],
                     average_amount=average_amount,
                     employee_count=len(bucket['employee_ids']),
@@ -546,6 +553,7 @@ class ManagerReportDataBuilder:
                     'member_status': _member_status_label(document.member_status),
                     'document_count': 0,
                     'total_amount': ZERO,
+                    'vat_total_amount': ZERO,
                     'non_duplicate_amount': ZERO,
                     'project_ids': set(),
                     'supplier_keys': set(),
@@ -558,6 +566,7 @@ class ManagerReportDataBuilder:
             total_amount = _amount(document.total_amount)
             bucket['document_count'] += 1
             bucket['total_amount'] += total_amount
+            bucket['vat_total_amount'] += _amount(document.vat_total_amount)
             if not _is_duplicate_document(document):
                 bucket['non_duplicate_amount'] += total_amount
             bucket['project_ids'].add(document.project_id)
@@ -589,6 +598,7 @@ class ManagerReportDataBuilder:
                     member_status=str(bucket['member_status']),
                     document_count=document_count,
                     total_amount=total_amount,
+                    vat_total_amount=bucket['vat_total_amount'],
                     non_duplicate_amount=bucket['non_duplicate_amount'],
                     average_amount=average_amount,
                     project_count=len(bucket['project_ids']),
@@ -615,15 +625,18 @@ class ManagerReportDataBuilder:
                     'supplier_name': document.vendor or document.vendor_inn or 'Не указан',
                     'document_count': 0,
                     'total_amount': ZERO,
+                    'vat_total_amount': ZERO,
                 },
             )
             bucket['document_count'] += 1
             bucket['total_amount'] += _amount(document.total_amount)
+            bucket['vat_total_amount'] += _amount(document.vat_total_amount)
         rows = [
             SupplierAggregateRow(
                 supplier_name=str(bucket['supplier_name']),
                 document_count=int(bucket['document_count']),
                 total_amount=bucket['total_amount'],
+                vat_total_amount=bucket['vat_total_amount'],
             )
             for bucket in grouped.values()
         ]
@@ -718,6 +731,7 @@ class ManagerReportDataBuilder:
                 employee_name=_employee_name(document),
                 vendor=document.vendor,
                 total_amount=_amount(document.total_amount),
+                vat_total_amount=_amount(document.vat_total_amount),
                 document_date=_date_only(document.document_date),
                 created_at=document.created_at,
                 duplicate_status=_duplicate_status_label(document.duplicate_status),
