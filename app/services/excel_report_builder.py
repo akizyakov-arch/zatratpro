@@ -81,10 +81,12 @@ class ManagerExcelReportBuilder:
         metric_specs = [
             ('Всего документов', report.kpis['documents'], self.neutral_fill),
             ('Общая сумма затрат', report.kpis['total_amount'], self.accent_fill),
+            ('Сумма НДС', report.kpis['vat_total_amount'], self.accent_fill),
             ('Сумма без дублей', report.kpis['sum_without_duplicates'], self.accent_fill),
             ('Средняя сумма документа', report.kpis['average_amount'], self.neutral_fill),
             ('Число проектов', report.kpis['projects'], self.neutral_fill),
             ('Число сотрудников', report.kpis['employees'], self.neutral_fill),
+            ('Документов с НДС', report.kpis['documents_with_vat'], self.neutral_fill),
             ('Число поставщиков', report.kpis['suppliers'], self.neutral_fill),
             ('Точные дубли', report.kpis['exact_duplicates'], self.warning_fill),
             ('Вероятные дубли', report.kpis['probable_duplicates'], self.warning_fill),
@@ -393,6 +395,8 @@ class ManagerExcelReportBuilder:
             'ИНН поставщика',
             'КПП поставщика',
             'Сумма документа',
+            'НДС по документу',
+            'Тип НДС',
             'Статус дубля',
             'ID исходного дубля',
             'ID позиции',
@@ -421,6 +425,8 @@ class ManagerExcelReportBuilder:
                 row.vendor_inn or '',
                 row.vendor_kpp or '',
                 row.total_amount,
+                row.vat_total_amount,
+                self._vat_scope_label(row.vat_scope),
                 row.duplicate_status,
                 row.source_duplicate_id,
                 row.item_id,
@@ -438,7 +444,7 @@ class ManagerExcelReportBuilder:
             title='Реестр всех документов и позиций',
             headers=headers,
             rows=rows,
-            money_columns={16, 23, 24},
+            money_columns={16, 17, 25, 26},
             date_columns={3},
             datetime_columns={2},
             max_width=36,
@@ -448,8 +454,8 @@ class ManagerExcelReportBuilder:
         self._set_column_widths(sheet, {
             1: 12, 2: 18, 3: 16, 4: 20, 5: 20, 6: 12, 7: 20, 8: 14,
             9: 18, 10: 18, 11: 16, 12: 16, 13: 20, 14: 14, 15: 14, 16: 14,
-            17: 16, 18: 14, 19: 12, 20: 14, 21: 26, 22: 12, 23: 12, 24: 14,
-            25: 18,
+            17: 14, 18: 16, 19: 16, 20: 14, 21: 12, 22: 14, 23: 26, 24: 12,
+            25: 12, 26: 14, 27: 18,
         })
 
     def _build_table_sheet(
@@ -527,7 +533,7 @@ class ManagerExcelReportBuilder:
             value_cell.font = self.metric_value_font
             if title == 'Доля дублей':
                 value_cell.number_format = PERCENT_FORMAT
-            elif title in {'Общая сумма затрат', 'Сумма без дублей', 'Средняя сумма документа'}:
+            elif title in {'Общая сумма затрат', 'Сумма НДС', 'Сумма без дублей', 'Средняя сумма документа'}:
                 value_cell.number_format = MONEY_FORMAT
             sheet.row_dimensions[row].height = 20
             sheet.row_dimensions[row + 1].height = 24
@@ -630,6 +636,16 @@ class ManagerExcelReportBuilder:
 
     def _mode_label(self, mode: str) -> str:
         return 'За все время' if mode == 'all_time' else 'Период'
+
+    def _vat_scope_label(self, scope: str | None) -> str:
+        return {
+            'document': 'весь документ',
+            'mixed': 'смешанный',
+            'no_vat': 'без НДС',
+            'unknown': 'не определен',
+            None: 'не определен',
+            '': 'не определен',
+        }.get(scope, scope or 'не определен')
 
     def _display_date(self, value: date | None) -> str:
         if value is None:

@@ -66,6 +66,8 @@ class ReportDocumentRecord:
     vendor_inn: str | None
     vendor_kpp: str | None
     total_amount: Decimal | None
+    vat_total_amount: Decimal | None
+    vat_scope: str | None
     duplicate_status: str
     duplicate_of_document_id: int | None
     original_filename: str | None
@@ -168,6 +170,8 @@ class RegistrySheetRow:
     vendor_inn: str | None
     vendor_kpp: str | None
     total_amount: Decimal | None
+    vat_total_amount: Decimal | None
+    vat_scope: str | None
     duplicate_status: str
     source_duplicate_id: int | None
     item_id: int | None
@@ -310,6 +314,8 @@ class ManagerReportDataBuilder:
                    d.vendor_inn,
                    d.vendor_kpp,
                    d.total_amount,
+                   d.vat_total_amount,
+                   d.vat_scope,
                    d.duplicate_status,
                    d.duplicate_of_document_id,
                    d.preview_text,
@@ -370,6 +376,8 @@ class ManagerReportDataBuilder:
                     vendor_inn=row['vendor_inn'],
                     vendor_kpp=row['vendor_kpp'],
                     total_amount=row['total_amount'],
+                    vat_total_amount=row['vat_total_amount'],
+                    vat_scope=row['vat_scope'],
                     duplicate_status=row['duplicate_status'],
                     duplicate_of_document_id=row['duplicate_of_document_id'],
                     original_filename=row['original_filename'],
@@ -438,19 +446,23 @@ class ManagerReportDataBuilder:
     ) -> dict[str, object]:
         document_count = len(documents)
         total_amount = sum((_amount(document.total_amount) for document in documents), start=ZERO)
+        vat_total_amount = sum((_amount(document.vat_total_amount) for document in documents), start=ZERO)
         sum_without_duplicates = sum((_amount(document.total_amount) for document in documents if not _is_duplicate_document(document)), start=ZERO)
         exact_duplicates = sum(1 for document in documents if document.duplicate_status == 'exact' and document.duplicate_of_document_id is not None)
         probable_duplicates = sum(1 for document in documents if document.duplicate_status == 'probable' and document.duplicate_of_document_id is not None)
         duplicate_documents = exact_duplicates + probable_duplicates
+        documents_with_vat = sum(1 for document in documents if _has_vat(document))
         average_amount = (total_amount / document_count) if document_count else ZERO
         duplicate_share = (duplicate_documents / document_count) if document_count else 0.0
         return {
             'documents': document_count,
             'total_amount': total_amount,
+            'vat_total_amount': vat_total_amount,
             'sum_without_duplicates': sum_without_duplicates,
             'average_amount': average_amount,
             'projects': len(project_rows),
             'employees': len(employee_rows),
+            'documents_with_vat': documents_with_vat,
             'suppliers': len(supplier_rows),
             'exact_duplicates': exact_duplicates,
             'probable_duplicates': probable_duplicates,
@@ -676,6 +688,8 @@ class ManagerReportDataBuilder:
             vendor_inn=document.vendor_inn,
             vendor_kpp=document.vendor_kpp,
             total_amount=document.total_amount,
+            vat_total_amount=document.vat_total_amount,
+            vat_scope=document.vat_scope,
             duplicate_status=_duplicate_status_label(document.duplicate_status),
             source_duplicate_id=document.duplicate_of_document_id,
             item_id=item.item_id if item is not None else None,
@@ -765,6 +779,12 @@ def _member_status_label(status: str | None) -> str:
 
 def _is_duplicate_document(document: ReportDocumentRecord) -> bool:
     return document.duplicate_status in {'exact', 'probable'} and document.duplicate_of_document_id is not None
+
+
+def _has_vat(document: ReportDocumentRecord) -> bool:
+    if document.vat_total_amount is not None and document.vat_total_amount > ZERO:
+        return True
+    return document.vat_scope in {'document', 'mixed'}
 
 
 def _supplier_key(vendor: str | None, vendor_inn: str | None) -> str | None:
