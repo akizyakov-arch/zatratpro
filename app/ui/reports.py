@@ -71,10 +71,8 @@ def build_report_period_keyboard(report_kind: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if report_kind == REPORT_KIND_EXPORT:
         rows.append([InlineKeyboardButton(text="Все время", callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{report_kind}:{REPORT_PERIOD_ALL}")])
-    rows.extend(
-        [[InlineKeyboardButton(text=label, callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{report_kind}:{period}")]]
-        for period, label in REPORT_PERIOD_LABELS.items()
-    )
+    for period, label in REPORT_PERIOD_LABELS.items():
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"{MANAGER_REPORTS_PERIOD_PREFIX}{report_kind}:{period}")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data=MANAGER_REPORTS_MENU_CALLBACK)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
