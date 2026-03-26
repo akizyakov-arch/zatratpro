@@ -367,6 +367,8 @@ class ManagerExcelReportBuilder:
             date_columns={5},
             datetime_columns={4},
             max_width=32,
+            wrap_text=False,
+            data_row_height=18,
         )
         self._set_column_widths(sheet, {
             1: 12, 2: 14, 3: 18, 4: 18, 5: 16, 6: 20, 7: 20, 8: 14,
@@ -446,6 +448,8 @@ class ManagerExcelReportBuilder:
             date_columns={3},
             datetime_columns={2},
             max_width=36,
+            wrap_text=False,
+            data_row_height=18,
         )
         self._set_column_widths(sheet, {
             1: 12, 2: 18, 3: 16, 4: 20, 5: 20, 6: 12, 7: 20, 8: 14,
@@ -466,6 +470,8 @@ class ManagerExcelReportBuilder:
         date_columns: set[int] | None = None,
         datetime_columns: set[int] | None = None,
         max_width: int = 50,
+        wrap_text: bool = True,
+        data_row_height: float | None = None,
     ) -> None:
         money_columns = money_columns or set()
         percent_columns = percent_columns or set()
@@ -490,10 +496,12 @@ class ManagerExcelReportBuilder:
             rows = [['' for _ in headers]]
 
         for row_index, row_values in enumerate(rows, start=3):
+            if data_row_height is not None:
+                sheet.row_dimensions[row_index].height = data_row_height
             for col_index, raw_value in enumerate(row_values, start=1):
                 cell = sheet.cell(row=row_index, column=col_index, value=self._excel_value(raw_value))
                 cell.border = BORDER
-                cell.alignment = Alignment(vertical='top', wrap_text=True)
+                cell.alignment = Alignment(vertical='top', wrap_text=wrap_text)
                 if col_index in money_columns and isinstance(raw_value, (Decimal, int, float)):
                     cell.number_format = MONEY_FORMAT
                 elif col_index in percent_columns and isinstance(raw_value, (int, float, Decimal)):
