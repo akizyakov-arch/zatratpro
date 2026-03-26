@@ -260,7 +260,12 @@ class ManagerExcelReportBuilder:
             money_columns={3, 4, 5},
             percent_columns={10},
             date_columns={11, 12},
+            max_width=28,
         )
+        self._set_column_widths(sheet, {
+            1: 28, 2: 18, 3: 16, 4: 18, 5: 18, 6: 18,
+            7: 20, 8: 14, 9: 18, 10: 14, 11: 16, 12: 18,
+        })
 
     def _build_employees_sheet(self, sheet, report: ManagerReportData) -> None:
         headers = [
@@ -306,7 +311,12 @@ class ManagerExcelReportBuilder:
             money_columns={5, 6, 7},
             percent_columns={12},
             date_columns={13, 14},
+            max_width=26,
         )
+        self._set_column_widths(sheet, {
+            1: 24, 2: 16, 3: 18, 4: 18, 5: 16, 6: 18, 7: 18,
+            8: 18, 9: 20, 10: 14, 11: 18, 12: 14, 13: 16, 14: 18,
+        })
 
     def _build_duplicates_sheet(self, sheet, report: ManagerReportData) -> None:
         headers = [
@@ -356,8 +366,12 @@ class ManagerExcelReportBuilder:
             money_columns={12},
             date_columns={5},
             datetime_columns={4},
-            max_width=60,
+            max_width=40,
         )
+        self._set_column_widths(sheet, {
+            1: 12, 2: 14, 3: 18, 4: 18, 5: 16, 6: 22, 7: 22, 8: 16,
+            9: 24, 10: 14, 11: 18, 12: 14, 13: 24, 14: 16, 15: 28, 16: 40,
+        })
 
     def _build_registry_sheet(self, sheet, report: ManagerReportData) -> None:
         headers = [
@@ -433,14 +447,20 @@ class ManagerExcelReportBuilder:
         ]
         self._build_table_sheet(
             sheet,
-            title='Общий реестр документов и позиций',
+            title='Реестр всех документов и позиций',
             headers=headers,
             rows=rows,
             money_columns={16, 23, 24},
             date_columns={3},
             datetime_columns={2},
-            max_width=70,
+            max_width=48,
         )
+        self._set_column_widths(sheet, {
+            1: 12, 2: 18, 3: 16, 4: 22, 5: 22, 6: 12, 7: 22, 8: 16,
+            9: 18, 10: 20, 11: 18, 12: 18, 13: 24, 14: 16, 15: 16, 16: 14,
+            17: 18, 18: 14, 19: 12, 20: 14, 21: 30, 22: 12, 23: 12, 24: 14,
+            25: 18, 26: 24, 27: 16, 28: 28, 29: 16, 30: 14, 31: 40, 32: 48,
+        })
 
     def _build_table_sheet(
         self,
@@ -599,6 +619,11 @@ class ManagerExcelReportBuilder:
                 if len(value) > max_length:
                     max_length = len(value)
             sheet.column_dimensions[column_letter].width = min(max(max_length + 2, 12), max_width)
+
+
+    def _set_column_widths(self, sheet, widths: dict[int, int]) -> None:
+        for column_index, width in widths.items():
+            sheet.column_dimensions[get_column_letter(column_index)].width = width
 
     def _excel_value(self, value: object) -> object:
         if isinstance(value, Decimal):
