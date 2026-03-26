@@ -452,6 +452,7 @@ class ManagerReportDataBuilder:
         probable_duplicates = sum(1 for document in documents if document.duplicate_status == 'probable' and document.duplicate_of_document_id is not None)
         duplicate_documents = exact_duplicates + probable_duplicates
         documents_with_vat = sum(1 for document in documents if _has_vat(document))
+        amount_with_vat = sum((_amount(document.total_amount) for document in documents if _has_vat(document)), start=ZERO)
         average_amount = (total_amount / document_count) if document_count else ZERO
         duplicate_share = (duplicate_documents / document_count) if document_count else 0.0
         return {
@@ -463,6 +464,7 @@ class ManagerReportDataBuilder:
             'projects': len(project_rows),
             'employees': len(employee_rows),
             'documents_with_vat': documents_with_vat,
+            'amount_with_vat': amount_with_vat,
             'suppliers': len(supplier_rows),
             'exact_duplicates': exact_duplicates,
             'probable_duplicates': probable_duplicates,

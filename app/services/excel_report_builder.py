@@ -87,6 +87,7 @@ class ManagerExcelReportBuilder:
             ('Число проектов', report.kpis['projects'], self.neutral_fill),
             ('Число сотрудников', report.kpis['employees'], self.neutral_fill),
             ('Документов с НДС', report.kpis['documents_with_vat'], self.neutral_fill),
+            ('Сумма документов с НДС', report.kpis['amount_with_vat'], self.accent_fill),
             ('Число поставщиков', report.kpis['suppliers'], self.neutral_fill),
             ('Точные дубли', report.kpis['exact_duplicates'], self.warning_fill),
             ('Вероятные дубли', report.kpis['probable_duplicates'], self.warning_fill),
@@ -105,7 +106,7 @@ class ManagerExcelReportBuilder:
         project_table = self._write_dashboard_table(
             sheet,
             title='Топ проектов',
-            start_row=16,
+            start_row=19,
             start_col=1,
             headers=['Проект', 'Сумма', 'Документов'],
             rows=[[row.project_name, row.total_amount, row.document_count] for row in top_projects],
@@ -114,7 +115,7 @@ class ManagerExcelReportBuilder:
         employee_table = self._write_dashboard_table(
             sheet,
             title='Топ сотрудников',
-            start_row=16,
+            start_row=19,
             start_col=5,
             headers=['Сотрудник', 'Сумма', 'Документов'],
             rows=[[row.employee_name, row.total_amount, row.document_count] for row in top_employees],
@@ -123,7 +124,7 @@ class ManagerExcelReportBuilder:
         supplier_table = self._write_dashboard_table(
             sheet,
             title='Топ поставщиков',
-            start_row=16,
+            start_row=19,
             start_col=9,
             headers=['Поставщик', 'Сумма', 'Документов'],
             rows=[[row.supplier_name, row.total_amount, row.document_count] for row in top_suppliers],
@@ -139,7 +140,7 @@ class ManagerExcelReportBuilder:
         duplicate_control_table = self._write_dashboard_table(
             sheet,
             title='Контроль дублей',
-            start_row=26,
+            start_row=29,
             start_col=1,
             headers=['Показатель', 'Значение'],
             rows=duplicate_control,
@@ -165,7 +166,7 @@ class ManagerExcelReportBuilder:
         largest_table = self._write_dashboard_table(
             sheet,
             title='Крупнейшие документы',
-            start_row=26,
+            start_row=29,
             start_col=5,
             headers=['ID', 'Проект', 'Кто внес', 'Поставщик', 'Сумма', 'Дата документа', 'Дата ввода', 'Статус дубля'],
             rows=largest_rows,
@@ -184,7 +185,7 @@ class ManagerExcelReportBuilder:
         project_cats = Reference(sheet, min_col=1, min_row=project_table['header_row'] + 1, max_row=project_table['last_row'])
         project_chart.add_data(project_data, titles_from_data=True)
         project_chart.set_categories(project_cats)
-        sheet.add_chart(project_chart, 'M16')
+        sheet.add_chart(project_chart, 'M19')
 
         employee_chart = BarChart()
         employee_chart.title = 'Расходы по сотрудникам'
@@ -196,7 +197,7 @@ class ManagerExcelReportBuilder:
         employee_cats = Reference(sheet, min_col=5, min_row=employee_table['header_row'] + 1, max_row=employee_table['last_row'])
         employee_chart.add_data(employee_data, titles_from_data=True)
         employee_chart.set_categories(employee_cats)
-        sheet.add_chart(employee_chart, 'M31')
+        sheet.add_chart(employee_chart, 'M34')
 
         pie_chart = PieChart()
         pie_chart.title = 'Структура дублей'
@@ -216,9 +217,9 @@ class ManagerExcelReportBuilder:
         )
         pie_chart.add_data(pie_data, titles_from_data=False)
         pie_chart.set_categories(pie_labels)
-        sheet.add_chart(pie_chart, 'M46')
+        sheet.add_chart(pie_chart, 'M49')
 
-        sheet.freeze_panes = 'A16'
+        sheet.freeze_panes = 'A19'
         sheet.auto_filter.ref = f"A{project_table['header_row']}:C{project_table['last_row']}"
         self._set_dashboard_widths(sheet)
 
@@ -533,7 +534,7 @@ class ManagerExcelReportBuilder:
             value_cell.font = self.metric_value_font
             if title == 'Доля дублей':
                 value_cell.number_format = PERCENT_FORMAT
-            elif title in {'Общая сумма затрат', 'Сумма НДС', 'Сумма без дублей', 'Средняя сумма документа'}:
+            elif title in {'Общая сумма затрат', 'Сумма НДС', 'Сумма документов с НДС', 'Сумма без дублей', 'Средняя сумма документа'}:
                 value_cell.number_format = MONEY_FORMAT
             sheet.row_dimensions[row].height = 20
             sheet.row_dimensions[row + 1].height = 24
