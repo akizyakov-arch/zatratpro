@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS documents (
     document_date TIMESTAMPTZ,
     currency TEXT NOT NULL DEFAULT 'RUB',
     total_amount NUMERIC(14, 2),
+    vat_total_amount NUMERIC(14, 2),
+    vat_scope TEXT,
     raw_text TEXT,
     preview_text TEXT,
     duplicate_status TEXT NOT NULL DEFAULT 'none',
@@ -114,6 +116,7 @@ CREATE TABLE IF NOT EXISTS documents (
     ),
     CONSTRAINT chk_documents_source_type CHECK (source_type IN ('photo', 'pdf', 'excel', 'word', 'manual')),
     CONSTRAINT chk_documents_duplicate_status CHECK (duplicate_status IN ('none', 'exact', 'probable', 'not_checked')),
+    CONSTRAINT chk_documents_vat_scope CHECK (vat_scope IN ('document', 'mixed', 'no_vat', 'unknown')),
     CONSTRAINT fk_documents_project_company
         FOREIGN KEY (project_id, company_id)
         REFERENCES projects(id, company_id)
@@ -128,6 +131,8 @@ CREATE TABLE IF NOT EXISTS document_items (
     quantity NUMERIC(14, 3),
     price NUMERIC(14, 2),
     line_total NUMERIC(14, 2),
+    vat_label TEXT,
+    vat_amount NUMERIC(14, 2),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_document_items_document_line UNIQUE (document_id, line_no)
 );
