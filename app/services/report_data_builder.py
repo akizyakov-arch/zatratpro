@@ -89,6 +89,7 @@ class ReportItemRecord:
     quantity: Decimal | None
     price: Decimal | None
     line_total: Decimal | None
+    vat_amount: Decimal | None
 
 
 @dataclass(slots=True)
@@ -184,6 +185,7 @@ class RegistrySheetRow:
     item_quantity: Decimal | None
     item_price: Decimal | None
     item_total: Decimal | None
+    item_vat_amount: Decimal | None
     item_count: int
     original_filename: str | None
     mime_type: str | None
@@ -425,7 +427,8 @@ class ManagerReportDataBuilder:
                    di.name,
                    di.quantity,
                    di.price,
-                   di.line_total
+                   di.line_total,
+                   di.vat_amount
             FROM document_items di
             JOIN documents d ON d.id = di.document_id
             WHERE {' AND '.join(conditions)}
@@ -715,6 +718,7 @@ class ManagerReportDataBuilder:
             item_quantity=item.quantity if item is not None else None,
             item_price=item.price if item is not None else None,
             item_total=item.line_total if item is not None else None,
+            item_vat_amount=item.vat_amount if item is not None else None,
             item_count=document.item_count,
             original_filename=document.original_filename,
             mime_type=document.mime_type,

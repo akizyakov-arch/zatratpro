@@ -405,6 +405,7 @@ class ManagerExcelReportBuilder:
             'Количество',
             'Цена',
             'Сумма позиции',
+            'НДС позиции',
             'Количество позиций в документе',
         ]
         rows = [
@@ -435,6 +436,7 @@ class ManagerExcelReportBuilder:
                 row.item_quantity,
                 row.item_price,
                 row.item_total,
+                row.item_vat_amount,
                 row.item_count,
             ]
             for row in report.registry_rows
@@ -444,7 +446,7 @@ class ManagerExcelReportBuilder:
             title='Реестр всех документов и позиций',
             headers=headers,
             rows=rows,
-            money_columns={16, 17, 25, 26},
+            money_columns={16, 17, 25, 26, 27},
             date_columns={3},
             datetime_columns={2},
             max_width=36,
@@ -455,7 +457,7 @@ class ManagerExcelReportBuilder:
             1: 12, 2: 18, 3: 16, 4: 20, 5: 20, 6: 12, 7: 20, 8: 14,
             9: 18, 10: 18, 11: 16, 12: 16, 13: 20, 14: 14, 15: 14, 16: 14,
             17: 14, 18: 16, 19: 16, 20: 14, 21: 12, 22: 14, 23: 26, 24: 12,
-            25: 12, 26: 14, 27: 18,
+            25: 12, 26: 14, 27: 12, 28: 18,
         })
 
     def _build_table_sheet(
