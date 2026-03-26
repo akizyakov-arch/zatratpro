@@ -341,10 +341,6 @@ class ManagerExcelReportBuilder:
             'Номер документа',
             'Сумма',
             'НДС',
-            'Имя исходного файла',
-            'MIME type',
-            'Storage key / путь',
-            'Preview text',
         ]
         rows = [
             [
@@ -361,10 +357,6 @@ class ManagerExcelReportBuilder:
                 row.document_number or '',
                 row.total_amount,
                 row.vat_total_amount,
-                row.original_filename or '',
-                row.mime_type or '',
-                row.storage_key or '',
-                self._clip(row.preview_text, 500),
             ]
             for row in report.duplicate_rows
         ]
@@ -382,7 +374,7 @@ class ManagerExcelReportBuilder:
         )
         self._set_column_widths(sheet, {
             1: 12, 2: 14, 3: 18, 4: 18, 5: 16, 6: 20, 7: 20, 8: 14,
-            9: 20, 10: 14, 11: 16, 12: 14, 13: 14, 14: 20, 15: 14, 16: 22, 17: 28,
+            9: 20, 10: 14, 11: 16, 12: 14, 13: 14,
         })
 
     def _build_registry_sheet(self, sheet, report: ManagerReportData) -> None:
