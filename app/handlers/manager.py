@@ -51,13 +51,22 @@ from app.ui.company import (
 from app.ui.main_menu import MENU_BUTTONS
 from app.ui.reports import REPORT_KIND_PROJECTS, build_report_documents_keyboard
 from app.ui.my_documents import (
+    MY_DOCUMENTS_FILTER_MENU_CALLBACK,
     MY_DOCUMENTS_ITEMS_PREFIX,
     MY_DOCUMENTS_LIST_CALLBACK,
+    MY_DOCUMENTS_LIST_PREFIX,
     MY_DOCUMENTS_OPEN_PREFIX,
+    MY_DOCUMENTS_PROJECTS_CALLBACK,
+    MY_DOCUMENTS_SCOPE_ALL,
+    MY_DOCUMENTS_SCOPE_MONTH,
     MY_DOCUMENTS_VIEW_PREFIX,
     build_my_document_card_keyboard,
     build_my_document_items_keyboard,
+    build_my_documents_filter_keyboard,
     build_my_documents_keyboard,
+    build_my_documents_projects_keyboard,
+    parse_my_documents_list_scope,
+    parse_my_documents_scoped_document,
 )
 
 router = Router()
@@ -384,18 +393,79 @@ async def my_company_entry(message: Message) -> None:
     await message.answer(format_company_card(card), reply_markup=await main_menu_markup(message))
 
 
-async def _send_my_documents_menu(message: Message, telegram_user_id: int, *, edit: bool = False) -> None:
-    documents = await view_service.list_my_documents(telegram_user_id)
-    if not documents:
+async def _send_my_documents_filters(message: Message, *, edit: bool = False) -> None:
+    if edit:
+        await message.edit_text('Как показать документы?', reply_markup=build_my_documents_filter_keyboard())
+    else:
+        await message.answer('Как показать документы?', reply_markup=build_my_documents_filter_keyboard())
+
+
+async def _send_my_documents_projects(message: Message, telegram_user_id: int, *, edit: bool = False) -> None:
+    projects = await view_service.list_my_document_projects(telegram_user_id)
+    if not projects:
+        text = 'В активных проектах у тебя пока нет документов.'
         if edit:
-            await message.edit_text('У тебя пока нет документов.', reply_markup=await main_menu_markup_for_user(message.from_user))
+            await message.edit_text(text, reply_markup=build_my_documents_filter_keyboard())
         else:
-            await message.answer('У тебя пока нет документов.', reply_markup=await main_menu_markup_for_user(message.from_user))
+            await message.answer(text, reply_markup=build_my_documents_filter_keyboard())
         return
     if edit:
-        await message.edit_text('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
+        await message.edit_text('Выбери активный проект:', reply_markup=build_my_documents_projects_keyboard(projects))
     else:
-        await message.answer('Мои документы:', reply_markup=build_my_documents_keyboard(documents))
+        await message.answer('Выбери активный проект:', reply_markup=build_my_documents_projects_keyboard(projects))
+
+
+async def _send_my_documents_menu(
+    message: Message,
+    telegram_user_id: int,
+    scope_token: str,
+    *,
+    edit: bool = False,
+) -> None:
+    period, project_id = _resolve_my_documents_scope(scope_token)
+    documents = await view_service.list_my_documents(telegram_user_id, period=period, project_id=project_id)
+    if not documents:
+        text = _empty_my_documents_text(scope_token)
+        if edit:
+            await message.edit_text(text, reply_markup=build_my_documents_filter_keyboard())
+        else:
+            await message.answer(text, reply_markup=build_my_documents_filter_keyboard())
+        return
+    title = _my_documents_title(scope_token, documents[0].project_name if project_id is not None else None)
+    if edit:
+        await message.edit_text(title, reply_markup=build_my_documents_keyboard(documents, scope_token))
+    else:
+        await message.answer(title, reply_markup=build_my_documents_keyboard(documents, scope_token))
+
+
+def _resolve_my_documents_scope(scope_token: str) -> tuple[str, int | None]:
+    if scope_token == MY_DOCUMENTS_SCOPE_MONTH:
+        return 'month', None
+    if scope_token == MY_DOCUMENTS_SCOPE_ALL:
+        return 'all_time', None
+    if scope_token.startswith('project_'):
+        return 'all_time', int(scope_token.removeprefix('project_'))
+    raise CompanyAccessError('Неизвестный фильтр документов.')
+
+
+def _my_documents_title(scope_token: str, project_name: str | None = None) -> str:
+    if scope_token == MY_DOCUMENTS_SCOPE_MONTH:
+        return 'Мои документы за месяц:'
+    if scope_token == MY_DOCUMENTS_SCOPE_ALL:
+        return 'Все мои документы:'
+    if scope_token.startswith('project_'):
+        return f'Мои документы по проекту: {project_name or "Проект"}'
+    return 'Мои документы:'
+
+
+def _empty_my_documents_text(scope_token: str) -> str:
+    if scope_token == MY_DOCUMENTS_SCOPE_MONTH:
+        return 'За этот месяц у тебя пока нет документов.'
+    if scope_token == MY_DOCUMENTS_SCOPE_ALL:
+        return 'У тебя пока нет документов.'
+    if scope_token.startswith('project_'):
+        return 'В этом активном проекте у тебя пока нет документов.'
+    return 'У тебя пока нет документов.'
 
 
 @router.message(F.text == MENU_BUTTONS['my_documents'])
@@ -403,18 +473,39 @@ async def my_documents_entry(message: Message) -> None:
     if message.from_user is None:
         return
     try:
-        await _send_my_documents_menu(message, message.from_user.id)
+        await _send_my_documents_filters(message)
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))
 
 
+@router.callback_query(F.data == MY_DOCUMENTS_FILTER_MENU_CALLBACK)
 @router.callback_query(F.data == MY_DOCUMENTS_LIST_CALLBACK)
-async def my_documents_list_callback(callback: CallbackQuery) -> None:
+async def my_documents_filters_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await callback.answer()
+    await _send_my_documents_filters(callback.message, edit=True)
+
+
+@router.callback_query(F.data == MY_DOCUMENTS_PROJECTS_CALLBACK)
+async def my_documents_projects_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     try:
         await callback.answer()
-        await _send_my_documents_menu(callback.message, callback.from_user.id, edit=True)
+        await _send_my_documents_projects(callback.message, callback.from_user.id, edit=True)
+    except CompanyAccessError as exc:
+        await callback.answer(str(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith(MY_DOCUMENTS_LIST_PREFIX))
+async def my_documents_list_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    try:
+        scope_token = parse_my_documents_list_scope(callback.data)
+        await callback.answer()
+        await _send_my_documents_menu(callback.message, callback.from_user.id, scope_token, edit=True)
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
 
@@ -424,7 +515,7 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     try:
-        document_id = int(callback.data.removeprefix(MY_DOCUMENTS_VIEW_PREFIX))
+        scope_token, document_id = parse_my_documents_scoped_document(callback.data, MY_DOCUMENTS_VIEW_PREFIX)
         document, items = await view_service.get_my_document_detail(callback.from_user.id, document_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
@@ -447,7 +538,7 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
         f'Дата ввода: {uploaded_at}',
         f'Первая позиция: {first_item}',
     ]
-    await callback.message.edit_text(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id))
+    await callback.message.edit_text(NL.join(lines), reply_markup=build_my_document_card_keyboard(document.id, scope_token))
 
 
 @router.callback_query(F.data.startswith(MY_DOCUMENTS_OPEN_PREFIX))
@@ -455,7 +546,7 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     try:
-        document_id = int(callback.data.removeprefix(MY_DOCUMENTS_OPEN_PREFIX))
+        _, document_id = parse_my_documents_scoped_document(callback.data, MY_DOCUMENTS_OPEN_PREFIX)
         source = await view_service.get_my_document_source(callback.from_user.id, document_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
@@ -479,7 +570,7 @@ async def my_document_items_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     try:
-        document_id = int(callback.data.removeprefix(MY_DOCUMENTS_ITEMS_PREFIX))
+        scope_token, document_id = parse_my_documents_scoped_document(callback.data, MY_DOCUMENTS_ITEMS_PREFIX)
         document, items = await view_service.get_my_document_detail(callback.from_user.id, document_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
@@ -489,6 +580,6 @@ async def my_document_items_callback(callback: CallbackQuery) -> None:
     from app.services.report_formatters import format_report_document_items
     await callback.message.edit_text(
         format_report_document_items('Состав документа', 'all_time', document, items),
-        reply_markup=build_my_document_items_keyboard(document.id),
+        reply_markup=build_my_document_items_keyboard(document.id, scope_token),
         parse_mode='HTML',
     )

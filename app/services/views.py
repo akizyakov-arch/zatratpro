@@ -157,6 +157,13 @@ class DocumentRow:
 
 
 @dataclass(slots=True)
+class MyDocumentProjectRow:
+    id: int
+    name: str
+    document_count: int
+
+
+@dataclass(slots=True)
 class DocumentSourceView:
     document_id: int
     storage_key: str
@@ -606,41 +613,120 @@ class ViewService:
             for row in rows
         ]
 
-    async def list_my_documents(self, telegram_user_id: int) -> list[DocumentRow]:
+    async def list_my_document_projects(self, telegram_user_id: int) -> list[MyDocumentProjectRow]:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
         pool = get_pool()
         async with pool.acquire() as connection:
             user_id = await connection.fetchval("SELECT id FROM users WHERE telegram_id = $1", telegram_user_id)
+            if user_id is None:
+                return []
             rows = await connection.fetch(
                 """
-                SELECT d.id,
-                       p.name AS project_name,
-                       d.vendor,
-                       COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
-                       d.total_amount,
-                       d.document_date,
-                       d.created_at,
-                       uploader.username AS uploader_username,
-                       uploader.first_name AS uploader_first_name,
-                       uploader.last_name AS uploader_last_name
+                SELECT p.id,
+                       p.name,
+                       COUNT(d.id) AS document_count
                 FROM documents d
                 JOIN projects p ON p.id = d.project_id
-                LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
-            LEFT JOIN LATERAL (
-                SELECT di.name
-                FROM document_items di
-                WHERE di.document_id = d.id
-                ORDER BY di.line_no ASC
-                LIMIT 1
-            ) first_item ON TRUE
                 WHERE d.company_id = $1
                   AND d.uploaded_by_user_id = $2
-                ORDER BY d.created_at DESC
-                LIMIT 20
+                  AND p.status = 'active'
+                GROUP BY p.id, p.name
+                ORDER BY MAX(d.created_at) DESC, p.name ASC
                 """,
                 company.id,
                 user_id,
             )
+        return [
+            MyDocumentProjectRow(
+                id=row["id"],
+                name=row["name"],
+                document_count=row["document_count"],
+            )
+            for row in rows
+        ]
+
+    async def list_my_documents(
+        self,
+        telegram_user_id: int,
+        *,
+        period: str = 'month',
+        project_id: int | None = None,
+    ) -> list[DocumentRow]:
+        company = await self.company_service.get_active_company_for_user(telegram_user_id)
+        start_at = _report_period_start(period)
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            user_id = await connection.fetchval("SELECT id FROM users WHERE telegram_id = $1", telegram_user_id)
+            if user_id is None:
+                return []
+            if project_id is None:
+                rows = await connection.fetch(
+                    """
+                    SELECT d.id,
+                           p.name AS project_name,
+                           d.vendor,
+                           COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
+                           d.total_amount,
+                           d.document_date,
+                           d.created_at,
+                           uploader.username AS uploader_username,
+                           uploader.first_name AS uploader_first_name,
+                           uploader.last_name AS uploader_last_name
+                    FROM documents d
+                    JOIN projects p ON p.id = d.project_id
+                    LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+                LEFT JOIN LATERAL (
+                    SELECT di.name
+                    FROM document_items di
+                    WHERE di.document_id = d.id
+                    ORDER BY di.line_no ASC
+                    LIMIT 1
+                ) first_item ON TRUE
+                    WHERE d.company_id = $1
+                      AND d.uploaded_by_user_id = $2
+                      AND p.status = 'active'
+                      AND d.created_at >= $3
+                    ORDER BY d.created_at DESC
+                    """,
+                    company.id,
+                    user_id,
+                    start_at,
+                )
+            else:
+                rows = await connection.fetch(
+                    """
+                    SELECT d.id,
+                           p.name AS project_name,
+                           d.vendor,
+                           COALESCE(NULLIF(d.external_document_number, ''), NULLIF(d.incoming_number, '')) AS document_number,
+                           d.total_amount,
+                           d.document_date,
+                           d.created_at,
+                           uploader.username AS uploader_username,
+                           uploader.first_name AS uploader_first_name,
+                           uploader.last_name AS uploader_last_name
+                    FROM documents d
+                    JOIN projects p ON p.id = d.project_id
+                    LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+                LEFT JOIN LATERAL (
+                    SELECT di.name
+                    FROM document_items di
+                    WHERE di.document_id = d.id
+                    ORDER BY di.line_no ASC
+                    LIMIT 1
+                ) first_item ON TRUE
+                    WHERE d.company_id = $1
+                      AND d.uploaded_by_user_id = $2
+                      AND p.status = 'active'
+                      AND d.created_at >= $3
+                      AND d.project_id = $4
+                    ORDER BY d.created_at DESC
+                    """,
+                    company.id,
+                    user_id,
+                    start_at,
+                    project_id,
+                )
         return [
             DocumentRow(
                 id=row["id"],
