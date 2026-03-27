@@ -31,6 +31,7 @@ class AccountantArchiveRow:
     total_amount: Decimal | None
     vat_total_amount: Decimal | None
     vat_scope: str | None
+    is_fiscalized: bool | None
     created_at: datetime
     uploaded_by_name: str | None
     duplicate_status: str
@@ -110,6 +111,7 @@ class DocumentExportService:
                        d.total_amount,
                        d.vat_total_amount,
                        d.vat_scope,
+                       d.is_fiscalized,
                        d.created_at,
                        d.duplicate_status,
                        uploader.username AS uploader_username,
@@ -152,6 +154,7 @@ class DocumentExportService:
                     total_amount=row['total_amount'],
                     vat_total_amount=row['vat_total_amount'],
                     vat_scope=row['vat_scope'],
+                    is_fiscalized=row['is_fiscalized'],
                     created_at=row['created_at'],
                     uploaded_by_name=_display_name(row['uploader_first_name'], row['uploader_last_name'], row['uploader_username']),
                     duplicate_status=row['duplicate_status'],
@@ -223,6 +226,7 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
         'Сумма',
         'НДС по документу',
         'Тип НДС',
+        'Фискальный чек',
         'Дата ввода',
         'Кто внес',
         'Статус дубля',
@@ -240,13 +244,14 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
             float(row.total_amount or 0),
             float(row.vat_total_amount) if row.vat_total_amount is not None else '',
             _vat_scope_label(row.vat_scope),
+            _fiscalized_label(row.is_fiscalized),
             _format_datetime(row.created_at),
             row.uploaded_by_name or '',
             _duplicate_status_label(row.duplicate_status),
             archive_name,
             'Открыть файл',
         ])
-        link_cell = sheet.cell(row=sheet.max_row, column=14)
+        link_cell = sheet.cell(row=sheet.max_row, column=15)
         link_cell.hyperlink = archive_name
         link_cell.style = 'Hyperlink'
 
@@ -288,6 +293,14 @@ def _vat_scope_label(scope: str | None) -> str:
         None: 'не определен',
         '': 'не определен',
     }.get(scope, scope or 'не определен')
+
+
+def _fiscalized_label(value: bool | None) -> str:
+    return {
+        True: 'Да',
+        False: 'Нет',
+        None: 'Не определено',
+    }[value]
 
 
 def _duplicate_status_label(status: str | None) -> str:
