@@ -16,6 +16,7 @@ from app.handlers.reports import router as reports_router
 from app.handlers.start import router as start_router
 from app.middlewares.perf import SlowUpdateMiddleware
 from app.services.database import close_db, init_db
+from app.services.executors import close_executors
 from app.services.http_clients import close_http_clients
 
 
@@ -35,6 +36,7 @@ async def on_startup() -> None:
 
 async def on_shutdown() -> None:
     await close_http_clients()
+    await close_executors()
     await close_db()
     logging.getLogger(__name__).info("Database pool closed")
 
