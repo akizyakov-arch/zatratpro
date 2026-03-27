@@ -7,6 +7,7 @@ from aiogram.types import Document, PhotoSize
 from PIL import Image, ImageOps
 
 from app.config import TMP_DIR
+from app.services.executors import run_blocking
 
 
 OCR_MAX_WIDTH = 2000
@@ -36,7 +37,7 @@ class TelegramFileService:
         await self.bot.download_file(telegram_file.file_path, destination=source_path)
         file_ext = source_path.suffix or '.jpg'
         original_filename = Path(telegram_file.file_path or '').name or f'telegram_photo{file_ext}'
-        ocr_path = self._prepare_image_for_ocr(source_path)
+        ocr_path = await self._prepare_image_for_ocr(source_path)
         return DownloadedTelegramPhoto(
             source_path=source_path,
             ocr_path=ocr_path,
@@ -56,7 +57,7 @@ class TelegramFileService:
         await self.bot.download_file(telegram_file.file_path, destination=source_path)
         original_filename = document.file_name or Path(telegram_file.file_path or '').name or f'telegram_document{file_ext}'
         mime_type = document.mime_type or 'application/octet-stream'
-        ocr_path = self._prepare_image_for_ocr(source_path)
+        ocr_path = await self._prepare_image_for_ocr(source_path)
         return DownloadedTelegramPhoto(
             source_path=source_path,
             ocr_path=ocr_path,
@@ -76,7 +77,10 @@ class TelegramFileService:
         except Exception:
             pass
 
-    def _prepare_image_for_ocr(self, source_path: Path) -> Path:
+    async def _prepare_image_for_ocr(self, source_path: Path) -> Path:
+        return await run_blocking(self._prepare_image_for_ocr_sync, source_path)
+
+    def _prepare_image_for_ocr_sync(self, source_path: Path) -> Path:
         prepared_path = TMP_DIR / f'{uuid4()}.jpg'
         with Image.open(source_path) as image:
             image = ImageOps.exif_transpose(image)
