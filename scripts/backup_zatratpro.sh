@@ -16,7 +16,7 @@ RCLONE_REMOTE="${RCLONE_REMOTE:-}"
 mkdir -p "${DB_BACKUP_DIR}" "${STORAGE_BACKUP_DIR}" "${STORAGE_DIR}"
 
 echo "[backup] dumping postgres from ${DB_CONTAINER} -> ${DB_FILE}"
-docker exec -t "${DB_CONTAINER}" sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "${DB_FILE}"
+docker exec -i "${DB_CONTAINER}" sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "${DB_FILE}"
 
 echo "[backup] archiving storage -> ${STORAGE_FILE}"
 tar -czf "${STORAGE_FILE}" -C "${ROOT_DIR}" storage
