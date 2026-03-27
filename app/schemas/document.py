@@ -62,6 +62,7 @@ class DocumentSchema(BaseModel):
     total: float | None = None
     vat_total_amount: float | None = None
     vat_scope: str | None = None
+    is_fiscalized: bool | None = None
     items: list[DocumentItem] = Field(default_factory=lambda: [DocumentItem()])
     raw_text: str | None = None
 

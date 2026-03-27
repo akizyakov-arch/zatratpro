@@ -122,6 +122,7 @@ class DocumentService:
         items = [item for item in document.items if _item_has_value(item)]
         vat_total_amount = _resolve_document_vat_total(document, items)
         vat_scope = _resolve_document_vat_scope(document, items)
+        is_fiscalized = document.is_fiscalized
 
         async with pool.acquire() as connection:
             async with connection.transaction():
@@ -159,6 +160,7 @@ class DocumentService:
                         total_amount,
                         vat_total_amount,
                         vat_scope,
+                        is_fiscalized,
                         raw_text,
                         preview_text,
                         duplicate_status,
@@ -171,8 +173,8 @@ class DocumentService:
                     )
                     VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8,
-                        $9, $10, $11, $12, $13, $14, $15,
-                        $16, $17, $18, $19, NOW(), 'ocr_space', 'deepseek', NULL, NULL
+                        $9, $10, $11, $12, $13, $14, $15, $16,
+                        $17, $18, $19, $20, NOW(), 'ocr_space', 'deepseek', NULL, NULL
                     )
                     RETURNING id
                     """,
@@ -191,6 +193,7 @@ class DocumentService:
                     duplicate_check.fields.total_amount,
                     vat_total_amount,
                     vat_scope,
+                    is_fiscalized,
                     document.raw_text,
                     normalized_text,
                     duplicate_check.status,
