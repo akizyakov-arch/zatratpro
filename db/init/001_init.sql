@@ -50,14 +50,15 @@ CREATE TABLE IF NOT EXISTS company_invites (
     company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
     code TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL DEFAULT 'active',
+    status TEXT NOT NULL DEFAULT 'new',
     created_by_user_id BIGINT NOT NULL REFERENCES users(id),
     used_by_user_id BIGINT REFERENCES users(id),
+    start_token TEXT UNIQUE,
     expires_at TIMESTAMPTZ,
     used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_company_invites_role CHECK (role IN ('manager', 'employee', 'master')),
-    CONSTRAINT chk_company_invites_status CHECK (status IN ('active', 'used', 'expired', 'revoked'))
+    CONSTRAINT chk_company_invites_status CHECK (status IN ('new', 'used', 'expired', 'revoked'))
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -163,10 +164,10 @@ CREATE INDEX IF NOT EXISTS idx_company_invites_expires_at ON company_invites(exp
 CREATE INDEX IF NOT EXISTS idx_company_invites_created_by_user_id ON company_invites(created_by_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_manager_per_company
     ON company_invites(company_id)
-    WHERE status = 'active' AND role = 'manager';
+    WHERE status = 'new' AND role = 'manager';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_employee_per_company
     ON company_invites(company_id)
-    WHERE status = 'active' AND role = 'employee';
+    WHERE status = 'new' AND role = 'employee';
 
 CREATE INDEX IF NOT EXISTS idx_projects_company_status ON projects(company_id, status);
 CREATE INDEX IF NOT EXISTS idx_projects_created_by_user_id ON projects(created_by_user_id);

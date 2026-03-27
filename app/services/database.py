@@ -117,6 +117,34 @@ async def _run_runtime_migrations(pool: Pool) -> None:
             await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS stored_file_size BIGINT')
             await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS was_normalized BOOLEAN NOT NULL DEFAULT FALSE')
             await connection.execute('ALTER TABLE document_files ADD COLUMN IF NOT EXISTS original_kind TEXT')
+            await connection.execute('ALTER TABLE company_invites ADD COLUMN IF NOT EXISTS start_token TEXT')
+            await connection.execute('ALTER TABLE company_invites DROP CONSTRAINT IF EXISTS chk_company_invites_status')
+            await connection.execute("ALTER TABLE company_invites ALTER COLUMN status SET DEFAULT 'new'")
+            await connection.execute("UPDATE company_invites SET status = 'new' WHERE status = 'active'")
+            await connection.execute(
+                '''
+                ALTER TABLE company_invites
+                ADD CONSTRAINT chk_company_invites_status
+                CHECK (status IN ('new', 'used', 'expired', 'revoked'))
+                '''
+            )
+            await connection.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_start_token ON company_invites(start_token) WHERE start_token IS NOT NULL')
+            await connection.execute('DROP INDEX IF EXISTS uq_company_invites_active_manager_per_company')
+            await connection.execute(
+                '''
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_manager_per_company
+                ON company_invites(company_id)
+                WHERE status = 'new' AND role = 'manager'
+                '''
+            )
+            await connection.execute('DROP INDEX IF EXISTS uq_company_invites_active_employee_per_company')
+            await connection.execute(
+                '''
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_company_invites_active_employee_per_company
+                ON company_invites(company_id)
+                WHERE status = 'new' AND role = 'employee'
+                '''
+            )
             await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS vat_total_amount NUMERIC(14, 2)')
             await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS vat_scope TEXT')
             await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_fiscalized BOOLEAN')

@@ -436,7 +436,7 @@ class ViewService:
                 FROM company_invites
                 WHERE company_id = $1
                   AND role = 'manager'
-                  AND status = 'active'
+                  AND status = 'new'
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -552,7 +552,7 @@ class ViewService:
                     updated_at = NOW()
                 WHERE company_id = $1
                   AND id = $2
-                  AND status = 'active'
+                  AND status = 'new'
                 RETURNING id
                 """,
                 company.id,
@@ -1471,7 +1471,7 @@ class ViewService:
                         updated_at = NOW(),
                         manager_user_id = NULL
                     WHERE id = $1
-                      AND status = 'active'
+                      AND status = 'new'
                     RETURNING id
                     """,
                     company_id,
@@ -1484,7 +1484,7 @@ class ViewService:
                     SET status = 'removed',
                         removed_at = NOW()
                     WHERE company_id = $1
-                      AND status = 'active'
+                      AND status = 'new'
                     """,
                     company_id,
                 )
@@ -1493,7 +1493,7 @@ class ViewService:
                     UPDATE company_invites
                     SET status = 'revoked'
                     WHERE company_id = $1
-                      AND status = 'active'
+                      AND status = 'new'
                     """,
                     company_id,
                 )
@@ -1510,7 +1510,7 @@ class ViewService:
                 SET status = 'revoked'
                 WHERE company_id = $1
                   AND role = 'manager'
-                  AND status = 'active'
+                  AND status = 'new'
                 """,
                 company_id,
             )
