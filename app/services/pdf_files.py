@@ -8,6 +8,7 @@ from aiogram.types import Document
 from PIL import Image
 
 from app.config import TMP_DIR
+from app.services.executors import run_blocking
 from app.services.telegram_files import DownloadedTelegramPhoto, OCR_JPEG_QUALITY, OCR_MAX_WIDTH
 
 
@@ -24,7 +25,7 @@ class PDFFileService:
         await self.bot.download_file(telegram_file.file_path, destination=source_path)
         original_filename = document.file_name or Path(telegram_file.file_path or '').name or 'telegram_document.pdf'
         try:
-            ocr_path = self._render_first_page_for_ocr(source_path)
+            ocr_path = await self._render_first_page_for_ocr(source_path)
         except Exception:
             source_path.unlink(missing_ok=True)
             raise
@@ -39,7 +40,10 @@ class PDFFileService:
             original_kind='pdf',
         )
 
-    def _render_first_page_for_ocr(self, source_path: Path) -> Path:
+    async def _render_first_page_for_ocr(self, source_path: Path) -> Path:
+        return await run_blocking(self._render_first_page_for_ocr_sync, source_path)
+
+    def _render_first_page_for_ocr_sync(self, source_path: Path) -> Path:
         prepared_path = TMP_DIR / f'{uuid4()}.jpg'
         with pymupdf.open(source_path) as pdf:
             if pdf.page_count < 1:
