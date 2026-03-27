@@ -300,12 +300,12 @@ async def employees_blocked_callback(callback: CallbackQuery) -> None:
 async def employee_invite_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
+    await callback.answer('Генерирую invite...')
     try:
         code = await company_service.create_invite(callback.from_user, 'employee')
     except CompanyAccessError as exc:
-        await callback.answer(str(exc), show_alert=True)
+        await callback.message.answer(str(exc), reply_markup=build_employees_menu_keyboard())
         return
-    await callback.answer()
     await callback.message.answer('Invite-код для сотрудника:')
     await callback.message.answer(code)
 
