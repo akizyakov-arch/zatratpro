@@ -16,6 +16,20 @@ NUMERIC_FIXES = str.maketrans({
     ",": ".",
 })
 
+PLACEHOLDER_ITEM_NAMES = {
+    "без названия",
+    "товар",
+    "позиция",
+}
+
+TABLE_DOCUMENT_TYPES = {
+    "goods_invoice",
+    "service_act",
+    "upd",
+    "vat_invoice",
+    "transport_invoice",
+}
+
 
 class DocumentItem(BaseModel):
     name: str | None = None
@@ -63,7 +77,7 @@ class DocumentSchema(BaseModel):
     vat_total_amount: float | None = None
     vat_scope: str | None = None
     is_fiscalized: bool | None = None
-    items: list[DocumentItem] = Field(default_factory=lambda: [DocumentItem()])
+    items: list[DocumentItem] = Field(default_factory=list)
     raw_text: str | None = None
 
     @field_validator("total", "vat_total_amount", mode="before")
@@ -84,8 +98,9 @@ class DocumentSchema(BaseModel):
         return normalized if normalized in ALLOWED_VAT_SCOPES else "unknown"
 
     @model_validator(mode="after")
-    def normalize_document_type(self) -> "DocumentSchema":
+    def normalize_document(self) -> "DocumentSchema":
         self.document_type = _detect_document_type(self.document_type, self.raw_text)
+        self.items = _sanitize_items(self.items, self.document_type)
         return self
 
 
@@ -131,3 +146,41 @@ def _detect_document_type(current_type: str | None, raw_text: str | None) -> str
     if current_type in ALLOWED_DOCUMENT_TYPES:
         return current_type
     return "unknown"
+
+
+def _sanitize_items(items: list[DocumentItem], document_type: str) -> list[DocumentItem]:
+    sanitized: list[DocumentItem] = []
+    for item in items:
+        item.name = _normalize_item_name(item.name)
+        if _item_has_meaningful_value(item, document_type):
+            sanitized.append(item)
+    return sanitized
+
+
+def _normalize_item_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    cleaned = re.sub(r"\s+", " ", value).strip(" -\t\r\n")
+    if not cleaned:
+        return None
+
+    normalized = cleaned.casefold().replace("ё", "е")
+    if normalized in PLACEHOLDER_ITEM_NAMES:
+        return None
+    return cleaned
+
+
+def _item_has_meaningful_value(item: DocumentItem, document_type: str) -> bool:
+    numeric_count = sum(
+        value is not None for value in (item.quantity, item.price, item.line_total)
+    )
+
+    if item.name is not None:
+        if numeric_count > 0:
+            return True
+        return document_type not in TABLE_DOCUMENT_TYPES
+
+    if document_type in TABLE_DOCUMENT_TYPES:
+        return False
+    return numeric_count >= 2

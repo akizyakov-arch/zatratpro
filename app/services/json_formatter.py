@@ -80,11 +80,13 @@ def _item_has_value(item: DocumentItem) -> bool:
 
 
 def _format_item(item: DocumentItem, currency_display: str) -> str:
-    name = item.name or "Без названия"
     quantity = _format_amount(item.quantity) if item.quantity is not None else "?"
     price = _format_amount(item.price) if item.price is not None else "?"
     line_total = _format_amount(item.line_total) if item.line_total is not None else "?"
-    return f"{name} — {quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
+
+    if item.name:
+        return f"{item.name} — {quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
+    return f"{quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
 
 
 def _format_amount(value: float | int | None) -> str:
