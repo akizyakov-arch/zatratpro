@@ -9,6 +9,7 @@ import httpx
 from app.config import get_settings
 from app.prompts.cleanup_prompt import CLEANUP_PROMPT
 from app.prompts.extraction_prompt import EXTRACTION_PROMPT
+from app.services.http_clients import get_deepseek_client
 
 
 class DeepSeekError(RuntimeError):
@@ -112,22 +113,14 @@ class DeepSeekService:
 
 
 async def _post_chat_completion(payload: dict, settings) -> httpx.Response:
-    timeout = httpx.Timeout(settings.deepseek_read_timeout, connect=settings.deepseek_connect_timeout)
-    client_kwargs = {
-        "base_url": settings.deepseek_base_url,
-        "timeout": timeout,
-        "headers": {"Authorization": f"Bearer {settings.deepseek_api_key}"},
-    }
     proxy_url = settings.effective_deepseek_proxy_url
-    if proxy_url:
-        client_kwargs["proxy"] = proxy_url
 
     attempts = max(settings.deepseek_max_retries + 1, 1)
     last_exc = None
+    client = await get_deepseek_client()
     for attempt in range(1, attempts + 1):
         try:
-            async with httpx.AsyncClient(**client_kwargs) as client:
-                response = await client.post("/chat/completions", json=payload)
+            response = await client.post("/chat/completions", json=payload)
             response.raise_for_status()
             return response
         except RETRYABLE_HTTP_EXCEPTIONS as exc:
