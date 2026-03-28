@@ -17,14 +17,12 @@ from app.services.document_processing import (
     DocumentProjectSelectionFailure,
     PreparedUpload,
 )
-from app.services.documents import DocumentService
 from app.services.pdf_files import PDFFileService
 from app.services.projects import ProjectService
 from app.services.temp_files import safe_unlink
 from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileService
 from app.state.pending_actions import set_pending_action
 from app.state.pending_documents import (
-    PendingDocument,
     clear_document_flow,
     get_pending_document,
     has_active_document_flow,
@@ -44,7 +42,6 @@ from app.ui.projects import (
 
 router = Router()
 logger = logging.getLogger(__name__)
-SLOW_DOCUMENT_STAGE_MS = 500.0
 project_service = ProjectService()
 access_service = AccessService()
 document_processing_service = DocumentProcessingService()
@@ -197,46 +194,6 @@ def _duplicate_save_failure_message(failure: DocumentDuplicateSaveFailure) -> st
     if failure.reason in {'validation_error', 'access_error'}:
         return failure.details or 'Не удалось сохранить документ.'
     return f'Не удалось сохранить документ: {failure.details or "неизвестная ошибка"}'
-
-
-async def _save_pending_document(callback: CallbackQuery, pending_document: PendingDocument, menu_markup) -> None:
-    if callback.from_user is None or callback.message is None:
-        return
-    if pending_document.selected_project_id is None:
-        await clear_document_flow(callback.from_user.id)
-        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
-        return
-    try:
-        project = await project_service.get_active_project(callback.from_user.id, pending_document.selected_project_id)
-    except CompanyAccessError as exc:
-        await clear_document_flow(callback.from_user.id)
-        await callback.message.answer(str(exc), reply_markup=menu_markup)
-        return
-    if project is None:
-        await clear_document_flow(callback.from_user.id)
-        await callback.message.answer('Проект больше недоступен. Отправь документ заново.', reply_markup=menu_markup)
-        return
-
-    save_result = await document_processing_service.save_duplicate_confirmed(
-        telegram_user=callback.from_user,
-        project=project,
-        pending_document=pending_document,
-    )
-    if isinstance(save_result, DocumentDuplicateSaveFailure):
-        await clear_document_flow(callback.from_user.id)
-        await callback.message.answer(_duplicate_save_failure_message(save_result), reply_markup=menu_markup)
-        return
-
-    duplicate_message = {
-        'exact': f"\n\nДокумент сохранен принудительно. Точный дубль уже был в записи ID {save_result.duplicate_check.duplicate_document_id}.",
-        'probable': f"\n\nДокумент сохранен принудительно. Возможный дубль уже был в записи ID {save_result.duplicate_check.duplicate_document_id}.",
-        'none': '',
-        'not_checked': '',
-    }[save_result.duplicate_check.status]
-    await callback.message.answer(
-        f'Документ сохранен в проект "{save_result.project_name}". ID записи: {save_result.document_id}.{duplicate_message}',
-        reply_markup=menu_markup,
-    )
 
 
 async def _get_access_context_or_reply(message: Message):
@@ -562,12 +519,54 @@ async def duplicate_cancel_callback(callback: CallbackQuery) -> None:
 async def duplicate_save_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
+
     pending_document = await get_pending_document(callback.from_user.id)
     if pending_document is None or pending_document.duplicate_check is None:
         await callback.answer('Нет документа для подтверждения. Отправь фото заново.', show_alert=True)
         return
+
+    menu_markup = await main_menu_markup_for_user(callback.from_user)
+    if pending_document.selected_project_id is None:
+        await clear_document_flow(callback.from_user.id)
+        await callback.answer()
+        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
+        return
+
+    try:
+        project = await project_service.get_active_project(callback.from_user.id, pending_document.selected_project_id)
+    except CompanyAccessError as exc:
+        await clear_document_flow(callback.from_user.id)
+        await callback.answer()
+        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        return
+
+    if project is None:
+        await clear_document_flow(callback.from_user.id)
+        await callback.answer()
+        await callback.message.answer('Проект больше недоступен. Отправь документ заново.', reply_markup=menu_markup)
+        return
+
     await callback.answer()
-    await _save_pending_document(callback, pending_document, await main_menu_markup_for_user(callback.from_user))
+    save_result = await document_processing_service.save_duplicate_confirmed(
+        telegram_user=callback.from_user,
+        project=project,
+        pending_document=pending_document,
+    )
+    if isinstance(save_result, DocumentDuplicateSaveFailure):
+        await clear_document_flow(callback.from_user.id)
+        await callback.message.answer(_duplicate_save_failure_message(save_result), reply_markup=menu_markup)
+        return
+
+    duplicate_message = {
+        'exact': f"\n\nДокумент сохранен принудительно. Точный дубль уже был в записи ID {save_result.duplicate_check.duplicate_document_id}.",
+        'probable': f"\n\nДокумент сохранен принудительно. Возможный дубль уже был в записи ID {save_result.duplicate_check.duplicate_document_id}.",
+        'none': '',
+        'not_checked': '',
+    }[save_result.duplicate_check.status]
+    await callback.message.answer(
+        f'Документ сохранен в проект "{save_result.project_name}". ID записи: {save_result.document_id}.{duplicate_message}',
+        reply_markup=menu_markup,
+    )
 
 
 @router.message(~F.text)
