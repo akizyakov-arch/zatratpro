@@ -101,6 +101,7 @@ class DocumentSchema(BaseModel):
     def normalize_document(self) -> "DocumentSchema":
         self.document_type = _detect_document_type(self.document_type, self.raw_text)
         self.items = _sanitize_items(self.items, self.document_type)
+        self.vat_scope = _resolve_vat_scope(self)
         return self
 
 
@@ -184,3 +185,56 @@ def _item_has_meaningful_value(item: DocumentItem, document_type: str) -> bool:
     if document_type in TABLE_DOCUMENT_TYPES:
         return False
     return numeric_count >= 2
+
+
+
+def _resolve_vat_scope(document: DocumentSchema) -> str | None:
+    labels = {
+        normalized
+        for normalized in (_normalize_vat_label(item.vat_label) for item in document.items)
+        if normalized is not None
+    }
+    raw_text = (document.raw_text or "").lower()
+    vat_total = document.vat_total_amount
+
+    if _should_force_mixed_vat_scope(document.document_type, vat_total, labels, raw_text):
+        return "mixed"
+
+    if document.vat_scope in ALLOWED_VAT_SCOPES:
+        return document.vat_scope
+    if not labels:
+        return document.vat_scope
+    if labels == {"без ндс"}:
+        return "no_vat"
+    if len(labels) > 1:
+        return "mixed"
+    return "document"
+
+
+
+def _should_force_mixed_vat_scope(
+    document_type: str,
+    vat_total: float | None,
+    labels: set[str],
+    raw_text: str,
+) -> bool:
+    if document_type not in {"cash_receipt", "bso"}:
+        return False
+
+    collapsed = raw_text.replace(" ", "")
+    has_no_vat_signal = "без ндс" in raw_text or "безндс" in collapsed
+    has_positive_vat = vat_total is not None and vat_total > 0
+
+    if "без ндс" in labels and any(label != "без ндс" for label in labels):
+        return True
+    if has_positive_vat and has_no_vat_signal:
+        return True
+    return False
+
+
+
+def _normalize_vat_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.strip().split()).lower()
+    return normalized or None
