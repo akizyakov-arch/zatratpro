@@ -6,7 +6,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Awaitable, Callable, Literal
 
-from aiogram.types import User
+from aiogram import Bot
+from aiogram.types import Document, PhotoSize, User
 
 from app.schemas.document import DocumentSchema
 from app.services.companies import CompanyAccessError
@@ -19,13 +20,17 @@ from app.services.documents import (
 )
 from app.services.json_formatter import format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
+from app.services.pdf_files import PDFFileService
 from app.services.projects import Project
+from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileService
 from app.services.temp_files import safe_unlink, temporary_files
 from app.state.pending_documents import PendingDocument, begin_document_flow, clear_document_flow, pop_pending_document, store_pending_document
 
 
 logger = logging.getLogger(__name__)
 PreparedUploadKind = Literal["photo", "image_file", "pdf"]
+SUPPORTED_IMAGE_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'}
+SUPPORTED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
 DocumentPreviewFailureStage = Literal["preprocess", "ocr", "extract", "pending"]
 DocumentPreviewFailureReason = Literal["timeout", "service_error", "validation_error", "unexpected"]
 DocumentProjectSelectionFailureStage = Literal["pending", "duplicate_check", "save"]
@@ -56,6 +61,13 @@ OCR_TEXT_FIXES = str.maketrans({
 
 
 @dataclass(slots=True)
+class DocumentUploadInput:
+    bot: Bot
+    photo_sizes: list[PhotoSize] | None = None
+    document: Document | None = None
+
+
+@dataclass(slots=True)
 class PreparedUpload:
     """Neutral upload DTO for document processing orchestration.
 
@@ -76,6 +88,12 @@ class PreparedUpload:
     normalized_file_size: int
     original_kind: PreparedUploadKind
     source_was_normalized: bool = True
+
+
+@dataclass(slots=True)
+class DocumentUploadPreparationReady:
+    prepared_upload: PreparedUpload
+    prep_elapsed_ms: float
 
 
 @dataclass(slots=True)
@@ -134,6 +152,7 @@ class DocumentDuplicateSaveFailure:
     details: str | None = None
 
 
+DocumentUploadPreparationResult = DocumentUploadPreparationReady | DocumentPreviewFailure
 DocumentOCRResult = DocumentOCRReady | DocumentPreviewFailure
 DocumentPreviewResult = DocumentPreviewReady | DocumentPreviewFailure
 DocumentProjectSelectionResult = (
@@ -146,6 +165,40 @@ DocumentDuplicateSaveResult = DocumentDuplicateSaveSuccess | DocumentDuplicateSa
 
 def _pending_source_type(pending_document: PendingDocument) -> str:
     return 'pdf' if pending_document.source_original_kind == 'pdf' else 'photo'
+
+
+def _document_extension(document: Document | None) -> str:
+    if document is None:
+        return ''
+    return Path(document.file_name or '').suffix.lower()
+
+
+def _is_pdf_document(document: Document | None) -> bool:
+    if document is None:
+        return False
+    mime_type = (document.mime_type or '').lower()
+    return mime_type == 'application/pdf' or _document_extension(document) == '.pdf'
+
+
+def _is_supported_image_document(document: Document | None) -> bool:
+    if document is None:
+        return False
+    mime_type = (document.mime_type or '').lower()
+    file_ext = _document_extension(document)
+    return mime_type in SUPPORTED_IMAGE_MIME_TYPES or file_ext in SUPPORTED_IMAGE_EXTENSIONS
+
+
+def _prepared_upload_from_downloaded(downloaded_photo: DownloadedTelegramPhoto) -> PreparedUpload:
+    return PreparedUpload(
+        source_temp_path=downloaded_photo.source_path,
+        ocr_temp_path=downloaded_photo.ocr_path,
+        original_filename=downloaded_photo.original_filename,
+        mime_type=downloaded_photo.mime_type,
+        file_ext=downloaded_photo.file_ext,
+        original_file_size=downloaded_photo.original_file_size,
+        normalized_file_size=downloaded_photo.normalized_file_size,
+        original_kind=downloaded_photo.original_kind,
+    )
 
 
 def _compact_ocr_text(value: str | None) -> str:
@@ -254,6 +307,21 @@ class DocumentProcessingService:
         self.ocr_service = ocr_service or OCRSpaceService()
         self.deepseek_service = deepseek_service or DeepSeekService()
         self.document_service = document_service or DocumentService()
+
+    async def prepare_upload(self, upload_input: DocumentUploadInput) -> DocumentUploadPreparationResult:
+        started = perf_counter()
+        try:
+            downloaded_upload = await self._download_upload_input(upload_input)
+        except DocumentValidationError as exc:
+            return DocumentPreviewFailure(stage='preprocess', reason='validation_error', details=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Document upload preprocessing failed')
+            return DocumentPreviewFailure(stage='preprocess', reason='unexpected', details=str(exc))
+
+        return DocumentUploadPreparationReady(
+            prepared_upload=_prepared_upload_from_downloaded(downloaded_upload),
+            prep_elapsed_ms=(perf_counter() - started) * 1000,
+        )
 
     async def begin_pending_preview(self, telegram_user_id: int) -> DocumentPreviewFailure | None:
         try:
@@ -476,6 +544,24 @@ class DocumentProcessingService:
             preview_text=preview_text,
             extract_elapsed_ms=(perf_counter() - started) * 1000,
         )
+
+    async def _download_upload_input(self, upload_input: DocumentUploadInput) -> DownloadedTelegramPhoto:
+        if upload_input.photo_sizes:
+            file_service = TelegramFileService(upload_input.bot)
+            return await file_service.download_best_photo(upload_input.photo_sizes)
+
+        if upload_input.document is None:
+            raise DocumentValidationError('missing_upload')
+
+        if _is_pdf_document(upload_input.document):
+            file_service = PDFFileService(upload_input.bot)
+            return await file_service.download_pdf_document(upload_input.document)
+
+        if _is_supported_image_document(upload_input.document):
+            file_service = TelegramFileService(upload_input.bot)
+            return await file_service.download_image_document(upload_input.document)
+
+        raise DocumentValidationError('unsupported_upload')
 
     async def _extract_text_with_retry(
         self,

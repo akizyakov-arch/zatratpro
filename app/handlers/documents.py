@@ -1,6 +1,5 @@
 from pathlib import Path
 import logging
-from time import perf_counter
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
@@ -15,12 +14,9 @@ from app.services.document_processing import (
     DocumentDuplicateSaveFailure,
     DocumentProjectSelectionDuplicate,
     DocumentProjectSelectionFailure,
-    PreparedUpload,
+    DocumentUploadInput,
 )
-from app.services.pdf_files import PDFFileService
 from app.services.projects import ProjectService
-from app.services.temp_files import safe_unlink
-from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileService
 from app.state.pending_actions import set_pending_action
 from app.state.pending_documents import (
     clear_document_flow,
@@ -51,25 +47,29 @@ SUPPORTED_IMAGE_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/he
 SUPPORTED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
 
 
-def _document_extension(message: Message) -> str:
-    if message.document is None:
+def _document_extension(document) -> str:
+    if document is None:
         return ''
-    return Path(message.document.file_name or '').suffix.lower()
+    return Path(document.file_name or '').suffix.lower()
 
 
-def _is_pdf_document(message: Message) -> bool:
-    if message.document is None:
+def _is_pdf_document(document) -> bool:
+    if document is None:
         return False
-    mime_type = (message.document.mime_type or '').lower()
-    return mime_type == 'application/pdf' or _document_extension(message) == '.pdf'
+    mime_type = (document.mime_type or '').lower()
+    return mime_type == 'application/pdf' or _document_extension(document) == '.pdf'
 
 
-def _is_supported_image_document(message: Message) -> bool:
-    if message.document is None:
+def _is_supported_image_document(document) -> bool:
+    if document is None:
         return False
-    mime_type = (message.document.mime_type or '').lower()
-    file_ext = _document_extension(message)
+    mime_type = (document.mime_type or '').lower()
+    file_ext = _document_extension(document)
     return mime_type in SUPPORTED_IMAGE_MIME_TYPES or file_ext in SUPPORTED_IMAGE_EXTENSIONS
+
+
+def _is_supported_document_upload(document) -> bool:
+    return _is_pdf_document(document) or _is_supported_image_document(document)
 
 
 def _format_upload_limit_message() -> str:
@@ -128,19 +128,6 @@ def _format_duplicate_warning(duplicate_info, duplicate_status: str) -> str:
     )
 
 
-def _prepared_upload_from_downloaded(downloaded_photo: DownloadedTelegramPhoto) -> PreparedUpload:
-    return PreparedUpload(
-        source_temp_path=downloaded_photo.source_path,
-        ocr_temp_path=downloaded_photo.ocr_path,
-        original_filename=downloaded_photo.original_filename,
-        mime_type=downloaded_photo.mime_type,
-        file_ext=downloaded_photo.file_ext,
-        original_file_size=downloaded_photo.original_file_size,
-        normalized_file_size=downloaded_photo.normalized_file_size,
-        original_kind=downloaded_photo.original_kind,
-    )
-
-
 async def _notify_ocr_retry(message: Message, menu_markup) -> None:
     await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
 
@@ -154,6 +141,12 @@ def _preview_failure_message(failure: DocumentPreviewFailure) -> str:
         if failure.reason == 'validation_error' and failure.details == 'empty_text':
             return 'OCR не вернул текст. Попробуй отправить более четкий документ.'
         return f'Не удалось обработать документ: {failure.details or "неизвестная ошибка"}'
+    if failure.stage == 'preprocess':
+        if failure.reason == 'validation_error' and failure.details == 'missing_upload':
+            return 'Файл не найден в сообщении.'
+        if failure.reason == 'validation_error' and failure.details == 'unsupported_upload':
+            return 'Поддерживаются PDF и изображения: JPG, JPEG, PNG, WEBP, HEIC, HEIF. Этот файл пока не поддерживается для OCR.'
+        return f'Не удалось подготовить файл: {failure.details or "неизвестная ошибка"}'
     if failure.stage == 'extract':
         if failure.reason == 'timeout':
             return 'Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.'
@@ -224,31 +217,36 @@ async def _get_access_context_or_reply(message: Message):
     return context
 
 
-async def _process_uploaded_image(
+async def _process_upload_preview(
     message: Message,
     menu_markup,
     context,
-    downloaded_photo: DownloadedTelegramPhoto,
-    received_label: str,
-    prepared_elapsed_ms: float | None = None,
+    upload_input: DocumentUploadInput,
 ) -> None:
     if message.from_user is None:
-        safe_unlink(downloaded_photo.ocr_path)
-        safe_unlink(downloaded_photo.source_path)
         return
 
-    bot = message.bot
-    prepared_upload = _prepared_upload_from_downloaded(downloaded_photo)
+    preparation_result = await document_processing_service.prepare_upload(upload_input)
+    if isinstance(preparation_result, DocumentPreviewFailure):
+        await message.answer(_preview_failure_message(preparation_result), reply_markup=menu_markup)
+        return
 
-    if prepared_elapsed_ms is not None:
-        logger.info(
-            'Document preprocessing completed: user_id=%s original_kind=%s prep_ms=%.1f source_size=%s ocr_size=%s',
-            message.from_user.id,
-            downloaded_photo.original_kind,
-            prepared_elapsed_ms,
-            downloaded_photo.original_file_size,
-            downloaded_photo.normalized_file_size,
-        )
+    prepared_upload = preparation_result.prepared_upload
+    logger.info(
+        'Document preprocessing completed: user_id=%s original_kind=%s prep_ms=%.1f source_size=%s ocr_size=%s',
+        message.from_user.id,
+        prepared_upload.original_kind,
+        preparation_result.prep_elapsed_ms,
+        prepared_upload.original_file_size,
+        prepared_upload.normalized_file_size,
+    )
+
+    received_label = {
+        'photo': 'фото получено',
+        'pdf': 'PDF получен',
+        'image_file': 'файл получен',
+    }[prepared_upload.original_kind]
+    bot = message.bot
 
     pending_failure = await document_processing_service.begin_pending_preview(message.from_user.id)
     if pending_failure is not None:
@@ -270,7 +268,7 @@ async def _process_uploaded_image(
     logger.info(
         'OCR completed: user_id=%s original_kind=%s ocr_ms=%.1f chars=%s',
         message.from_user.id,
-        downloaded_photo.original_kind,
+        prepared_upload.original_kind,
         ocr_result.ocr_elapsed_ms,
         len(ocr_result.ocr_text),
     )
@@ -286,7 +284,7 @@ async def _process_uploaded_image(
     logger.info(
         'Extraction completed: user_id=%s original_kind=%s extract_ms=%.1f items=%s',
         message.from_user.id,
-        downloaded_photo.original_kind,
+        prepared_upload.original_kind,
         preview_result.extract_elapsed_ms,
         len(preview_result.document.items),
     )
@@ -353,17 +351,11 @@ async def process_photo(message: Message) -> None:
         )
         return
     logger.info('Photo upload accepted for OCR: user_id=%s', message.from_user.id)
-    logger.info('Photo upload starting file download: user_id=%s photo_count=%s', message.from_user.id, len(message.photo))
-    download_started = perf_counter()
-    file_service = TelegramFileService(message.bot)
-    downloaded_photo = await file_service.download_best_photo(message.photo)
-    await _process_uploaded_image(
+    await _process_upload_preview(
         message,
         menu_markup,
         context,
-        downloaded_photo,
-        'фото получено',
-        prepared_elapsed_ms=(perf_counter() - download_started) * 1000,
+        DocumentUploadInput(bot=message.bot, photo_sizes=list(message.photo)),
     )
 
 
@@ -399,8 +391,7 @@ async def process_document_file(message: Message) -> None:
             reply_markup=menu_markup,
         )
         return
-    is_pdf_document = _is_pdf_document(message)
-    if not is_pdf_document and not _is_supported_image_document(message):
+    if not _is_supported_document_upload(message.document):
         file_name = message.document.file_name or 'файл'
         logger.info(
             'Document upload rejected: user_id=%s file_name=%s mime_type=%s',
@@ -411,33 +402,16 @@ async def process_document_file(message: Message) -> None:
         await message.answer('Поддерживаются PDF и изображения: JPG, JPEG, PNG, WEBP, HEIC, HEIF. Этот файл пока не поддерживается для OCR.', reply_markup=menu_markup)
         return
     logger.info(
-        'Document upload accepted for OCR: user_id=%s file_name=%s mime_type=%s original_kind=%s',
+        'Document upload accepted for OCR: user_id=%s file_name=%s mime_type=%s',
         message.from_user.id,
         message.document.file_name,
         message.document.mime_type,
-        'pdf' if is_pdf_document else 'image_file',
     )
-    download_started = perf_counter()
-    try:
-        if is_pdf_document:
-            file_service = PDFFileService(message.bot)
-            downloaded_photo = await file_service.download_pdf_document(message.document)
-            received_label = 'PDF получен'
-        else:
-            file_service = TelegramFileService(message.bot)
-            downloaded_photo = await file_service.download_image_document(message.document)
-            received_label = 'файл получен'
-    except Exception as exc:  # noqa: BLE001
-        logger.exception('Document upload preprocessing failed')
-        await message.answer(f'Не удалось подготовить файл: {exc}', reply_markup=menu_markup)
-        return
-    await _process_uploaded_image(
+    await _process_upload_preview(
         message,
         menu_markup,
         context,
-        downloaded_photo,
-        received_label,
-        prepared_elapsed_ms=(perf_counter() - download_started) * 1000,
+        DocumentUploadInput(bot=message.bot, document=message.document),
     )
 
 
