@@ -1,7 +1,7 @@
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message, ReplyKeyboardMarkup
 
-from app.services.access import AccessService
+from app.services.access import AccessContext, AccessService
 from app.services.companies import CompanyService
 from app.services.documents import DocumentService
 from app.services.projects import ProjectService
@@ -18,14 +18,20 @@ view_service = ViewService()
 NL = chr(10)
 
 
-async def ensure_user_context(user):
+async def _resolve_access_context(user, access_context: AccessContext | None = None) -> AccessContext | None:
+    if access_context is not None:
+        return access_context
     if user is None:
         return None
     return await access_service.get_access_context(user)
 
 
-async def ensure_context(message: Message):
-    return await ensure_user_context(message.from_user)
+async def ensure_user_context(user, access_context: AccessContext | None = None) -> AccessContext | None:
+    return await _resolve_access_context(user, access_context)
+
+
+async def ensure_context(message: Message, access_context: AccessContext | None = None) -> AccessContext | None:
+    return await ensure_user_context(message.from_user, access_context)
 
 
 def build_main_menu_markup_from_context(context) -> ReplyKeyboardMarkup:
@@ -36,15 +42,23 @@ def build_main_menu_markup_from_context(context) -> ReplyKeyboardMarkup:
     )
 
 
-async def main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
+async def main_menu_markup_for_user(
+    user,
+    access_context: AccessContext | None = None,
+) -> ReplyKeyboardMarkup:
     if user is None:
         return build_main_menu_keyboard(has_company=False)
-    context = await access_service.get_access_context(user)
+    context = await _resolve_access_context(user, access_context)
+    if context is None:
+        return build_main_menu_keyboard(has_company=False)
     return build_main_menu_markup_from_context(context)
 
 
-async def main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
-    return await main_menu_markup_for_user(message.from_user)
+async def main_menu_markup(
+    message: Message,
+    access_context: AccessContext | None = None,
+) -> ReplyKeyboardMarkup:
+    return await main_menu_markup_for_user(message.from_user, access_context)
 
 
 async def main_menu_markup_for_telegram_id(telegram_user_id: int) -> ReplyKeyboardMarkup:
@@ -66,22 +80,31 @@ async def notify_membership_update(bot, telegram_user_id: int, text: str) -> Non
         return
 
 
-async def help_menu_kind_for_user(user) -> str:
-    if user is None:
+async def help_menu_kind_for_user(
+    user,
+    access_context: AccessContext | None = None,
+) -> str:
+    context = await _resolve_access_context(user, access_context)
+    if context is None:
         return 'employee'
-    context = await access_service.get_access_context(user)
     return context.menu_kind
 
 
-async def require_company_access(message: Message) -> bool:
-    context = await ensure_context(message)
+async def require_company_access(
+    message: Message,
+    access_context: AccessContext | None = None,
+) -> bool:
+    context = await ensure_context(message, access_context)
     if context is None or not context.has_company:
         text = 'Сначала нужен invite-код компании. Нажми "Ввести invite-код" или выполни /join КОД.'
-        if message.from_user is not None and await company_service.has_blocked_membership(message.from_user.id):
+        is_blocked = context.is_membership_blocked if context is not None else False
+        if not is_blocked and message.from_user is not None:
+            is_blocked = await company_service.has_blocked_membership(message.from_user.id)
+        if is_blocked:
             text = 'Доступ к компании приостановлен. Обратитесь к руководителю.'
         await message.answer(
             text,
-            reply_markup=await main_menu_markup(message),
+            reply_markup=await main_menu_markup(message, context),
         )
         return False
     return True
