@@ -166,10 +166,20 @@ def _detect_document_type(current_type: str | None, raw_text: str | None) -> str
 
 
 def _sanitize_items(items: list[DocumentItem], document_type: str) -> list[DocumentItem]:
-    sanitized: list[DocumentItem] = []
+    prepared: list[DocumentItem] = []
+    named_table_rows = 0
+
     for item in items:
         item.name = _normalize_item_name(item.name)
-        if _item_has_meaningful_value(item, document_type):
+        prepared.append(item)
+        if item.name is not None and _item_numeric_count(item) >= 2:
+            named_table_rows += 1
+
+    drop_nameless_numeric_rows = document_type in TABLE_DOCUMENT_TYPES or named_table_rows >= 2
+
+    sanitized: list[DocumentItem] = []
+    for item in prepared:
+        if _item_has_meaningful_value(item, document_type, drop_nameless_numeric_rows):
             sanitized.append(item)
     return sanitized
 
@@ -188,17 +198,25 @@ def _normalize_item_name(value: str | None) -> str | None:
     return cleaned
 
 
-def _item_has_meaningful_value(item: DocumentItem, document_type: str) -> bool:
-    numeric_count = sum(
+def _item_numeric_count(item: DocumentItem) -> int:
+    return sum(
         value is not None for value in (item.quantity, item.price, item.line_total)
     )
+
+
+def _item_has_meaningful_value(
+    item: DocumentItem,
+    document_type: str,
+    drop_nameless_numeric_rows: bool,
+) -> bool:
+    numeric_count = _item_numeric_count(item)
 
     if item.name is not None:
         if numeric_count > 0:
             return True
         return document_type not in TABLE_DOCUMENT_TYPES
 
-    if document_type in TABLE_DOCUMENT_TYPES:
+    if drop_nameless_numeric_rows:
         return False
     return numeric_count >= 2
 
