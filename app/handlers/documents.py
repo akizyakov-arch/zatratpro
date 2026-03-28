@@ -142,6 +142,75 @@ def _preview_failure_message(failure: DocumentPreviewFailure) -> str:
     return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
 
 
+async def _handle_upload_message(
+    message: Message,
+    *,
+    upload_kind: str,
+    missing_payload_message: str,
+) -> None:
+    context = await _get_access_context_or_reply(message)
+    if context is None:
+        logger.info('Upload stopped before OCR: context unavailable upload_kind=%s', upload_kind)
+        return
+
+    menu_markup = build_main_menu_keyboard(
+        menu_kind=context.menu_kind,
+        has_company=context.has_company,
+        can_view_reports=context.can_view_reports,
+    )
+    upload_input = _build_upload_input(message)
+    if message.from_user is None:
+        logger.info('Upload rejected: user missing upload_kind=%s', upload_kind)
+        await message.answer(missing_payload_message, reply_markup=menu_markup)
+        return
+    if upload_kind == 'photo' and not upload_input.photo_sizes:
+        logger.info('Photo upload rejected: photo payload missing')
+        await message.answer(missing_payload_message, reply_markup=menu_markup)
+        return
+    if upload_kind == 'document' and upload_input.document is None:
+        logger.info('Document upload rejected: document payload missing')
+        await message.answer(missing_payload_message, reply_markup=menu_markup)
+        return
+    if _is_message_upload_too_large(message):
+        file_size = _get_message_photo_size(message) if upload_kind == 'photo' else upload_input.document.file_size
+        logger.info(
+            'Upload rejected: user_id=%s upload_kind=%s reason=file_too_large size=%s limit=%s',
+            message.from_user.id,
+            upload_kind,
+            file_size,
+            MAX_UPLOAD_BYTES,
+        )
+        await message.answer(_format_upload_limit_message(), reply_markup=menu_markup)
+        return
+    logger.info('Upload checking active pending flow: user_id=%s upload_kind=%s', message.from_user.id, upload_kind)
+    has_active_flow = await has_active_document_flow(message.from_user.id)
+    logger.info(
+        'Upload active pending flow result: user_id=%s upload_kind=%s active=%s',
+        message.from_user.id,
+        upload_kind,
+        has_active_flow,
+    )
+    if has_active_flow:
+        await message.answer(
+            f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
+            reply_markup=menu_markup,
+        )
+        return
+    logger.info(
+        'Upload accepted for OCR handoff: user_id=%s upload_kind=%s file_name=%s mime_type=%s',
+        message.from_user.id,
+        upload_kind,
+        upload_input.document.file_name if upload_input.document is not None else None,
+        upload_input.document.mime_type if upload_input.document is not None else None,
+    )
+    await _process_upload_preview(
+        message,
+        menu_markup,
+        context,
+        upload_input,
+    )
+
+
 def _project_selection_failure_message(failure: DocumentProjectSelectionFailure) -> str:
     if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'missing_document':
         return 'Не удалось восстановить подготовленный документ. Отправь фото заново.'
@@ -303,39 +372,10 @@ async def process_photo(message: Message) -> None:
         len(message.photo or []),
         message.caption,
     )
-    context = await _get_access_context_or_reply(message)
-    if context is None:
-        logger.info('Photo upload stopped before OCR: context unavailable')
-        return
-    menu_markup = build_main_menu_keyboard(
-        menu_kind=context.menu_kind,
-        has_company=context.has_company,
-        can_view_reports=context.can_view_reports,
-    )
-    if not message.photo or message.from_user is None:
-        logger.info('Photo upload rejected: photo payload missing or user missing')
-        await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
-        return
-    if _is_message_upload_too_large(message):
-        logger.info('Photo upload rejected: user_id=%s reason=file_too_large size=%s limit=%s', message.from_user.id, _get_message_photo_size(message), MAX_UPLOAD_BYTES)
-        await message.answer(_format_upload_limit_message(), reply_markup=menu_markup)
-        return
-    logger.info('Photo upload checking active pending flow: user_id=%s', message.from_user.id)
-    has_active_flow = await has_active_document_flow(message.from_user.id)
-    logger.info('Photo upload active pending flow result: user_id=%s active=%s', message.from_user.id, has_active_flow)
-    if has_active_flow:
-        logger.info('Photo upload blocked: active pending document flow user_id=%s', message.from_user.id)
-        await message.answer(
-            f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
-            reply_markup=menu_markup,
-        )
-        return
-    logger.info('Photo upload accepted for OCR handoff: user_id=%s', message.from_user.id)
-    await _process_upload_preview(
+    await _handle_upload_message(
         message,
-        menu_markup,
-        context,
-        _build_upload_input(message),
+        upload_kind='photo',
+        missing_payload_message='Фото не найдено в сообщении.',
     )
 
 
@@ -347,41 +387,10 @@ async def process_document_file(message: Message) -> None:
         message.document.file_name if message.document is not None else None,
         message.document.mime_type if message.document is not None else None,
     )
-    context = await _get_access_context_or_reply(message)
-    if context is None:
-        return
-    menu_markup = build_main_menu_keyboard(
-        menu_kind=context.menu_kind,
-        has_company=context.has_company,
-        can_view_reports=context.can_view_reports,
-    )
-    if message.document is None or message.from_user is None:
-        await message.answer('Файл не найден в сообщении.', reply_markup=menu_markup)
-        return
-    if _is_message_upload_too_large(message):
-        logger.info('Document upload rejected: user_id=%s reason=file_too_large size=%s limit=%s', message.from_user.id, message.document.file_size, MAX_UPLOAD_BYTES)
-        await message.answer(_format_upload_limit_message(), reply_markup=menu_markup)
-        return
-    logger.info('Photo upload checking active pending flow: user_id=%s', message.from_user.id)
-    has_active_flow = await has_active_document_flow(message.from_user.id)
-    logger.info('Photo upload active pending flow result: user_id=%s active=%s', message.from_user.id, has_active_flow)
-    if has_active_flow:
-        await message.answer(
-            f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
-            reply_markup=menu_markup,
-        )
-        return
-    logger.info(
-        'Document upload accepted for OCR handoff: user_id=%s file_name=%s mime_type=%s',
-        message.from_user.id,
-        message.document.file_name,
-        message.document.mime_type,
-    )
-    await _process_upload_preview(
+    await _handle_upload_message(
         message,
-        menu_markup,
-        context,
-        _build_upload_input(message),
+        upload_kind='document',
+        missing_payload_message='Файл не найден в сообщении.',
     )
 
 
