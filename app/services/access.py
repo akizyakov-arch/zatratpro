@@ -2,7 +2,15 @@ from dataclasses import dataclass
 
 from aiogram.types import User
 
-from app.services.companies import ADMIN_ROLES, Company, CompanyService, EMPLOYEE_ROLE, MANAGER_ROLE
+from app.services.companies import (
+    ACTIVE_MEMBER_STATUS,
+    ADMIN_ROLES,
+    BLOCKED_MEMBER_STATUS,
+    Company,
+    CompanyService,
+    EMPLOYEE_ROLE,
+    MANAGER_ROLE,
+)
 from app.services.database import get_pool
 
 
@@ -13,6 +21,8 @@ class AccessContext:
     system_role: str
     company: Company | None
     company_role: str | None
+    membership_status: str | None = None
+    is_membership_blocked: bool = False
 
     @property
     def platform_role(self) -> str:
@@ -62,12 +72,13 @@ class AccessService:
                 SELECT u.id AS platform_user_id,
                        u.telegram_id,
                        u.system_role,
-                       active.company_id,
-                       active.company_name,
-                       active.company_status,
-                       active.owner_user_id,
-                       active.manager_user_id,
-                       active.company_role
+                       membership.company_id,
+                       membership.company_name,
+                       membership.company_status,
+                       membership.owner_user_id,
+                       membership.manager_user_id,
+                       membership.company_role,
+                       membership.membership_status
                 FROM users AS u
                 LEFT JOIN LATERAL (
                     SELECT c.id AS company_id,
@@ -75,25 +86,29 @@ class AccessService:
                            c.status AS company_status,
                            c.owner_user_id,
                            c.manager_user_id,
-                           cm.role AS company_role
+                           cm.role AS company_role,
+                           cm.status AS membership_status
                     FROM company_members AS cm
                     JOIN companies AS c
                       ON c.id = cm.company_id
                      AND c.status = 'active'
                     WHERE cm.user_id = u.id
-                      AND cm.status = 'active'
-                    ORDER BY cm.joined_at DESC, cm.id DESC
+                      AND cm.status IN ('active', 'blocked')
+                    ORDER BY CASE cm.status WHEN 'active' THEN 0 WHEN 'blocked' THEN 1 ELSE 2 END,
+                             cm.joined_at DESC,
+                             cm.id DESC
                     LIMIT 1
-                ) AS active ON TRUE
+                ) AS membership ON TRUE
                 WHERE u.telegram_id = $1
                 """,
                 telegram_user_id,
             )
 
     def _build_access_context(self, row, telegram_user_id: int) -> AccessContext:
+        membership_status = row["membership_status"] if row is not None else None
         company = None
         company_role = None
-        if row is not None and row["company_id"] is not None:
+        if row is not None and row["company_id"] is not None and membership_status == ACTIVE_MEMBER_STATUS:
             company = Company(
                 id=row["company_id"],
                 name=row["company_name"],
@@ -109,4 +124,6 @@ class AccessService:
             system_role=row["system_role"] if row is not None else "user",
             company=company,
             company_role=company_role,
+            membership_status=membership_status,
+            is_membership_blocked=membership_status == BLOCKED_MEMBER_STATUS,
         )
