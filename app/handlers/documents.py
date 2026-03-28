@@ -163,6 +163,10 @@ def _preview_failure_message(failure: DocumentPreviewFailure) -> str:
         if failure.reason == 'service_error':
             return f'Не удалось собрать JSON документа: {failure.details}'
         if failure.reason == 'validation_error':
+            if failure.details == 'unsupported_guest_bill':
+                return 'Гостевой счет не является поддерживаемым затратным документом. Нужен фискальный кассовый чек или другой первичный документ.'
+            if failure.details == 'unsupported_payment_invoice':
+                return 'Документ распознан, но это счет на оплату, а не поддерживаемый затратный документ. Нужен кассовый чек, БСО, накладная, акт, УПД, транспортная накладная или РКО.'
             return failure.details or 'Не удалось подготовить документ.'
         return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
     return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'

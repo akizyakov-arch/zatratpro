@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -35,6 +36,23 @@ OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
 OcrRetryNotifier = Callable[[], Awaitable[None]]
+UNSUPPORTED_GUEST_BILL_REASON = 'unsupported_guest_bill'
+UNSUPPORTED_PAYMENT_INVOICE_REASON = 'unsupported_payment_invoice'
+OCR_TEXT_FIXES = str.maketrans({
+    'a': 'д',
+    'c': 'с',
+    'e': 'е',
+    'h': 'н',
+    'k': 'к',
+    'm': 'м',
+    'o': 'о',
+    'p': 'р',
+    't': 'т',
+    'x': 'х',
+    'y': 'у',
+    '3': 'з',
+    '6': 'б',
+})
 
 
 @dataclass(slots=True)
@@ -128,6 +146,89 @@ DocumentDuplicateSaveResult = DocumentDuplicateSaveSuccess | DocumentDuplicateSa
 
 def _pending_source_type(pending_document: PendingDocument) -> str:
     return 'pdf' if pending_document.source_original_kind == 'pdf' else 'photo'
+
+
+def _compact_ocr_text(value: str | None) -> str:
+    text = (value or '').lower().replace('ё', 'е').translate(OCR_TEXT_FIXES)
+    return re.sub(r'[^а-я0-9]+', '', text)
+
+
+def _contains_ocr_marker(compact_text: str, *markers: str) -> bool:
+    return any(_compact_ocr_text(marker) in compact_text for marker in markers)
+
+
+def _count_ocr_markers(compact_text: str, markers: tuple[str, ...]) -> int:
+    return sum(1 for marker in markers if _compact_ocr_text(marker) in compact_text)
+
+
+def _unsupported_document_reason(document: DocumentSchema, raw_text: str | None) -> str | None:
+    compact_text = _compact_ocr_text(raw_text)
+    if not compact_text:
+        return None
+
+    if _contains_ocr_marker(
+        compact_text,
+        'гостевой счет',
+        'счет гостя',
+        'предчек',
+        'предварительный счет',
+        'предварительный чек',
+    ):
+        return UNSUPPORTED_GUEST_BILL_REASON
+
+    if document.document_type == 'vat_invoice':
+        return None
+
+    has_payment_invoice_marker = _contains_ocr_marker(
+        compact_text,
+        'счет на оплату',
+        'образец заполнения платежного поручения',
+    )
+    bank_marker_count = _count_ocr_markers(
+        compact_text,
+        (
+            'банк получателя',
+            'платежного поручения',
+            'расчетный счет',
+            'расч счет',
+            'кор счет',
+            'корсчет',
+            'бик',
+        ),
+    )
+    has_fiscal_marker = _contains_ocr_marker(
+        compact_text,
+        'кассовый чек',
+        'фискальный чек',
+        'рн ккт',
+        'фн',
+        'фд',
+        'фп',
+        'сайт фнс',
+        'смена',
+        'кассир',
+    )
+    has_supported_primary_marker = _contains_ocr_marker(
+        compact_text,
+        'товарная накладная',
+        'торг12',
+        'универсальный передаточный документ',
+        'упд',
+        'счетфактура',
+        'счет-фактура',
+        'счёт-фактура',
+        'акт выполненных работ',
+        'акт оказанных услуг',
+        'бланк строгой отчетности',
+        'бсо',
+        'расходный кассовый ордер',
+        'транспортная накладная',
+    )
+    if has_payment_invoice_marker:
+        return UNSUPPORTED_PAYMENT_INVOICE_REASON
+    if bank_marker_count >= 2 and not has_fiscal_marker and not has_supported_primary_marker:
+        return UNSUPPORTED_PAYMENT_INVOICE_REASON
+    return None
 
 
 class DocumentProcessingService:
@@ -330,6 +431,15 @@ class DocumentProcessingService:
             async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
                 extracted_document = await self.deepseek_service.extract_document(ocr_text)
             document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
+            unsupported_reason = _unsupported_document_reason(document, ocr_text)
+            if unsupported_reason is not None:
+                safe_unlink(prepared_upload.ocr_temp_path)
+                logger.info(
+                    'Unsupported document rejected during preview build: reason=%s document_type=%s',
+                    unsupported_reason,
+                    document.document_type,
+                )
+                return DocumentPreviewFailure(stage='extract', reason='validation_error', details=unsupported_reason)
             preview_text = format_document_preview(document)
         except TimeoutError:
             safe_unlink(prepared_upload.ocr_temp_path)
