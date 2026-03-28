@@ -14,6 +14,7 @@ from app.handlers.onboarding import router as onboarding_router
 from app.handlers.owner import router as owner_router
 from app.handlers.reports import router as reports_router
 from app.handlers.start import router as start_router
+from app.middlewares.access_context import AccessContextMiddleware
 from app.middlewares.perf import SlowUpdateMiddleware
 from app.services.database import close_db, init_db
 from app.services.executors import close_executors
@@ -69,6 +70,7 @@ async def main() -> None:
     dispatcher = Dispatcher()
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
+    dispatcher.update.outer_middleware(AccessContextMiddleware())
     dispatcher.update.outer_middleware(SlowUpdateMiddleware())
 
     dispatcher.include_router(documents_router)
