@@ -2,6 +2,8 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
+from app.services.access import AccessContext
+
 from app.handlers.common import (
     build_main_menu_markup_from_context,
     company_service,
@@ -75,31 +77,35 @@ document_storage_service = DocumentStorageService()
 
 
 @router.message(Command('invite'))
-async def invite_command(message: Message, command: CommandObject) -> None:
+async def invite_command(
+    message: Message,
+    command: CommandObject,
+    access_context: AccessContext | None = None,
+) -> None:
     if message.from_user is None:
         return
     role = (command.args or 'employee').strip()
     if role != 'employee':
-        await message.answer('Использование: /invite employee', reply_markup=await main_menu_markup(message))
+        await message.answer('Использование: /invite employee', reply_markup=await main_menu_markup(message, access_context))
         return
     try:
         code = await company_service.create_invite(message.from_user, 'employee')
     except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+        await message.answer(str(exc), reply_markup=await main_menu_markup(message, access_context))
         return
-    await message.answer('Invite-код для сотрудника:', reply_markup=await main_menu_markup(message))
+    await message.answer('Invite-код для сотрудника:', reply_markup=await main_menu_markup(message, access_context))
     await message.answer(code)
 
 
 @router.message(F.text == MENU_BUTTONS['projects'])
-async def projects_menu_entry(message: Message) -> None:
+async def projects_menu_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
-    context = await ensure_context(message)
+    context = await ensure_context(message, access_context)
     if context is None or not context.can_manage_company:
         await message.answer(
             'Раздел проектов доступен только manager.',
-            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message, access_context),
         )
         return
     await message.answer('Раздел проектов:', reply_markup=build_projects_menu_keyboard())
@@ -146,13 +152,13 @@ async def projects_archived_callback(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == MANAGER_PROJECT_CREATE_CALLBACK)
-async def project_create_callback(callback: CallbackQuery) -> None:
+async def project_create_callback(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
     await set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
-    context = await ensure_user_context(callback.from_user)
-    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user)
+    context = await ensure_user_context(callback.from_user, access_context)
+    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user, access_context)
     await callback.message.answer('Отправь название нового проекта.', reply_markup=reply_markup)
 
 
@@ -171,14 +177,14 @@ async def project_view_callback(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith(MANAGER_PROJECT_RENAME_PREFIX))
-async def project_rename_prompt(callback: CallbackQuery) -> None:
+async def project_rename_prompt(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
     project_id = int(callback.data.removeprefix(MANAGER_PROJECT_RENAME_PREFIX))
     await set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
     await callback.answer()
-    context = await ensure_user_context(callback.from_user)
-    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user)
+    context = await ensure_user_context(callback.from_user, access_context)
+    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user, access_context)
     await callback.message.answer('Отправь новое название проекта.', reply_markup=reply_markup)
 
 
@@ -240,14 +246,14 @@ async def project_documents_callback(callback: CallbackQuery) -> None:
 
 
 @router.message(F.text == MENU_BUTTONS['employees'])
-async def employees_menu_entry(message: Message) -> None:
+async def employees_menu_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
-    context = await ensure_context(message)
+    context = await ensure_context(message, access_context)
     if context is None or not context.can_manage_company:
         await message.answer(
             'Раздел сотрудников доступен только manager.',
-            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message, access_context),
         )
         return
     await message.answer('Раздел сотрудников:', reply_markup=build_employees_menu_keyboard())
@@ -382,15 +388,15 @@ async def employee_unblock_confirm(callback: CallbackQuery) -> None:
 
 
 @router.message(F.text == MENU_BUTTONS['my_company'])
-async def my_company_entry(message: Message) -> None:
+async def my_company_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
     try:
         card = await view_service.get_my_company_card(message.from_user.id)
     except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+        await message.answer(str(exc), reply_markup=await main_menu_markup(message, access_context))
         return
-    await message.answer(format_company_card(card), reply_markup=await main_menu_markup(message))
+    await message.answer(format_company_card(card), reply_markup=await main_menu_markup(message, access_context))
 
 
 async def _send_my_documents_filters(message: Message, *, edit: bool = False) -> None:
@@ -469,13 +475,13 @@ def _empty_my_documents_text(scope_token: str) -> str:
 
 
 @router.message(F.text == MENU_BUTTONS['my_documents'])
-async def my_documents_entry(message: Message) -> None:
+async def my_documents_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
     try:
         await _send_my_documents_filters(message)
     except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+        await message.answer(str(exc), reply_markup=await main_menu_markup(message, access_context))
 
 
 @router.callback_query(F.data == MY_DOCUMENTS_FILTER_MENU_CALLBACK)

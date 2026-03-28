@@ -2,6 +2,8 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
+from app.services.access import AccessContext
+
 from app.handlers.common import (
     company_service,
     ensure_context,
@@ -56,61 +58,65 @@ NL = chr(10)
 
 
 @router.message(Command('create_company'))
-async def create_company_command(message: Message, command: CommandObject) -> None:
+async def create_company_command(
+    message: Message,
+    command: CommandObject,
+    access_context: AccessContext | None = None,
+) -> None:
     if message.from_user is None:
         return
     name = (command.args or '').strip()
     if not name:
-        await message.answer('Использование: /create_company Название компании', reply_markup=await main_menu_markup(message))
+        await message.answer('Использование: /create_company Название компании', reply_markup=await main_menu_markup(message, access_context))
         return
     try:
         company = await company_service.create_company(message.from_user, name)
         invite_code = await company_service.create_initial_manager_invite(message.from_user, company.id)
     except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+        await message.answer(str(exc), reply_markup=await main_menu_markup(message, access_context))
         return
-    await message.answer(f'Компания создана: {company.name}.', reply_markup=await main_menu_markup(message))
+    await message.answer(f'Компания создана: {company.name}.', reply_markup=await main_menu_markup(message, access_context))
     await message.answer('Invite-код для первого manager:')
     await message.answer(invite_code)
 
 
 @router.message(F.text == MENU_BUTTONS['companies'])
-async def companies_entry(message: Message) -> None:
+async def companies_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
-    context = await ensure_context(message)
+    context = await ensure_context(message, access_context)
     if context is None or context.platform_role != 'owner':
         await message.answer(
             'Раздел доступен только owner.',
-            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message, access_context),
         )
         return
     await message.answer('Компании:', reply_markup=build_owner_companies_menu_keyboard())
 
 
 @router.message(F.text == MENU_BUTTONS['users'])
-async def users_entry(message: Message) -> None:
+async def users_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
     try:
         users = await view_service.list_users(message.from_user.id)
     except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+        await message.answer(str(exc), reply_markup=await main_menu_markup(message, access_context))
         return
     if not users:
-        await message.answer('Пользователей пока нет.', reply_markup=await main_menu_markup(message))
+        await message.answer('Пользователей пока нет.', reply_markup=await main_menu_markup(message, access_context))
         return
     await message.answer('Пользователи:', reply_markup=build_owner_users_keyboard(users))
 
 
 @router.message(F.text == MENU_BUTTONS['system_status'])
-async def system_status_entry(message: Message) -> None:
+async def system_status_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
     try:
         stats = await view_service.get_system_stats(message.from_user.id)
     except CompanyAccessError as exc:
-        await message.answer(str(exc), reply_markup=await main_menu_markup(message))
+        await message.answer(str(exc), reply_markup=await main_menu_markup(message, access_context))
         return
     text = NL.join([
         f'Пользователей: {stats.users}',
@@ -121,18 +127,18 @@ async def system_status_entry(message: Message) -> None:
         f'Проектов: {stats.projects}',
         f'Документов: {stats.documents}',
     ])
-    await message.answer(text, reply_markup=await main_menu_markup(message))
+    await message.answer(text, reply_markup=await main_menu_markup(message, access_context))
 
 
 @router.message(F.text == MENU_BUTTONS['create_company'])
-async def create_company_button(message: Message) -> None:
+async def create_company_button(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
-    context = await ensure_context(message)
+    context = await ensure_context(message, access_context)
     if context is None or context.platform_role != 'owner':
         await message.answer(
             'Создавать компании может только owner.',
-            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message, access_context),
         )
         return
     await set_pending_action(message.from_user.id, 'create_company')
@@ -359,7 +365,7 @@ async def company_card_callback(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith(OWNER_COMPANY_ISSUE_INVITE_PREFIX))
-async def company_issue_invite_callback(callback: CallbackQuery) -> None:
+async def company_issue_invite_callback(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
     company_id = int(callback.data.removeprefix(OWNER_COMPANY_ISSUE_INVITE_PREFIX))
@@ -370,8 +376,8 @@ async def company_issue_invite_callback(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer('Invite выдан.')
-    context = await ensure_user_context(callback.from_user)
-    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user)
+    context = await ensure_user_context(callback.from_user, access_context)
+    reply_markup = build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup_for_user(callback.from_user, access_context)
     await callback.message.answer('Invite для manager:', reply_markup=reply_markup)
     await callback.message.answer(code)
 

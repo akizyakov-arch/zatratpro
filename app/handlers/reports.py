@@ -4,6 +4,8 @@ from datetime import datetime
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
+from app.services.access import AccessContext
+
 from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
 from app.services.companies import CompanyAccessError
 from app.services.document_exports import DocumentExportService
@@ -105,14 +107,14 @@ async def _send_accountant_export(message: Message, telegram_user_id: int, *, pe
 
 
 @router.message(F.text == MENU_BUTTONS['reports'])
-async def reports_menu_entry(message: Message) -> None:
+async def reports_menu_entry(message: Message, access_context: AccessContext | None = None) -> None:
     if message.from_user is None:
         return
-    context = await ensure_context(message)
+    context = await ensure_context(message, access_context)
     if context is None or not context.can_view_reports:
         await message.answer(
             'Раздел отчетов доступен только manager.',
-            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message),
+            reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message, access_context),
         )
         return
     await message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())

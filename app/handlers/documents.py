@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.config import get_settings
-from app.services.access import AccessService
+from app.services.access import AccessContext
 from app.services.companies import CompanyAccessError
 from app.services.document_processing import (
     DocumentPreviewFailure,
@@ -22,7 +22,7 @@ from app.state.pending_documents import (
     get_pending_document,
     has_active_document_flow,
 )
-from app.handlers.common import main_menu_markup_for_user
+from app.handlers.common import ensure_user_context, main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
 from app.ui.projects import (
     DOCUMENT_DUPLICATE_CANCEL_CALLBACK,
@@ -38,7 +38,6 @@ from app.ui.projects import (
 router = Router()
 logger = logging.getLogger(__name__)
 project_service = ProjectService()
-access_service = AccessService()
 document_processing_service = DocumentProcessingService()
 
 MAX_UPLOAD_BYTES = get_settings().max_upload_bytes
@@ -65,8 +64,11 @@ def _is_message_upload_too_large(message: Message) -> bool:
     return bool(file_size is not None and file_size > MAX_UPLOAD_BYTES)
 
 
-async def _main_menu_markup(message: Message) -> object:
-    return await main_menu_markup_for_user(message.from_user)
+async def _main_menu_markup(
+    message: Message,
+    access_context: AccessContext | None = None,
+) -> object:
+    return await main_menu_markup_for_user(message.from_user, access_context)
 
 
 def _person_name(user) -> str:
@@ -147,8 +149,9 @@ async def _handle_upload_message(
     *,
     upload_kind: str,
     missing_payload_message: str,
+    access_context: AccessContext | None = None,
 ) -> None:
-    context = await _get_access_context_or_reply(message)
+    context = await _get_access_context_or_reply(message, access_context)
     if context is None:
         logger.info('Upload stopped before OCR: context unavailable upload_kind=%s', upload_kind)
         return
@@ -238,12 +241,25 @@ def _duplicate_save_failure_message(failure: DocumentDuplicateSaveFailure) -> st
     return f'Не удалось сохранить документ: {failure.details or "неизвестная ошибка"}'
 
 
-async def _get_access_context_or_reply(message: Message):
+async def _get_access_context_or_reply(
+    message: Message,
+    access_context: AccessContext | None = None,
+):
     if message.from_user is None:
         logger.info('Access context missing: no from_user on message')
-        await message.answer('Не удалось определить пользователя.', reply_markup=await _main_menu_markup(message))
+        await message.answer(
+            'Не удалось определить пользователя.',
+            reply_markup=await _main_menu_markup(message, access_context),
+        )
         return None
-    context = await access_service.get_access_context(message.from_user)
+    context = await ensure_user_context(message.from_user, access_context)
+    if context is None:
+        logger.info('Access context missing after middleware: user_id=%s', message.from_user.id)
+        await message.answer(
+            'Не удалось определить пользователя.',
+            reply_markup=await _main_menu_markup(message, access_context),
+        )
+        return None
     logger.info(
         'Access context resolved: user_id=%s menu_kind=%s has_company=%s can_manage_company=%s can_view_reports=%s',
         message.from_user.id,
@@ -365,7 +381,7 @@ async def _process_upload_preview(
 
 
 @router.message(F.photo)
-async def process_photo(message: Message) -> None:
+async def process_photo(message: Message, access_context: AccessContext | None = None) -> None:
     logger.info(
         'Photo upload received: user_id=%s photo_count=%s caption=%s',
         message.from_user.id if message.from_user is not None else None,
@@ -376,11 +392,12 @@ async def process_photo(message: Message) -> None:
         message,
         upload_kind='photo',
         missing_payload_message='Фото не найдено в сообщении.',
+        access_context=access_context,
     )
 
 
 @router.message(F.document)
-async def process_document_file(message: Message) -> None:
+async def process_document_file(message: Message, access_context: AccessContext | None = None) -> None:
     logger.info(
         'Document upload received: user_id=%s file_name=%s mime_type=%s',
         message.from_user.id if message.from_user is not None else None,
@@ -391,16 +408,20 @@ async def process_document_file(message: Message) -> None:
         message,
         upload_kind='document',
         missing_payload_message='Файл не найден в сообщении.',
+        access_context=access_context,
     )
 
 
 @router.callback_query(F.data == PROJECT_CANCEL_CALLBACK)
-async def cancel_project_selection(callback: CallbackQuery) -> None:
+async def cancel_project_selection(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
     await clear_document_flow(callback.from_user.id)
     await callback.answer('Загрузка отменена.')
-    await callback.message.answer('Подготовка документа отменена.', reply_markup=await main_menu_markup_for_user(callback.from_user))
+    await callback.message.answer(
+        'Подготовка документа отменена.',
+        reply_markup=await main_menu_markup_for_user(callback.from_user, access_context),
+    )
 
 
 @router.callback_query(F.data == PROJECT_CREATE_CALLBACK)
@@ -413,10 +434,10 @@ async def create_project_from_document(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith(PROJECT_CALLBACK_PREFIX))
-async def process_project_selection(callback: CallbackQuery) -> None:
+async def process_project_selection(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    menu_markup = await main_menu_markup_for_user(callback.from_user)
+    menu_markup = await main_menu_markup_for_user(callback.from_user, access_context)
     pending_document = await get_pending_document(callback.from_user.id)
     if pending_document is None:
         await callback.answer('Нет подготовленного документа. Отправь фото заново.', show_alert=True)
@@ -460,16 +481,19 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == DOCUMENT_DUPLICATE_CANCEL_CALLBACK)
-async def duplicate_cancel_callback(callback: CallbackQuery) -> None:
+async def duplicate_cancel_callback(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
     await clear_document_flow(callback.from_user.id)
     await callback.answer('Загрузка отменена.')
-    await callback.message.answer('Документ не сохранен. Можно отправить новый файл.', reply_markup=await main_menu_markup_for_user(callback.from_user))
+    await callback.message.answer(
+        'Документ не сохранен. Можно отправить новый файл.',
+        reply_markup=await main_menu_markup_for_user(callback.from_user, access_context),
+    )
 
 
 @router.callback_query(F.data == DOCUMENT_DUPLICATE_SAVE_CALLBACK)
-async def duplicate_save_callback(callback: CallbackQuery) -> None:
+async def duplicate_save_callback(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
 
@@ -478,7 +502,7 @@ async def duplicate_save_callback(callback: CallbackQuery) -> None:
         await callback.answer('Нет документа для подтверждения. Отправь фото заново.', show_alert=True)
         return
 
-    menu_markup = await main_menu_markup_for_user(callback.from_user)
+    menu_markup = await main_menu_markup_for_user(callback.from_user, access_context)
     if pending_document.selected_project_id is None:
         await clear_document_flow(callback.from_user.id)
         await callback.answer()
@@ -541,8 +565,8 @@ async def log_non_text_message(message: Message) -> None:
 
 
 @router.message(~F.text)
-async def unsupported_message(message: Message) -> None:
+async def unsupported_message(message: Message, access_context: AccessContext | None = None) -> None:
     await message.answer(
         'Поддерживаются кнопки главного меню, /start, /help, /join, а также фото, изображения и PDF документов.',
-        reply_markup=await _main_menu_markup(message),
+        reply_markup=await _main_menu_markup(message, access_context),
     )

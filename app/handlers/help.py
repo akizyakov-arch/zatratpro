@@ -6,6 +6,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from app.services.access import AccessContext
+
 from app.handlers.common import help_menu_kind_for_user, person_name
 from app.ui.help import HELP_TOPICS
 from app.ui.help import (
@@ -23,9 +25,9 @@ SLOW_STAGE_MS = 400.0
 
 
 @router.message(Command('help'))
-async def help_command(message: Message) -> None:
+async def help_command(message: Message, access_context: AccessContext | None = None) -> None:
     started = perf_counter()
-    menu_kind = await help_menu_kind_for_user(message.from_user)
+    menu_kind = await help_menu_kind_for_user(message.from_user, access_context)
     after_kind = perf_counter()
     await message.answer(f'{person_name(message.from_user)}, выбери тему помощи.', reply_markup=build_help_topics_keyboard(menu_kind))
     finished = perf_counter()
@@ -41,8 +43,8 @@ async def help_command(message: Message) -> None:
 
 
 @router.message(F.text == MENU_BUTTONS['help'])
-async def help_button(message: Message) -> None:
-    await help_command(message)
+async def help_button(message: Message, access_context: AccessContext | None = None) -> None:
+    await help_command(message, access_context)
 
 
 @router.callback_query(F.data.startswith(HELP_MENU_PREFIX))
