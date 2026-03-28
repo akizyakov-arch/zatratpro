@@ -11,12 +11,12 @@ from app.services.documents import DocumentValidationError
 from app.services.json_formatter import format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.temp_files import safe_unlink, temporary_files
-from app.state.pending_documents import PendingDocument
+from app.state.pending_documents import PendingDocument, begin_document_flow, store_pending_document
 
 
 logger = logging.getLogger(__name__)
 PreparedUploadKind = Literal["photo", "image_file", "pdf"]
-DocumentPreviewFailureStage = Literal["preprocess", "ocr", "extract"]
+DocumentPreviewFailureStage = Literal["preprocess", "ocr", "extract", "pending"]
 DocumentPreviewFailureReason = Literal["timeout", "service_error", "validation_error", "unexpected"]
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
@@ -92,6 +92,27 @@ class DocumentProcessingService:
     ) -> None:
         self.ocr_service = ocr_service or OCRSpaceService()
         self.deepseek_service = deepseek_service or DeepSeekService()
+
+    async def begin_pending_preview(self, telegram_user_id: int) -> DocumentPreviewFailure | None:
+        try:
+            await begin_document_flow(telegram_user_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Failed to begin document preview flow')
+            return DocumentPreviewFailure(stage='pending', reason='unexpected', details=str(exc))
+        return None
+
+    async def store_pending_preview(
+        self,
+        telegram_user_id: int,
+        preview_result: DocumentPreviewReady,
+    ) -> DocumentPreviewResult:
+        try:
+            await store_pending_document(telegram_user_id, preview_result.pending_document)
+        except Exception as exc:  # noqa: BLE001
+            safe_unlink(preview_result.pending_document.source_temp_path)
+            logger.exception('Failed to store pending document preview')
+            return DocumentPreviewFailure(stage='pending', reason='unexpected', details=str(exc))
+        return preview_result
 
     async def run_ocr(
         self,

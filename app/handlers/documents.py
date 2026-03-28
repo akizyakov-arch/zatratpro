@@ -22,12 +22,10 @@ from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileSer
 from app.state.pending_actions import set_pending_action
 from app.state.pending_documents import (
     PendingDocument,
-    begin_document_flow,
     clear_document_flow,
     get_pending_document,
     has_active_document_flow,
     pop_pending_document,
-    store_pending_document,
 )
 from app.handlers.common import main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
@@ -289,7 +287,11 @@ async def _process_uploaded_image(
             downloaded_photo.normalized_file_size,
         )
 
-    await begin_document_flow(message.from_user.id)
+    pending_failure = await document_processing_service.begin_pending_preview(message.from_user.id)
+    if pending_failure is not None:
+        await clear_document_flow(message.from_user.id)
+        await message.answer(_preview_failure_message(pending_failure), reply_markup=menu_markup)
+        return
     await message.answer(f'{_person_name(message.from_user)}, {received_label}. Начинаю распознавание.', reply_markup=menu_markup)
 
     async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
@@ -326,7 +328,12 @@ async def _process_uploaded_image(
         len(preview_result.document.items),
     )
 
-    await store_pending_document(message.from_user.id, preview_result.pending_document)
+    stored_preview_result = await document_processing_service.store_pending_preview(message.from_user.id, preview_result)
+    if isinstance(stored_preview_result, DocumentPreviewFailure):
+        await clear_document_flow(message.from_user.id)
+        await message.answer(_preview_failure_message(stored_preview_result), reply_markup=menu_markup)
+        return
+    preview_result = stored_preview_result
     await message.answer(preview_result.preview_text, reply_markup=menu_markup)
 
     try:
