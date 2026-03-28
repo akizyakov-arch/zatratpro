@@ -12,6 +12,8 @@ from app.services.companies import CompanyAccessError, CompanyService
 from app.services.document_processing import (
     DocumentPreviewFailure,
     DocumentProcessingService,
+    DocumentProjectSelectionDuplicate,
+    DocumentProjectSelectionFailure,
     PreparedUpload,
 )
 from app.services.documents import DocumentService, DocumentValidationError
@@ -25,7 +27,6 @@ from app.state.pending_documents import (
     clear_document_flow,
     get_pending_document,
     has_active_document_flow,
-    pop_pending_document,
 )
 from app.handlers.common import main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
@@ -170,6 +171,23 @@ def _preview_failure_message(failure: DocumentPreviewFailure) -> str:
             return failure.details or 'Не удалось подготовить документ.'
         return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
     return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
+
+
+def _project_selection_failure_message(failure: DocumentProjectSelectionFailure) -> str:
+    if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'missing_document':
+        return 'Не удалось восстановить подготовленный документ. Отправь фото заново.'
+    if failure.reason in {'validation_error', 'access_error'}:
+        return failure.details or 'Не удалось сохранить документ.'
+    return f'Не удалось сохранить документ: {failure.details or "неизвестная ошибка"}'
+
+
+def _saved_duplicate_message(duplicate_check) -> str:
+    return {
+        "exact": f"\n\nНайден точный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Загрузка не заблокирована.",
+        "probable": f"\n\nНайден вероятный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Проверь запись вручную.",
+        "none": "\n\nПроверка на дубли выполнена: совпадений не найдено.",
+        "not_checked": "\n\nПроверка на дубли не выполнена: для вероятного дубля нужны дата, сумма и продавец. Для точного дубля дополнительно нужен номер документа.",
+    }[duplicate_check.status]
 
 
 async def _save_pending_document(callback: CallbackQuery, pending_document: PendingDocument, menu_markup) -> None:
@@ -522,70 +540,23 @@ async def process_project_selection(callback: CallbackQuery) -> None:
 
     await callback.answer()
     await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
-    document = pending_document.extracted_document
-    if document is None:
+    selection_result = await document_processing_service.resolve_project_selection(
+        telegram_user=callback.from_user,
+        project=project,
+        pending_document=pending_document,
+    )
+    if isinstance(selection_result, DocumentProjectSelectionFailure):
         await clear_document_flow(callback.from_user.id)
-        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
+        await callback.message.answer(_project_selection_failure_message(selection_result), reply_markup=menu_markup)
         return
-    try:
-        duplicate_check = await document_service.find_company_duplicate_document(
-            telegram_user=callback.from_user,
-            project=project,
-            document=document,
-            normalized_text=pending_document.normalized_text,
+    if isinstance(selection_result, DocumentProjectSelectionDuplicate):
+        await callback.message.answer(
+            _format_duplicate_warning(selection_result.duplicate_info, selection_result.duplicate_check.status),
+            reply_markup=build_duplicate_confirmation_keyboard(),
         )
-        pending_document.duplicate_check = duplicate_check
-        pending_document.selected_project_id = project.id
-        if duplicate_check.status in {'exact', 'probable'}:
-            await store_pending_document(callback.from_user.id, pending_document)
-            duplicate_info = await document_service.get_duplicate_document_info(
-                callback.from_user.id,
-                duplicate_check.duplicate_document_id,
-            )
-            await callback.message.answer(
-                _format_duplicate_warning(duplicate_info, duplicate_check.status),
-                reply_markup=build_duplicate_confirmation_keyboard(),
-            )
-            return
-        document_id = await document_service.save_document(
-            telegram_user=callback.from_user,
-            project=project,
-            normalized_text=pending_document.normalized_text,
-            document=document,
-            duplicate_check=duplicate_check,
-            source_type=_pending_source_type(pending_document),
-            source_temp_path=pending_document.source_temp_path,
-            source_original_name=pending_document.source_original_name,
-            source_mime_type=pending_document.source_mime_type,
-            source_file_ext=pending_document.source_file_ext,
-            source_original_file_size=pending_document.source_original_file_size,
-            source_stored_file_size=pending_document.source_stored_file_size,
-            source_was_normalized=pending_document.source_was_normalized,
-            source_original_kind=pending_document.source_original_kind,
-        )
-    except DocumentValidationError as exc:
-        await clear_document_flow(callback.from_user.id)
-        await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
-    except CompanyAccessError as exc:
-        await clear_document_flow(callback.from_user.id)
-        await callback.message.answer(str(exc), reply_markup=menu_markup)
-        return
-    except Exception as exc:  # noqa: BLE001
-        await clear_document_flow(callback.from_user.id)
-        logger.exception('Document save failed')
-        await callback.message.answer(f'Не удалось сохранить документ: {exc}', reply_markup=menu_markup)
-        return
-
-    await pop_pending_document(callback.from_user.id)
-    duplicate_message = {
-        "exact": f"\n\nНайден точный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Загрузка не заблокирована.",
-        "probable": f"\n\nНайден вероятный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Проверь запись вручную.",
-        "none": "\n\nПроверка на дубли выполнена: совпадений не найдено.",
-        "not_checked": "\n\nПроверка на дубли не выполнена: для вероятного дубля нужны дата, сумма и продавец. Для точного дубля дополнительно нужен номер документа.",
-    }[duplicate_check.status]
     await callback.message.answer(
-        f"Документ сохранен в проект \"{project.name}\". ID записи: {document_id}.{duplicate_message}",
+        f"Документ сохранен в проект \"{selection_result.project_name}\". ID записи: {selection_result.document_id}.{_saved_duplicate_message(selection_result.duplicate_check)}",
         reply_markup=menu_markup,
     )
 
