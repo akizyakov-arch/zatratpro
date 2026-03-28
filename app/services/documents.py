@@ -759,13 +759,19 @@ def _resolve_document_vat_total(document: DocumentSchema, items: list[DocumentIt
 
 
 def _resolve_document_vat_scope(document: DocumentSchema, items: list[DocumentItem]) -> str | None:
-    if document.vat_scope in {"document", "mixed", "no_vat", "unknown"}:
-        return document.vat_scope
     labels = {
         normalized
         for normalized in (_normalize_vat_label(item.vat_label) for item in items)
         if normalized is not None
     }
+    vat_total = _as_decimal(document.vat_total_amount, "0.01")
+    raw_text = (document.raw_text or "").lower()
+
+    if _should_force_mixed_vat_scope(document.document_type, vat_total, labels, raw_text):
+        return "mixed"
+
+    if document.vat_scope in {"document", "mixed", "no_vat", "unknown"}:
+        return document.vat_scope
     if not labels:
         return None
     if labels == {"без ндс"}:
@@ -773,6 +779,25 @@ def _resolve_document_vat_scope(document: DocumentSchema, items: list[DocumentIt
     if len(labels) > 1:
         return "mixed"
     return "document"
+
+
+def _should_force_mixed_vat_scope(
+    document_type: str,
+    vat_total: Decimal | None,
+    labels: set[str],
+    raw_text: str,
+) -> bool:
+    if document_type not in {"cash_receipt", "bso"}:
+        return False
+
+    has_no_vat_signal = "без ндс" in raw_text or "безндс" in raw_text.replace(" ", "")
+    has_positive_vat = vat_total is not None and vat_total > Decimal("0.00")
+
+    if "без ндс" in labels and any(label != "без ндс" for label in labels):
+        return True
+    if has_positive_vat and has_no_vat_signal:
+        return True
+    return False
 
 
 def _normalize_vat_label(value: str | None) -> str | None:

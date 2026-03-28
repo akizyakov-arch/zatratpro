@@ -16,7 +16,16 @@ EXTRACTION_PROMPT = """
   "vat_total_amount": null,
   "vat_scope": "unknown",
   "is_fiscalized": null,
-  "items": []
+  "items": [
+    {
+      "name": null,
+      "quantity": null,
+      "price": null,
+      "line_total": null,
+      "vat_label": null,
+      "vat_amount": null
+    }
+  ]
 }
 
 Допустимые document_type:
@@ -54,6 +63,7 @@ document, mixed, no_vat, unknown
 - если позиция не содержит надежных числовых данных и надежного названия, не включай ее в items
 - если line_total явно указан, используй его
 - если quantity и price надежны, а line_total не указан, можно вычислить line_total = quantity * price
+- vat_label и vat_amount на позиции заполняй только если НДС явно относится к этой позиции
 
 Правила по total:
 - total заполняй только если итоговая сумма документа явно указана
@@ -67,7 +77,10 @@ document, mixed, no_vat, unknown
 VAT и фискализация:
 - заполняй vat_* только если НДС явно указан
 - если НДС не виден, используй vat_total_amount = null и vat_scope = unknown
-- если явно указано "без НДС", используй vat_scope = no_vat
+- если явно указано "без НДС" для всего документа, используй vat_scope = no_vat
+- если НДС относится только к части позиций, а другая часть отмечена как "без НДС", используй vat_scope = mixed
+- для чеков и БСО, если в итоговом блоке одновременно видны положительная сумма НДС и любая сумма/пометка "без НДС", используй vat_scope = mixed
+- используй vat_scope = document только если НДС относится ко всему документу
 - заполняй is_fiscalized только для чеков и БСО с явными фискальными реквизитами
 - для накладных, актов, УПД, счетов-фактур и транспортных накладных is_fiscalized обычно null
 
