@@ -1,4 +1,3 @@
-from pathlib import Path
 import logging
 
 from aiogram import F, Router
@@ -43,33 +42,6 @@ access_service = AccessService()
 document_processing_service = DocumentProcessingService()
 
 MAX_UPLOAD_BYTES = get_settings().max_upload_bytes
-SUPPORTED_IMAGE_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'}
-SUPPORTED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
-
-
-def _document_extension(document) -> str:
-    if document is None:
-        return ''
-    return Path(document.file_name or '').suffix.lower()
-
-
-def _is_pdf_document(document) -> bool:
-    if document is None:
-        return False
-    mime_type = (document.mime_type or '').lower()
-    return mime_type == 'application/pdf' or _document_extension(document) == '.pdf'
-
-
-def _is_supported_image_document(document) -> bool:
-    if document is None:
-        return False
-    mime_type = (document.mime_type or '').lower()
-    file_ext = _document_extension(document)
-    return mime_type in SUPPORTED_IMAGE_MIME_TYPES or file_ext in SUPPORTED_IMAGE_EXTENSIONS
-
-
-def _is_supported_document_upload(document) -> bool:
-    return _is_pdf_document(document) or _is_supported_image_document(document)
 
 
 def _format_upload_limit_message() -> str:
@@ -125,6 +97,14 @@ def _format_duplicate_warning(duplicate_info, duplicate_status: str) -> str:
         f"Сумма: {total_amount}\n"
         f"Внес: {uploader}\n\n"
         "Отменить загрузку или все равно добавить документ?"
+    )
+
+
+def _build_upload_input(message: Message) -> DocumentUploadInput:
+    return DocumentUploadInput(
+        bot=message.bot,
+        photo_sizes=list(message.photo or []),
+        document=message.document,
     )
 
 
@@ -350,12 +330,12 @@ async def process_photo(message: Message) -> None:
             reply_markup=menu_markup,
         )
         return
-    logger.info('Photo upload accepted for OCR: user_id=%s', message.from_user.id)
+    logger.info('Photo upload accepted for OCR handoff: user_id=%s', message.from_user.id)
     await _process_upload_preview(
         message,
         menu_markup,
         context,
-        DocumentUploadInput(bot=message.bot, photo_sizes=list(message.photo)),
+        _build_upload_input(message),
     )
 
 
@@ -391,18 +371,8 @@ async def process_document_file(message: Message) -> None:
             reply_markup=menu_markup,
         )
         return
-    if not _is_supported_document_upload(message.document):
-        file_name = message.document.file_name or 'файл'
-        logger.info(
-            'Document upload rejected: user_id=%s file_name=%s mime_type=%s',
-            message.from_user.id,
-            file_name,
-            message.document.mime_type,
-        )
-        await message.answer('Поддерживаются PDF и изображения: JPG, JPEG, PNG, WEBP, HEIC, HEIF. Этот файл пока не поддерживается для OCR.', reply_markup=menu_markup)
-        return
     logger.info(
-        'Document upload accepted for OCR: user_id=%s file_name=%s mime_type=%s',
+        'Document upload accepted for OCR handoff: user_id=%s file_name=%s mime_type=%s',
         message.from_user.id,
         message.document.file_name,
         message.document.mime_type,
@@ -411,7 +381,7 @@ async def process_document_file(message: Message) -> None:
         message,
         menu_markup,
         context,
-        DocumentUploadInput(bot=message.bot, document=message.document),
+        _build_upload_input(message),
     )
 
 
