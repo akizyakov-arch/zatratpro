@@ -257,5 +257,14 @@ def _normalize_vat_label(value: str | None) -> str | None:
 
 def _contains_no_vat_signal(raw_text: str) -> bool:
     translated = raw_text.lower().translate(OCR_TEXT_FIXES).replace("ё", "е")
-    collapsed = "".join(ch for ch in translated if ch.isalnum())
-    return "безндс" in collapsed or "суммабезндс" in collapsed
+    compact = "".join(ch for ch in translated if ch.isalnum())
+    if "безндс" in compact or "суммабезндс" in compact:
+        return True
+
+    spaced = re.sub(r"[^а-я0-9]+", " ", translated)
+    spaced = re.sub(r"\s+", " ", spaced).strip()
+    patterns = (
+        r"бе[зс3]\s{0,3}н[дaа]?[сc5]",
+        r"сумм[аоу]?\s{0,6}бе[зс3]\s{0,3}н[дaа]?[сc5]",
+    )
+    return any(re.search(pattern, spaced) is not None for pattern in patterns)
