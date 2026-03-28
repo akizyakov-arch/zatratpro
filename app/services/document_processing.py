@@ -20,7 +20,7 @@ from app.services.json_formatter import format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import Project
 from app.services.temp_files import safe_unlink, temporary_files
-from app.state.pending_documents import PendingDocument, begin_document_flow, pop_pending_document, store_pending_document
+from app.state.pending_documents import PendingDocument, begin_document_flow, clear_document_flow, pop_pending_document, store_pending_document
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,8 @@ DocumentPreviewFailureStage = Literal["preprocess", "ocr", "extract", "pending"]
 DocumentPreviewFailureReason = Literal["timeout", "service_error", "validation_error", "unexpected"]
 DocumentProjectSelectionFailureStage = Literal["pending", "duplicate_check", "save"]
 DocumentProjectSelectionFailureReason = Literal["validation_error", "access_error", "unexpected"]
+DocumentDuplicateSaveFailureStage = Literal["pending", "save"]
+DocumentDuplicateSaveFailureReason = Literal["validation_error", "access_error", "unexpected"]
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
@@ -100,6 +102,20 @@ class DocumentProjectSelectionFailure:
     details: str | None = None
 
 
+@dataclass(slots=True)
+class DocumentDuplicateSaveSuccess:
+    document_id: int
+    project_name: str
+    duplicate_check: DuplicateCheckResult
+
+
+@dataclass(slots=True)
+class DocumentDuplicateSaveFailure:
+    stage: DocumentDuplicateSaveFailureStage
+    reason: DocumentDuplicateSaveFailureReason
+    details: str | None = None
+
+
 DocumentOCRResult = DocumentOCRReady | DocumentPreviewFailure
 DocumentPreviewResult = DocumentPreviewReady | DocumentPreviewFailure
 DocumentProjectSelectionResult = (
@@ -107,6 +123,7 @@ DocumentProjectSelectionResult = (
     | DocumentProjectSelectionSaved
     | DocumentProjectSelectionFailure
 )
+DocumentDuplicateSaveResult = DocumentDuplicateSaveSuccess | DocumentDuplicateSaveFailure
 
 
 def _pending_source_type(pending_document: PendingDocument) -> str:
@@ -116,11 +133,12 @@ def _pending_source_type(pending_document: PendingDocument) -> str:
 class DocumentProcessingService:
     """Thin orchestration boundary for document flows.
 
-    Phase 2.3 owns:
+    Phase 3.1 owns:
     - OCR/extraction preview pipeline
     - pending preview state ownership
     - project selection duplicate check
     - immediate save vs duplicate-warning decision
+    - duplicate-confirm save orchestration
 
     UI texts, Telegram messages, and markup stay in handlers.
     """
@@ -156,6 +174,56 @@ class DocumentProcessingService:
             logger.exception('Failed to store pending document preview')
             return DocumentPreviewFailure(stage='pending', reason='unexpected', details=str(exc))
         return preview_result
+
+    async def save_duplicate_confirmed(
+        self,
+        *,
+        telegram_user: User,
+        project: Project,
+        pending_document: PendingDocument,
+    ) -> DocumentDuplicateSaveResult:
+        if pending_document.extracted_document is None or pending_document.selected_project_id is None:
+            return DocumentDuplicateSaveFailure(stage='pending', reason='validation_error', details='missing_document')
+
+        try:
+            document_id = await self.document_service.save_document(
+                telegram_user=telegram_user,
+                project=project,
+                normalized_text=pending_document.normalized_text,
+                document=pending_document.extracted_document,
+                duplicate_check=pending_document.duplicate_check,
+                source_type=_pending_source_type(pending_document),
+                source_temp_path=pending_document.source_temp_path,
+                source_original_name=pending_document.source_original_name,
+                source_mime_type=pending_document.source_mime_type,
+                source_file_ext=pending_document.source_file_ext,
+                source_original_file_size=pending_document.source_original_file_size,
+                source_stored_file_size=pending_document.source_stored_file_size,
+                source_was_normalized=pending_document.source_was_normalized,
+                source_original_kind=pending_document.source_original_kind,
+            )
+        except DocumentValidationError as exc:
+            return DocumentDuplicateSaveFailure(stage='save', reason='validation_error', details=str(exc))
+        except CompanyAccessError as exc:
+            return DocumentDuplicateSaveFailure(stage='save', reason='access_error', details=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Document save failed after duplicate confirmation')
+            return DocumentDuplicateSaveFailure(stage='save', reason='unexpected', details=str(exc))
+
+        try:
+            await clear_document_flow(telegram_user.id)
+        except Exception:  # noqa: BLE001
+            logger.exception('Failed to cleanup pending document after duplicate-confirm save')
+
+        duplicate_check = pending_document.duplicate_check
+        if duplicate_check is None:
+            return DocumentDuplicateSaveFailure(stage='pending', reason='validation_error', details='missing_duplicate_check')
+
+        return DocumentDuplicateSaveSuccess(
+            document_id=document_id,
+            project_name=project.name,
+            duplicate_check=duplicate_check,
+        )
 
     async def resolve_project_selection(
         self,

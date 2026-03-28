@@ -8,15 +8,16 @@ from aiogram.utils.chat_action import ChatActionSender
 
 from app.config import get_settings
 from app.services.access import AccessService
-from app.services.companies import CompanyAccessError, CompanyService
+from app.services.companies import CompanyAccessError
 from app.services.document_processing import (
     DocumentPreviewFailure,
     DocumentProcessingService,
+    DocumentDuplicateSaveFailure,
     DocumentProjectSelectionDuplicate,
     DocumentProjectSelectionFailure,
     PreparedUpload,
 )
-from app.services.documents import DocumentService, DocumentValidationError
+from app.services.documents import DocumentService
 from app.services.pdf_files import PDFFileService
 from app.services.projects import ProjectService
 from app.services.temp_files import safe_unlink
@@ -45,8 +46,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 SLOW_DOCUMENT_STAGE_MS = 500.0
 project_service = ProjectService()
-document_service = DocumentService()
-company_service = CompanyService()
 access_service = AccessService()
 document_processing_service = DocumentProcessingService()
 
@@ -74,10 +73,6 @@ def _is_supported_image_document(message: Message) -> bool:
     mime_type = (message.document.mime_type or '').lower()
     file_ext = _document_extension(message)
     return mime_type in SUPPORTED_IMAGE_MIME_TYPES or file_ext in SUPPORTED_IMAGE_EXTENSIONS
-
-
-def _pending_source_type(pending_document: PendingDocument) -> str:
-    return 'pdf' if pending_document.source_original_kind == 'pdf' else 'photo'
 
 
 def _format_upload_limit_message() -> str:
@@ -190,10 +185,20 @@ def _saved_duplicate_message(duplicate_check) -> str:
     }[duplicate_check.status]
 
 
+def _duplicate_save_failure_message(failure: DocumentDuplicateSaveFailure) -> str:
+    if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'missing_document':
+        return 'Не удалось восстановить подготовленный документ. Отправь фото заново.'
+    if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'missing_duplicate_check':
+        return 'Не удалось восстановить подтверждение дубля. Отправь фото заново.'
+    if failure.reason in {'validation_error', 'access_error'}:
+        return failure.details or 'Не удалось сохранить документ.'
+    return f'Не удалось сохранить документ: {failure.details or "неизвестная ошибка"}'
+
+
 async def _save_pending_document(callback: CallbackQuery, pending_document: PendingDocument, menu_markup) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    if pending_document.extracted_document is None or pending_document.selected_project_id is None:
+    if pending_document.selected_project_id is None:
         await clear_document_flow(callback.from_user.id)
         await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
         return
@@ -207,46 +212,25 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
         await clear_document_flow(callback.from_user.id)
         await callback.message.answer('Проект больше недоступен. Отправь документ заново.', reply_markup=menu_markup)
         return
-    try:
-        document_id = await document_service.save_document(
-            telegram_user=callback.from_user,
-            project=project,
-            normalized_text=pending_document.normalized_text,
-            document=pending_document.extracted_document,
-            duplicate_check=pending_document.duplicate_check,
-            source_type=_pending_source_type(pending_document),
-            source_temp_path=pending_document.source_temp_path,
-            source_original_name=pending_document.source_original_name,
-            source_mime_type=pending_document.source_mime_type,
-            source_file_ext=pending_document.source_file_ext,
-            source_original_file_size=pending_document.source_original_file_size,
-            source_stored_file_size=pending_document.source_stored_file_size,
-            source_was_normalized=pending_document.source_was_normalized,
-            source_original_kind=pending_document.source_original_kind,
-        )
-    except DocumentValidationError as exc:
+
+    save_result = await document_processing_service.save_duplicate_confirmed(
+        telegram_user=callback.from_user,
+        project=project,
+        pending_document=pending_document,
+    )
+    if isinstance(save_result, DocumentDuplicateSaveFailure):
         await clear_document_flow(callback.from_user.id)
-        await callback.message.answer(str(exc), reply_markup=menu_markup)
+        await callback.message.answer(_duplicate_save_failure_message(save_result), reply_markup=menu_markup)
         return
-    except CompanyAccessError as exc:
-        await clear_document_flow(callback.from_user.id)
-        await callback.message.answer(str(exc), reply_markup=menu_markup)
-        return
-    except Exception as exc:  # noqa: BLE001
-        await clear_document_flow(callback.from_user.id)
-        logger.exception('Document save failed after duplicate confirmation')
-        await callback.message.answer(f'Не удалось сохранить документ: {exc}', reply_markup=menu_markup)
-        return
-    duplicate_check = pending_document.duplicate_check
-    await clear_document_flow(callback.from_user.id)
+
     duplicate_message = {
-        'exact': f"\n\nДокумент сохранен принудительно. Точный дубль уже был в записи ID {duplicate_check.duplicate_document_id}.",
-        'probable': f"\n\nДокумент сохранен принудительно. Возможный дубль уже был в записи ID {duplicate_check.duplicate_document_id}.",
+        'exact': f"\n\nДокумент сохранен принудительно. Точный дубль уже был в записи ID {save_result.duplicate_check.duplicate_document_id}.",
+        'probable': f"\n\nДокумент сохранен принудительно. Возможный дубль уже был в записи ID {save_result.duplicate_check.duplicate_document_id}.",
         'none': '',
         'not_checked': '',
-    }[duplicate_check.status]
+    }[save_result.duplicate_check.status]
     await callback.message.answer(
-        f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.{duplicate_message}',
+        f'Документ сохранен в проект "{save_result.project_name}". ID записи: {save_result.document_id}.{duplicate_message}',
         reply_markup=menu_markup,
     )
 
