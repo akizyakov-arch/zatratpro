@@ -15,6 +15,22 @@ from app.services.projects import Project
 
 logger = logging.getLogger(__name__)
 
+OCR_TEXT_FIXES = str.maketrans({
+    "a": "д",
+    "c": "с",
+    "e": "е",
+    "h": "н",
+    "k": "к",
+    "m": "м",
+    "o": "о",
+    "p": "р",
+    "t": "т",
+    "x": "х",
+    "y": "у",
+    "3": "з",
+    "6": "б",
+})
+
 DUPLICATE_STATUS_NONE = "none"
 DUPLICATE_STATUS_EXACT = "exact"
 DUPLICATE_STATUS_PROBABLE = "probable"
@@ -790,7 +806,7 @@ def _should_force_mixed_vat_scope(
     if document_type not in {"cash_receipt", "bso"}:
         return False
 
-    has_no_vat_signal = "без ндс" in raw_text or "безндс" in raw_text.replace(" ", "")
+    has_no_vat_signal = _contains_no_vat_signal(raw_text)
     has_positive_vat = vat_total is not None and vat_total > Decimal("0.00")
 
     if "без ндс" in labels and any(label != "без ндс" for label in labels):
@@ -805,6 +821,12 @@ def _normalize_vat_label(value: str | None) -> str | None:
         return None
     normalized = " ".join(value.strip().split()).lower()
     return normalized or None
+
+
+def _contains_no_vat_signal(raw_text: str) -> bool:
+    translated = raw_text.lower().translate(OCR_TEXT_FIXES).replace("ё", "е")
+    collapsed = "".join(ch for ch in translated if ch.isalnum())
+    return "безндс" in collapsed or "суммабезндс" in collapsed
 
 
 def _as_decimal(value: float | int | None, quantize_to: str) -> Decimal | None:
