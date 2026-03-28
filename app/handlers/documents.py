@@ -1,5 +1,4 @@
 from pathlib import Path
-import asyncio
 import logging
 from time import perf_counter
 
@@ -8,16 +7,17 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.config import get_settings
-from app.schemas.document import DocumentSchema
 from app.services.access import AccessService
 from app.services.companies import CompanyAccessError, CompanyService
-from app.services.deepseek import DeepSeekError, DeepSeekService
+from app.services.document_processing import (
+    DocumentPreviewFailure,
+    DocumentProcessingService,
+    PreparedUpload,
+)
 from app.services.documents import DocumentService, DocumentValidationError
 from app.services.pdf_files import PDFFileService
-from app.services.json_formatter import chunk_message, format_document_preview
-from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
-from app.services.temp_files import safe_unlink, temporary_files
+from app.services.temp_files import safe_unlink
 from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileService
 from app.state.pending_actions import set_pending_action
 from app.state.pending_documents import (
@@ -49,9 +49,7 @@ project_service = ProjectService()
 document_service = DocumentService()
 company_service = CompanyService()
 access_service = AccessService()
-OCR_TIMEOUT_SECONDS = 120
-EXTRACT_TIMEOUT_SECONDS = 120
-OCR_RETRY_DELAY_SECONDS = 3
+document_processing_service = DocumentProcessingService()
 
 MAX_UPLOAD_BYTES = get_settings().max_upload_bytes
 SUPPORTED_IMAGE_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'}
@@ -137,6 +135,43 @@ def _format_duplicate_warning(duplicate_info, duplicate_status: str) -> str:
         f"Внес: {uploader}\n\n"
         "Отменить загрузку или все равно добавить документ?"
     )
+
+
+def _prepared_upload_from_downloaded(downloaded_photo: DownloadedTelegramPhoto) -> PreparedUpload:
+    return PreparedUpload(
+        source_temp_path=downloaded_photo.source_path,
+        ocr_temp_path=downloaded_photo.ocr_path,
+        original_filename=downloaded_photo.original_filename,
+        mime_type=downloaded_photo.mime_type,
+        file_ext=downloaded_photo.file_ext,
+        original_file_size=downloaded_photo.original_file_size,
+        normalized_file_size=downloaded_photo.normalized_file_size,
+        original_kind=downloaded_photo.original_kind,
+    )
+
+
+async def _notify_ocr_retry(message: Message, menu_markup) -> None:
+    await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
+
+
+def _preview_failure_message(failure: DocumentPreviewFailure) -> str:
+    if failure.stage == 'ocr':
+        if failure.reason == 'timeout':
+            return 'OCR выполнялся слишком долго. Попробуй отправить документ еще раз.'
+        if failure.reason == 'service_error':
+            return f'OCR не удался: {failure.details}'
+        if failure.reason == 'validation_error' and failure.details == 'empty_text':
+            return 'OCR не вернул текст. Попробуй отправить более четкий документ.'
+        return f'Не удалось обработать документ: {failure.details or "неизвестная ошибка"}'
+    if failure.stage == 'extract':
+        if failure.reason == 'timeout':
+            return 'Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.'
+        if failure.reason == 'service_error':
+            return f'Не удалось собрать JSON документа: {failure.details}'
+        if failure.reason == 'validation_error':
+            return failure.details or 'Не удалось подготовить документ.'
+        return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
+    return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
 
 
 async def _save_pending_document(callback: CallbackQuery, pending_document: PendingDocument, menu_markup) -> None:
@@ -242,9 +277,7 @@ async def _process_uploaded_image(
         return
 
     bot = message.bot
-    ocr_service = OCRSpaceService()
-    deepseek_service = DeepSeekService()
-    ocr_temp_path: Path | None = downloaded_photo.ocr_path
+    prepared_upload = _prepared_upload_from_downloaded(downloaded_photo)
 
     if prepared_elapsed_ms is not None:
         logger.info(
@@ -256,129 +289,62 @@ async def _process_uploaded_image(
             downloaded_photo.normalized_file_size,
         )
 
+    await begin_document_flow(message.from_user.id)
+    await message.answer(f'{_person_name(message.from_user)}, {received_label}. Начинаю распознавание.', reply_markup=menu_markup)
+
+    async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
+        ocr_result = await document_processing_service.run_ocr(
+            prepared_upload,
+            on_retry_needed=lambda: _notify_ocr_retry(message, menu_markup),
+        )
+    if isinstance(ocr_result, DocumentPreviewFailure):
+        await clear_document_flow(message.from_user.id)
+        await message.answer(_preview_failure_message(ocr_result), reply_markup=menu_markup)
+        return
+
+    logger.info(
+        'OCR completed: user_id=%s original_kind=%s ocr_ms=%.1f chars=%s',
+        message.from_user.id,
+        downloaded_photo.original_kind,
+        ocr_result.ocr_elapsed_ms,
+        len(ocr_result.ocr_text),
+    )
+
+    await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
+    async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
+        preview_result = await document_processing_service.build_preview_from_ocr(prepared_upload, ocr_result.ocr_text)
+    if isinstance(preview_result, DocumentPreviewFailure):
+        await clear_document_flow(message.from_user.id)
+        await message.answer(_preview_failure_message(preview_result), reply_markup=menu_markup)
+        return
+
+    logger.info(
+        'Extraction completed: user_id=%s original_kind=%s extract_ms=%.1f items=%s',
+        message.from_user.id,
+        downloaded_photo.original_kind,
+        preview_result.extract_elapsed_ms,
+        len(preview_result.document.items),
+    )
+
+    await store_pending_document(message.from_user.id, preview_result.pending_document)
+    await message.answer(preview_result.preview_text, reply_markup=menu_markup)
+
     try:
-        with temporary_files(downloaded_photo.source_path):
-            await begin_document_flow(message.from_user.id)
-            await message.answer(f'{_person_name(message.from_user)}, {received_label}. Начинаю распознавание.', reply_markup=menu_markup)
+        projects = await project_service.list_active_projects(message.from_user.id)
+    except CompanyAccessError as exc:
+        await clear_document_flow(message.from_user.id)
+        await message.answer(str(exc), reply_markup=menu_markup)
+        return
 
-            ocr_started = perf_counter()
-            try:
-                async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-                    try:
-                        async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                            ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
-                    except TimeoutError:
-                        await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
-                        await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
-                        async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                            ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
-                    except OCRSpaceError as exc:
-                        if 'E101' not in str(exc):
-                            raise
-                        await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
-                        await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
-                        async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                            ocr_text = await ocr_service.extract_text(downloaded_photo.ocr_path)
-                logger.info(
-                    'OCR completed: user_id=%s original_kind=%s ocr_ms=%.1f chars=%s',
-                    message.from_user.id,
-                    downloaded_photo.original_kind,
-                    (perf_counter() - ocr_started) * 1000,
-                    len(ocr_text),
-                )
-            except TimeoutError:
-                await clear_document_flow(message.from_user.id)
-                logger.exception('OCR timed out')
-                await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
-                return
-            except OCRSpaceError as exc:
-                await clear_document_flow(message.from_user.id)
-                logger.exception('OCR failed')
-                await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
-                return
-            except Exception as exc:  # noqa: BLE001
-                await clear_document_flow(message.from_user.id)
-                logger.exception('Unexpected error while processing uploaded image')
-                await message.answer(f'Не удалось обработать документ: {exc}', reply_markup=menu_markup)
-                return
+    if not projects and not context.can_manage_company:
+        await clear_document_flow(message.from_user.id)
+        await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
+        return
 
-            if not ocr_text.strip():
-                await clear_document_flow(message.from_user.id)
-                await message.answer('OCR не вернул текст. Попробуй отправить более четкий документ.', reply_markup=menu_markup)
-                return
-
-            await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
-            extract_started = perf_counter()
-            try:
-                async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-                    async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
-                        extracted_document = await deepseek_service.extract_document(ocr_text)
-                document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
-                preview_text = format_document_preview(document)
-                logger.info(
-                    'Extraction completed: user_id=%s original_kind=%s extract_ms=%.1f items=%s',
-                    message.from_user.id,
-                    downloaded_photo.original_kind,
-                    (perf_counter() - extract_started) * 1000,
-                    len(document.items),
-                )
-            except TimeoutError:
-                await clear_document_flow(message.from_user.id)
-                logger.exception('DeepSeek extraction timed out')
-                await message.answer('Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
-                return
-            except DeepSeekError as exc:
-                await clear_document_flow(message.from_user.id)
-                logger.exception('DeepSeek extraction failed')
-                await message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
-                return
-            except DocumentValidationError as exc:
-                await clear_document_flow(message.from_user.id)
-                await message.answer(str(exc), reply_markup=menu_markup)
-                return
-            except Exception as exc:  # noqa: BLE001
-                await clear_document_flow(message.from_user.id)
-                logger.exception('Extraction failed')
-                await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
-                return
-
-            await store_pending_document(
-                message.from_user.id,
-                PendingDocument(
-                    ocr_text=ocr_text,
-                    normalized_text=preview_text,
-                    extracted_document=document,
-                    source_temp_path=str(downloaded_photo.ocr_path),
-                    source_original_name=downloaded_photo.original_filename,
-                    source_mime_type='image/jpeg',
-                    source_file_ext='.jpg',
-                    source_original_file_size=downloaded_photo.original_file_size,
-                    source_stored_file_size=downloaded_photo.normalized_file_size,
-                    source_was_normalized=True,
-                    source_original_kind=downloaded_photo.original_kind,
-                ),
-            )
-            ocr_temp_path = None
-            await message.answer(preview_text, reply_markup=menu_markup)
-
-            try:
-                projects = await project_service.list_active_projects(message.from_user.id)
-            except CompanyAccessError as exc:
-                await clear_document_flow(message.from_user.id)
-                await message.answer(str(exc), reply_markup=menu_markup)
-                return
-
-            if not projects and not context.can_manage_company:
-                await clear_document_flow(message.from_user.id)
-                await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
-                return
-
-            await message.answer(
-                f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
-                reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
-            )
-    finally:
-        safe_unlink(ocr_temp_path)
+    await message.answer(
+        f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
+        reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
+    )
 
 
 @router.message(F.photo)
