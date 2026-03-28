@@ -20,14 +20,14 @@ document_export_service = DocumentExportService()
 
 @router.message(F.text == MENU_BUTTONS['upload_document'])
 async def upload_document_entry(message: Message, access_context: AccessContext | None = None) -> None:
-    context = await ensure_context(message, access_context)
+    context = access_context if access_context is not None else await ensure_context(message, access_context)
     if context is None or not context.has_company:
-        if not await require_company_access(message, access_context):
+        context = await require_company_access(message, context)
+        if context is None:
             return
-        context = await ensure_context(message, access_context)
     await message.answer(
         f'{person_name(message.from_user)}, отправь фото документа. После preview я предложу проекты кнопками.',
-        reply_markup=build_main_menu_markup_from_context(context) if context is not None else await main_menu_markup(message, access_context),
+        reply_markup=build_main_menu_markup_from_context(context),
     )
 
 

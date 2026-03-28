@@ -93,21 +93,24 @@ async def help_menu_kind_for_user(
 async def require_company_access(
     message: Message,
     access_context: AccessContext | None = None,
-) -> bool:
-    context = await ensure_context(message, access_context)
-    if context is None or not context.has_company:
-        text = 'Сначала нужен invite-код компании. Нажми "Ввести invite-код" или выполни /join КОД.'
-        is_blocked = context.is_membership_blocked if context is not None else False
-        if not is_blocked and message.from_user is not None:
-            is_blocked = await company_service.has_blocked_membership(message.from_user.id)
-        if is_blocked:
-            text = 'Доступ к компании приостановлен. Обратитесь к руководителю.'
-        await message.answer(
-            text,
-            reply_markup=await main_menu_markup(message, context),
-        )
-        return False
-    return True
+) -> AccessContext | None:
+    context = access_context if access_context is not None else await ensure_context(message, access_context)
+    if context is not None and context.has_company:
+        return context
+
+    text = 'Сначала нужен invite-код компании. Нажми "Ввести invite-код" или выполни /join КОД.'
+    is_blocked = False
+    if context is not None:
+        is_blocked = context.is_membership_blocked
+    elif message.from_user is not None:
+        is_blocked = await company_service.has_blocked_membership(message.from_user.id)
+    if is_blocked:
+        text = 'Доступ к компании приостановлен. Обратитесь к руководителю.'
+    await message.answer(
+        text,
+        reply_markup=await main_menu_markup(message, context),
+    )
+    return None
 
 
 def person_name(user) -> str:
