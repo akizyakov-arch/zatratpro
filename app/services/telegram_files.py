@@ -8,6 +8,7 @@ from PIL import Image, ImageOps
 
 from app.config import TMP_DIR
 from app.services.executors import run_blocking
+from app.services.temp_files import safe_unlink
 
 
 OCR_MAX_WIDTH = 2000
@@ -70,12 +71,7 @@ class TelegramFileService:
         )
 
     def delete_temp_file(self, path: Path | None) -> None:
-        if path is None:
-            return
-        try:
-            path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        safe_unlink(path)
 
     async def _prepare_image_for_ocr(self, source_path: Path) -> Path:
         return await run_blocking(self._prepare_image_for_ocr_sync, source_path)

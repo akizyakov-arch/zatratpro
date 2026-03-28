@@ -1,17 +1,15 @@
 import json
-import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from app.schemas.document import DocumentSchema
 from app.services.database import get_pool
+from app.services.temp_files import safe_unlink
 from app.services.documents import DuplicateCheckResult, ResolvedDocumentFields
 
 
-logger = logging.getLogger(__name__)
 PENDING_DOCUMENT_TTL_MINUTES = 30
 
 
@@ -35,10 +33,7 @@ class PendingDocument:
 def _cleanup_temp_path(path_value: str | None) -> None:
     if not path_value:
         return
-    try:
-        Path(path_value).unlink(missing_ok=True)
-    except Exception:
-        logger.debug('Failed to cleanup pending temp file: %s', path_value, exc_info=True)
+    safe_unlink(path_value)
 
 
 def _serialize_document(document: DocumentSchema | None) -> str | None:

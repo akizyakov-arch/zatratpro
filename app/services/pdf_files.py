@@ -9,6 +9,7 @@ from PIL import Image
 
 from app.config import TMP_DIR
 from app.services.executors import run_blocking
+from app.services.temp_files import safe_unlink
 from app.services.telegram_files import DownloadedTelegramPhoto, OCR_JPEG_QUALITY, OCR_MAX_WIDTH
 
 
@@ -27,7 +28,7 @@ class PDFFileService:
         try:
             ocr_path = await self._render_first_page_for_ocr(source_path)
         except Exception:
-            source_path.unlink(missing_ok=True)
+            safe_unlink(source_path)
             raise
         return DownloadedTelegramPhoto(
             source_path=source_path,
