@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from aiogram import F, Router
 from aiogram.types import FSInputFile, Message
 
@@ -7,6 +5,7 @@ from app.handlers.common import build_main_menu_markup_from_context, company_ser
 from app.handlers.onboarding import join_company
 from app.services.companies import CompanyAccessError
 from app.services.document_exports import DocumentExportService
+from app.services.temp_files import safe_unlink
 from app.state.pending_actions import pop_pending_action, set_pending_action
 from app.state.pending_documents import get_pending_document
 from app.ui.main_menu import MENU_BUTTONS
@@ -95,7 +94,7 @@ async def handle_pending_text(message: Message) -> None:
                 await message.answer(f'Не удалось собрать архив чеков: {exc}', reply_markup=build_reports_menu_keyboard())
             finally:
                 if archive_path is not None:
-                    Path(archive_path).unlink(missing_ok=True)
+                    safe_unlink(archive_path)
             return
     except CompanyAccessError as exc:
         await message.answer(str(exc), reply_markup=await main_menu_markup(message))

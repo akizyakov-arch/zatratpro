@@ -9,6 +9,7 @@ from app.services.companies import CompanyAccessError
 from app.services.document_exports import DocumentExportService
 from app.services.document_storage import DocumentStorageService
 from app.services.report_exports import ManagerReportExportService
+from app.services.temp_files import safe_unlink
 from app.state.pending_actions import set_pending_action
 from app.services.report_formatters import (
     format_duplicate_report,
@@ -100,7 +101,7 @@ async def _send_accountant_export(message: Message, telegram_user_id: int, *, pe
         await message.answer(f'Не удалось собрать архив чеков: {exc}', reply_markup=build_reports_menu_keyboard())
     finally:
         if archive_path is not None:
-            archive_path.unlink(missing_ok=True)
+            safe_unlink(archive_path)
 
 
 @router.message(F.text == MENU_BUTTONS['reports'])
@@ -259,7 +260,7 @@ async def report_period_callback(callback: CallbackQuery) -> None:
                 await callback.message.edit_text(f'Не удалось собрать Excel-отчет: {exc}', reply_markup=build_reports_menu_keyboard())
             finally:
                 if export_path is not None:
-                    export_path.unlink(missing_ok=True)
+                    safe_unlink(export_path)
             return
     except CompanyAccessError as exc:
         await callback.answer(str(exc), show_alert=True)
