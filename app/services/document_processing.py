@@ -37,6 +37,7 @@ DocumentProjectSelectionFailureStage = Literal["pending", "project", "duplicate_
 DocumentProjectSelectionFailureReason = Literal["validation_error", "access_error", "unexpected"]
 DocumentDuplicateSaveFailureStage = Literal["pending", "project", "save"]
 DocumentDuplicateSaveFailureReason = Literal["validation_error", "access_error", "unexpected"]
+DocumentPreviewProjectOptionsFailureReason = Literal["access_error", "no_active_projects", "unexpected"]
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
@@ -131,6 +132,17 @@ class DocumentPreviewFailure:
 
 
 @dataclass(slots=True)
+class DocumentPreviewProjectOptionsReady:
+    projects: list[Project]
+
+
+@dataclass(slots=True)
+class DocumentPreviewProjectOptionsFailure:
+    reason: DocumentPreviewProjectOptionsFailureReason
+    details: str | None = None
+
+
+@dataclass(slots=True)
 class DocumentProjectSelectionLoaded:
     project: Project
     pending_document: PendingDocument
@@ -181,6 +193,7 @@ DocumentUploadPreparationResult = DocumentUploadPreparationReady | DocumentPrevi
 DocumentOCRResult = DocumentOCRReady | DocumentPreviewFailure
 DocumentPreviewResult = DocumentPreviewReady | DocumentPreviewFailure
 DocumentUploadPreviewResult = DocumentUploadPreviewReady | DocumentPreviewFailure
+DocumentPreviewProjectOptionsResult = DocumentPreviewProjectOptionsReady | DocumentPreviewProjectOptionsFailure
 DocumentProjectSelectionLoadResult = DocumentProjectSelectionLoaded | DocumentProjectSelectionFailure
 DocumentProjectSelectionResult = (
     DocumentProjectSelectionDuplicate
@@ -498,6 +511,28 @@ class DocumentProcessingService:
             await clear_document_flow(telegram_user_id)
         except Exception:  # noqa: BLE001
             logger.exception('Failed to cleanup pending document after duplicate-confirm failure')
+
+    async def load_preview_project_options(
+        self,
+        *,
+        telegram_user: User,
+        can_manage_company: bool,
+    ) -> DocumentPreviewProjectOptionsResult:
+        try:
+            projects = await self.project_service.list_active_projects(telegram_user.id)
+        except CompanyAccessError as exc:
+            await self._cleanup_pending_preview_failure(telegram_user.id)
+            return DocumentPreviewProjectOptionsFailure(reason='access_error', details=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Failed to load active projects for document preview')
+            await self._cleanup_pending_preview_failure(telegram_user.id)
+            return DocumentPreviewProjectOptionsFailure(reason='unexpected', details=str(exc))
+
+        if not projects and not can_manage_company:
+            await self._cleanup_pending_preview_failure(telegram_user.id)
+            return DocumentPreviewProjectOptionsFailure(reason='no_active_projects')
+
+        return DocumentPreviewProjectOptionsReady(projects=projects)
 
     async def save_duplicate_confirmed(
         self,

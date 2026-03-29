@@ -6,16 +6,15 @@ from aiogram.utils.chat_action import ChatActionSender
 
 from app.config import get_settings
 from app.services.access import AccessContext
-from app.services.companies import CompanyAccessError
 from app.services.document_processing import (
     DocumentPreviewFailure,
     DocumentProcessingService,
     DocumentDuplicateSaveFailure,
+    DocumentPreviewProjectOptionsFailure,
     DocumentProjectSelectionDuplicate,
     DocumentProjectSelectionFailure,
     DocumentUploadInput,
 )
-from app.services.projects import ProjectService
 from app.state.pending_actions import set_pending_action
 from app.state.pending_documents import clear_document_flow
 from app.handlers.common import ensure_user_context, main_menu_markup_for_user
@@ -33,7 +32,6 @@ from app.ui.projects import (
 
 router = Router()
 logger = logging.getLogger(__name__)
-project_service = ProjectService()
 document_processing_service = DocumentProcessingService()
 
 MAX_UPLOAD_BYTES = get_settings().max_upload_bytes
@@ -198,6 +196,14 @@ async def _handle_upload_message(
     )
 
 
+def _preview_project_options_failure_message(failure: DocumentPreviewProjectOptionsFailure) -> str:
+    if failure.reason == 'no_active_projects':
+        return 'В текущей компании нет активных проектов. Обратись к manager.'
+    if failure.reason == 'access_error':
+        return failure.details or 'Не удалось получить список проектов.'
+    return f'Не удалось получить список проектов: {failure.details or "неизвестная ошибка"}'
+
+
 def _project_selection_failure_message(failure: DocumentProjectSelectionFailure) -> str:
     if failure.stage == 'pending' and failure.reason == 'validation_error':
         if failure.details == 'missing_document':
@@ -337,21 +343,17 @@ async def _process_upload_preview(
     )
     await message.answer(preview_result.preview_text, reply_markup=menu_markup)
 
-    try:
-        projects = await project_service.list_active_projects(message.from_user.id)
-    except CompanyAccessError as exc:
-        await clear_document_flow(message.from_user.id)
-        await message.answer(str(exc), reply_markup=menu_markup)
-        return
-
-    if not projects and not context.can_manage_company:
-        await clear_document_flow(message.from_user.id)
-        await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
+    project_options = await document_processing_service.load_preview_project_options(
+        telegram_user=message.from_user,
+        can_manage_company=context.can_manage_company,
+    )
+    if isinstance(project_options, DocumentPreviewProjectOptionsFailure):
+        await message.answer(_preview_project_options_failure_message(project_options), reply_markup=menu_markup)
         return
 
     await message.answer(
         f'{user_name}, выбери проект для сохранения документа.',
-        reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
+        reply_markup=build_projects_keyboard(project_options.projects, allow_create_project=context.can_manage_company),
     )
 
 
