@@ -41,6 +41,8 @@ OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
 OcrRetryNotifier = Callable[[], Awaitable[None]]
+PreviewPreparationNotifier = Callable[[DocumentUploadPreparationReady], Awaitable[None]]
+PreviewOCRNotifier = Callable[[PreparedUpload, DocumentOCRReady], Awaitable[None]]
 UNSUPPORTED_GUEST_BILL_REASON = 'unsupported_guest_bill'
 UNSUPPORTED_PAYMENT_INVOICE_REASON = 'unsupported_payment_invoice'
 OCR_TEXT_FIXES = str.maketrans({
@@ -111,6 +113,14 @@ class DocumentPreviewReady:
 
 
 @dataclass(slots=True)
+class DocumentUploadPreviewReady:
+    prepared_upload: PreparedUpload
+    preview: DocumentPreviewReady
+    prep_elapsed_ms: float
+    ocr_elapsed_ms: float
+
+
+@dataclass(slots=True)
 class DocumentPreviewFailure:
     stage: DocumentPreviewFailureStage
     reason: DocumentPreviewFailureReason
@@ -155,6 +165,7 @@ class DocumentDuplicateSaveFailure:
 DocumentUploadPreparationResult = DocumentUploadPreparationReady | DocumentPreviewFailure
 DocumentOCRResult = DocumentOCRReady | DocumentPreviewFailure
 DocumentPreviewResult = DocumentPreviewReady | DocumentPreviewFailure
+DocumentUploadPreviewResult = DocumentUploadPreviewReady | DocumentPreviewFailure
 DocumentProjectSelectionResult = (
     DocumentProjectSelectionDuplicate
     | DocumentProjectSelectionSaved
@@ -343,6 +354,59 @@ class DocumentProcessingService:
             logger.exception('Failed to store pending document preview')
             return DocumentPreviewFailure(stage='pending', reason='unexpected', details=str(exc))
         return preview_result
+
+    async def build_pending_preview_from_upload(
+        self,
+        *,
+        telegram_user_id: int,
+        upload_input: DocumentUploadInput,
+        on_prepared: PreviewPreparationNotifier | None = None,
+        on_retry_needed: OcrRetryNotifier | None = None,
+        on_ocr_completed: PreviewOCRNotifier | None = None,
+    ) -> DocumentUploadPreviewResult:
+        preparation_result = await self.prepare_upload(upload_input)
+        if isinstance(preparation_result, DocumentPreviewFailure):
+            return preparation_result
+
+        pending_failure = await self.begin_pending_preview(telegram_user_id)
+        if pending_failure is not None:
+            await self._cleanup_pending_preview_failure(telegram_user_id)
+            return pending_failure
+
+        prepared_upload = preparation_result.prepared_upload
+        if on_prepared is not None:
+            await on_prepared(preparation_result)
+
+        ocr_result = await self.run_ocr(prepared_upload, on_retry_needed=on_retry_needed)
+        if isinstance(ocr_result, DocumentPreviewFailure):
+            await self._cleanup_pending_preview_failure(telegram_user_id)
+            return ocr_result
+
+        if on_ocr_completed is not None:
+            await on_ocr_completed(prepared_upload, ocr_result)
+
+        preview_result = await self.build_preview_from_ocr(prepared_upload, ocr_result.ocr_text)
+        if isinstance(preview_result, DocumentPreviewFailure):
+            await self._cleanup_pending_preview_failure(telegram_user_id)
+            return preview_result
+
+        stored_preview_result = await self.store_pending_preview(telegram_user_id, preview_result)
+        if isinstance(stored_preview_result, DocumentPreviewFailure):
+            await self._cleanup_pending_preview_failure(telegram_user_id)
+            return stored_preview_result
+
+        return DocumentUploadPreviewReady(
+            prepared_upload=prepared_upload,
+            preview=stored_preview_result,
+            prep_elapsed_ms=preparation_result.prep_elapsed_ms,
+            ocr_elapsed_ms=ocr_result.ocr_elapsed_ms,
+        )
+
+    async def _cleanup_pending_preview_failure(self, telegram_user_id: int) -> None:
+        try:
+            await clear_document_flow(telegram_user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception('Failed to cleanup pending document after preview failure')
 
     async def save_duplicate_confirmed(
         self,

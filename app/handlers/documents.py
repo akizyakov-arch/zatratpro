@@ -291,75 +291,56 @@ async def _process_upload_preview(
     if message.from_user is None:
         return
 
-    preparation_result = await document_processing_service.prepare_upload(upload_input)
-    if isinstance(preparation_result, DocumentPreviewFailure):
-        await message.answer(_preview_failure_message(preparation_result), reply_markup=menu_markup)
-        return
+    user_name = _person_name(message.from_user)
 
-    prepared_upload = preparation_result.prepared_upload
-    logger.info(
-        'Document preprocessing completed: user_id=%s original_kind=%s prep_ms=%.1f source_size=%s ocr_size=%s',
-        message.from_user.id,
-        prepared_upload.original_kind,
-        preparation_result.prep_elapsed_ms,
-        prepared_upload.original_file_size,
-        prepared_upload.normalized_file_size,
-    )
-
-    received_label = {
-        'photo': 'фото получено',
-        'pdf': 'PDF получен',
-        'image_file': 'файл получен',
-    }[prepared_upload.original_kind]
-    bot = message.bot
-
-    pending_failure = await document_processing_service.begin_pending_preview(message.from_user.id)
-    if pending_failure is not None:
-        await clear_document_flow(message.from_user.id)
-        await message.answer(_preview_failure_message(pending_failure), reply_markup=menu_markup)
-        return
-    await message.answer(f'{_person_name(message.from_user)}, {received_label}. Начинаю распознавание.', reply_markup=menu_markup)
-
-    async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-        ocr_result = await document_processing_service.run_ocr(
-            prepared_upload,
-            on_retry_needed=lambda: _notify_ocr_retry(message, menu_markup),
+    async def _on_prepared(preparation_result) -> None:
+        prepared_upload = preparation_result.prepared_upload
+        logger.info(
+            'Document preprocessing completed: user_id=%s original_kind=%s prep_ms=%.1f source_size=%s ocr_size=%s',
+            message.from_user.id,
+            prepared_upload.original_kind,
+            preparation_result.prep_elapsed_ms,
+            prepared_upload.original_file_size,
+            prepared_upload.normalized_file_size,
         )
-    if isinstance(ocr_result, DocumentPreviewFailure):
-        await clear_document_flow(message.from_user.id)
-        await message.answer(_preview_failure_message(ocr_result), reply_markup=menu_markup)
+        received_label = {
+            'photo': 'фото получено',
+            'pdf': 'PDF получен',
+            'image_file': 'файл получен',
+        }[prepared_upload.original_kind]
+        await message.answer(f'{user_name}, {received_label}. Начинаю распознавание.', reply_markup=menu_markup)
+
+    async def _on_ocr_completed(prepared_upload, ocr_result) -> None:
+        logger.info(
+            'OCR completed: user_id=%s original_kind=%s ocr_ms=%.1f chars=%s',
+            message.from_user.id,
+            prepared_upload.original_kind,
+            ocr_result.ocr_elapsed_ms,
+            len(ocr_result.ocr_text),
+        )
+        await message.answer(f'{user_name}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
+
+    async with ChatActionSender.typing(chat_id=message.chat.id, bot=message.bot):
+        preview_pipeline_result = await document_processing_service.build_pending_preview_from_upload(
+            telegram_user_id=message.from_user.id,
+            upload_input=upload_input,
+            on_prepared=_on_prepared,
+            on_retry_needed=lambda: _notify_ocr_retry(message, menu_markup),
+            on_ocr_completed=_on_ocr_completed,
+        )
+
+    if isinstance(preview_pipeline_result, DocumentPreviewFailure):
+        await message.answer(_preview_failure_message(preview_pipeline_result), reply_markup=menu_markup)
         return
 
-    logger.info(
-        'OCR completed: user_id=%s original_kind=%s ocr_ms=%.1f chars=%s',
-        message.from_user.id,
-        prepared_upload.original_kind,
-        ocr_result.ocr_elapsed_ms,
-        len(ocr_result.ocr_text),
-    )
-
-    await message.answer(f'{_person_name(message.from_user)}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
-    async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-        preview_result = await document_processing_service.build_preview_from_ocr(prepared_upload, ocr_result.ocr_text)
-    if isinstance(preview_result, DocumentPreviewFailure):
-        await clear_document_flow(message.from_user.id)
-        await message.answer(_preview_failure_message(preview_result), reply_markup=menu_markup)
-        return
-
+    preview_result = preview_pipeline_result.preview
     logger.info(
         'Extraction completed: user_id=%s original_kind=%s extract_ms=%.1f items=%s',
         message.from_user.id,
-        prepared_upload.original_kind,
+        preview_pipeline_result.prepared_upload.original_kind,
         preview_result.extract_elapsed_ms,
         len(preview_result.document.items),
     )
-
-    stored_preview_result = await document_processing_service.store_pending_preview(message.from_user.id, preview_result)
-    if isinstance(stored_preview_result, DocumentPreviewFailure):
-        await clear_document_flow(message.from_user.id)
-        await message.answer(_preview_failure_message(stored_preview_result), reply_markup=menu_markup)
-        return
-    preview_result = stored_preview_result
     await message.answer(preview_result.preview_text, reply_markup=menu_markup)
 
     try:
@@ -375,7 +356,7 @@ async def _process_upload_preview(
         return
 
     await message.answer(
-        f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
+        f'{user_name}, выбери проект для сохранения документа.',
         reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
     )
 
