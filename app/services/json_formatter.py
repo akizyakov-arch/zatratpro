@@ -50,7 +50,7 @@ def format_document_preview(document: DocumentSchema) -> str:
         lines.append("")
         lines.append("Состав документа:")
         for item in items:
-            lines.append(_format_item(item, currency_display))
+            lines.append(_format_item(document.document_type, item, currency_display))
 
     if document.total is not None:
         lines.append("")
@@ -79,12 +79,39 @@ def _item_has_value(item: DocumentItem) -> bool:
     return any(value is not None for value in (item.name, item.quantity, item.price, item.line_total))
 
 
-def _format_item(item: DocumentItem, currency_display: str) -> str:
+def _format_item(document_type: str, item: DocumentItem, currency_display: str) -> str:
     quantity = _format_amount(item.quantity) if item.quantity is not None else None
     price = _format_amount(item.price) if item.price is not None else None
     line_total = _format_amount(item.line_total) if item.line_total is not None else None
+    vat_amount = _format_amount(item.vat_amount) if item.vat_amount is not None else None
+    vat_label = item.vat_label.strip() if item.vat_label else None
 
     prefix = f"{item.name} — " if item.name else ""
+    is_vat_line = document_type in {'upd', 'vat_invoice'}
+
+    if is_vat_line:
+        details: list[str] = []
+        if quantity is not None and price is not None:
+            details.append(f"{quantity} шт × {price} {currency_display}")
+        elif quantity is not None:
+            details.append(f"количество: {quantity} шт")
+        elif price is not None:
+            details.append(f"цена: {price} {currency_display}")
+
+        if line_total is not None:
+            details.append(f"сумма строки: {line_total} {currency_display}")
+        if vat_amount is not None:
+            vat_text = f"НДС: {vat_amount} {currency_display}"
+            if vat_label:
+                vat_text = f"{vat_text} ({vat_label})"
+            details.append(vat_text)
+        elif vat_label:
+            details.append(f"НДС: {vat_label}")
+
+        if details:
+            return prefix + ', '.join(details)
+        return prefix.rstrip(' —')
+
     if quantity is not None and price is not None and line_total is not None:
         return f"{prefix}{quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
     if quantity is not None and price is not None:

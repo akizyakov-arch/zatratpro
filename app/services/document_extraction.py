@@ -124,4 +124,5 @@ class DocumentExtractionService:
         return build_extraction_prompt(
             family=routing_result.detected_family,
             extraction_mode=routing_result.extraction_mode,
+            document_type=routing_result.candidate_type,
         )
