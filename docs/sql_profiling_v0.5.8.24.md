@@ -24,10 +24,10 @@ Working rules:
 | probable duplicate lookup | `DocumentService._find_probable_duplicate_document(...)` | `app/services/documents.py` | upload -> project select/save | P1 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
 | manager report documents | `ManagerReportDataBuilder._fetch_documents(...)` | `app/services/report_data_builder.py` | manager reports | P1 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
 | manager report items | `ManagerReportDataBuilder._fetch_items(...)` | `app/services/report_data_builder.py` | manager report detail/export | P1 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| project document list | `ViewService.list_project_documents(...)` | `app/services/views.py` | manager project documents | P2 | planned | TBD | TBD | TBD | TBD |
-| my documents list | `ViewService.list_my_documents(...)` | `app/services/views.py` | employee/my documents | P2 | planned | TBD | TBD | TBD | TBD |
-| report documents list | `ViewService._list_report_documents(...)` | `app/services/views.py` | manager report drilldown | P2 | planned | TBD | TBD | TBD | TBD |
-| report items list | `ViewService._list_report_items(...)` | `app/services/views.py` | manager report drilldown | P2 | planned | TBD | TBD | TBD | TBD |
+| project document list | `ViewService.list_project_documents(...)` | `app/services/views.py` | manager project documents | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
+| my documents list | `ViewService.list_my_documents(...)` | `app/services/views.py` | employee/my documents | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
+| report documents list | `ViewService._list_report_documents(...)` | `app/services/views.py` | manager report drilldown | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
+| report items list | `ViewService._list_report_items(...)` | `app/services/views.py` | manager report drilldown | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
 | export source rows | `DocumentExportService._list_company_source_rows(...)` | `app/services/document_exports.py` | ZIP export | P2 | planned | TBD | TBD | TBD | TBD |
 | save/lookups if needed | `project/pending/document lookup path` | `document_processing.py` + related services | upload -> preview -> save | P3 | optional | TBD | TBD | TBD | TBD |
 
@@ -180,6 +180,65 @@ Evidence to capture during Phase 3.1:
 Artifacts:
 - profiling report: [sql_profiling_v0.5.8.24.md](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_v0.5.8.24.md)
 - runnable SQL: [sql_profiling_phase3_manager_reports.sql](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_phase3_manager_reports.sql)
+
+## Phase 3.2 Views and Lists Pack
+
+Phase 3.2 target queries:
+- `ViewService.list_project_documents(...)`
+- `ViewService.list_my_documents(...)`
+- `ViewService._list_report_documents(...)`
+- `ViewService._list_report_items(...)`
+
+Current query shape:
+- `list_project_documents(...)` filters by `company_id + project_id`, uses `LEFT JOIN LATERAL` to get the first item, and orders by `d.created_at DESC`
+- `list_my_documents(...)` filters by `company_id + uploaded_by_user_id + created_at`, optionally adds `project_id`, also uses `LEFT JOIN LATERAL`, and orders by `d.created_at DESC`
+- `_list_report_documents(...)` filters by `company_id + created_at`, optionally adds `project_id` or `uploaded_by_user_id`, uses `LEFT JOIN LATERAL`, and orders by `d.created_at DESC, d.id DESC`
+- `_list_report_items(...)` joins `document_items -> documents`, filters by `company_id + created_at` with optional `document_id` / `project_id` / `uploaded_by_user_id`, and orders by `di.document_id DESC, di.line_no ASC`
+
+Current index support from schema:
+- `idx_documents_company_project_created_at_desc`
+- `idx_documents_company_created_at_desc`
+- `idx_documents_uploaded_by_user_id_created_at_desc`
+- `idx_document_items_document_id`
+- `idx_projects_company_status`
+
+Known gaps before profiling:
+- no composite path tailored to `company_id + uploaded_by_user_id + created_at + project_id`
+- repeated `LEFT JOIN LATERAL` for first item lookup may add per-row overhead on list screens
+- `_list_report_items(...)` may still sort after join instead of reusing index order
+- `list_project_documents(...)` orders only by `created_at DESC`, so tie behavior may differ from `(created_at, id)` composite order
+
+Phase 3.2 runbook:
+1. load a realistic dataset
+2. run `ANALYZE documents; ANALYZE document_items; ANALYZE projects;`
+3. fill real bind values in [sql_profiling_phase3_views_lists.sql](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_phase3_views_lists.sql)
+4. capture `EXPLAIN (ANALYZE, BUFFERS)` for:
+   - project documents list
+   - my documents list
+   - my documents list with project filter
+   - report documents list
+   - report items list
+5. write verdict per query:
+   - `critical`
+   - `acceptable`
+   - `no action needed`
+6. only after that choose one action:
+   - `none`
+   - `index`
+   - `rewrite`
+
+Evidence to capture during Phase 3.2:
+- scan type and join type per table
+- `LATERAL` execution count and per-loop cost
+- whether planner reuses `created_at` index order or introduces `Sort`
+- rows removed by filters
+- buffer hits/reads
+- actual runtime and planning time
+- bind values and filter mode used for each run
+
+Artifacts:
+- profiling report: [sql_profiling_v0.5.8.24.md](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_v0.5.8.24.md)
+- runnable SQL: [sql_profiling_phase3_views_lists.sql](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_phase3_views_lists.sql)
 
 ### Phase 4
 - `DocumentExportService._list_company_source_rows(...)`
