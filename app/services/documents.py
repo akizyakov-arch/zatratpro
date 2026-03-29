@@ -171,6 +171,8 @@ class DocumentService:
                         vendor,
                         vendor_inn,
                         vendor_kpp,
+                        document_number_normalized,
+                        vendor_key_normalized,
                         document_date,
                         currency,
                         total_amount,
@@ -190,7 +192,7 @@ class DocumentService:
                     VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8,
                         $9, $10, $11, $12, $13, $14, $15, $16,
-                        $17, $18, $19, $20, NOW(), 'ocr_space', 'deepseek', NULL, NULL
+                        $17, $18, $19, $20, $21, $22, NOW(), 'ocr_space', 'deepseek', NULL, NULL
                     )
                     RETURNING id
                     """,
@@ -204,6 +206,8 @@ class DocumentService:
                     duplicate_check.fields.vendor_name,
                     duplicate_check.fields.vendor_inn,
                     document.vendor_kpp,
+                    _normalize_text_key(duplicate_check.fields.document_number),
+                    _normalize_text_key(duplicate_check.fields.vendor_key),
                     document_date,
                     document.currency,
                     duplicate_check.fields.total_amount,
@@ -583,24 +587,10 @@ class DocumentService:
             FROM documents d
             WHERE d.company_id = $1
               AND d.document_type = $2
-              AND LOWER(
-                    REGEXP_REPLACE(
-                        COALESCE(NULLIF(d.external_document_number, ''), d.incoming_number, ''),
-                        '[^[:alnum:]]+',
-                        '',
-                        'g'
-                    )
-                  ) = $3
+              AND d.document_number_normalized = $3
               AND d.document_date = $4
               AND d.total_amount = $5
-              AND LOWER(
-                    REGEXP_REPLACE(
-                        COALESCE(NULLIF(d.vendor_inn, ''), d.vendor, ''),
-                        '[^[:alnum:]]+',
-                        '',
-                        'g'
-                    )
-                  ) = $6
+              AND d.vendor_key_normalized = $6
             ORDER BY d.id DESC
             LIMIT 1
             """,
@@ -629,14 +619,7 @@ class DocumentService:
               AND d.document_type = $2
               AND d.document_date = $3
               AND d.total_amount = $4
-              AND LOWER(
-                    REGEXP_REPLACE(
-                        COALESCE(NULLIF(d.vendor_inn, ''), d.vendor, ''),
-                        '[^[:alnum:]]+',
-                        '',
-                        'g'
-                    )
-                  ) = $5
+              AND d.vendor_key_normalized = $5
             ORDER BY d.id DESC
             LIMIT 1
             """,

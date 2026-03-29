@@ -148,6 +148,54 @@ async def _run_runtime_migrations(pool: Pool) -> None:
             await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS vat_total_amount NUMERIC(14, 2)')
             await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS vat_scope TEXT')
             await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_fiscalized BOOLEAN')
+            await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_number_normalized TEXT')
+            await connection.execute('ALTER TABLE documents ADD COLUMN IF NOT EXISTS vendor_key_normalized TEXT')
+            await connection.execute(
+                '''
+                UPDATE documents
+                SET document_number_normalized = NULLIF(
+                    LOWER(
+                        REGEXP_REPLACE(
+                            COALESCE(NULLIF(external_document_number, ''), incoming_number, ''),
+                            '[^[:alnum:]]+',
+                            '',
+                            'g'
+                        )
+                    ),
+                    ''
+                )
+                WHERE document_number_normalized IS NULL
+                '''
+            )
+            await connection.execute(
+                '''
+                UPDATE documents
+                SET vendor_key_normalized = NULLIF(
+                    LOWER(
+                        REGEXP_REPLACE(
+                            COALESCE(NULLIF(vendor_inn, ''), vendor, ''),
+                            '[^[:alnum:]]+',
+                            '',
+                            'g'
+                        )
+                    ),
+                    ''
+                )
+                WHERE vendor_key_normalized IS NULL
+                '''
+            )
+            await connection.execute(
+                '''
+                CREATE INDEX IF NOT EXISTS idx_documents_duplicate_exact_lookup
+                ON documents(company_id, document_type, document_number_normalized, document_date, total_amount, vendor_key_normalized, id DESC)
+                '''
+            )
+            await connection.execute(
+                '''
+                CREATE INDEX IF NOT EXISTS idx_documents_duplicate_probable_lookup
+                ON documents(company_id, document_type, document_date, total_amount, vendor_key_normalized, id DESC)
+                '''
+            )
             await connection.execute('ALTER TABLE document_items ADD COLUMN IF NOT EXISTS vat_label TEXT')
             await connection.execute('ALTER TABLE document_items ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(14, 2)')
             await connection.execute('ALTER TABLE documents DROP CONSTRAINT IF EXISTS chk_documents_vat_scope')

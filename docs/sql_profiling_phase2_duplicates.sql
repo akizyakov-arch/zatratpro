@@ -5,6 +5,7 @@
 
 \echo 'Phase 2 duplicate profiling'
 \echo 'Update the bind values below before running on the target dataset.'
+\echo 'Default bind values below are prefilled from document id=43 (company_id=1, goods_invoice, тд9, vendor_inn=7705260899).'
 
 \set company_id 1
 \set document_type goods_invoice
@@ -29,24 +30,10 @@ SELECT d.id
 FROM documents d
 WHERE d.company_id = :company_id
   AND d.document_type = :'document_type'
-  AND LOWER(
-        REGEXP_REPLACE(
-            COALESCE(NULLIF(d.external_document_number, ''), d.incoming_number, ''),
-            '[^[:alnum:]]+',
-            '',
-            'g'
-        )
-      ) = :'document_number'
+  AND d.document_number_normalized = :'document_number'
   AND d.document_date = :'document_date'::timestamptz
   AND d.total_amount = :total_amount
-  AND LOWER(
-        REGEXP_REPLACE(
-            COALESCE(NULLIF(d.vendor_inn, ''), d.vendor, ''),
-            '[^[:alnum:]]+',
-            '',
-            'g'
-        )
-      ) = :'vendor_key'
+  AND d.vendor_key_normalized = :'vendor_key'
 ORDER BY d.id DESC
 LIMIT 1;
 
@@ -58,14 +45,7 @@ WHERE d.company_id = :company_id
   AND d.document_type = :'document_type'
   AND d.document_date = :'document_date'::timestamptz
   AND d.total_amount = :total_amount
-  AND LOWER(
-        REGEXP_REPLACE(
-            COALESCE(NULLIF(d.vendor_inn, ''), d.vendor, ''),
-            '[^[:alnum:]]+',
-            '',
-            'g'
-        )
-      ) = :'vendor_key'
+  AND d.vendor_key_normalized = :'vendor_key'
 ORDER BY d.id DESC
 LIMIT 1;
 
@@ -76,8 +56,10 @@ SELECT
     d.document_type,
     d.external_document_number,
     d.incoming_number,
+    d.document_number_normalized,
     d.vendor,
     d.vendor_inn,
+    d.vendor_key_normalized,
     d.document_date,
     d.total_amount,
     d.created_at
