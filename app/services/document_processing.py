@@ -41,8 +41,6 @@ OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
 OcrRetryNotifier = Callable[[], Awaitable[None]]
-PreviewPreparationNotifier = Callable[[DocumentUploadPreparationReady], Awaitable[None]]
-PreviewOCRNotifier = Callable[[PreparedUpload, DocumentOCRReady], Awaitable[None]]
 UNSUPPORTED_GUEST_BILL_REASON = 'unsupported_guest_bill'
 UNSUPPORTED_PAYMENT_INVOICE_REASON = 'unsupported_payment_invoice'
 OCR_TEXT_FIXES = str.maketrans({
@@ -102,6 +100,10 @@ class DocumentUploadPreparationReady:
 class DocumentOCRReady:
     ocr_text: str
     ocr_elapsed_ms: float
+
+
+PreviewPreparationNotifier = Callable[[DocumentUploadPreparationReady], Awaitable[None]]
+PreviewOCRNotifier = Callable[[PreparedUpload, DocumentOCRReady], Awaitable[None]]
 
 
 @dataclass(slots=True)
