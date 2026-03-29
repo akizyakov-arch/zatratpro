@@ -108,6 +108,7 @@ class DocumentSchema(BaseModel):
     def normalize_document(self) -> "DocumentSchema":
         self.document_type = _detect_document_type(self.document_type, self.raw_text)
         self.items = _sanitize_items(self.items, self.document_type)
+        self.vat_total_amount = _resolve_vat_total_amount(self)
         self.vat_scope = _resolve_vat_scope(self)
         return self
 
@@ -212,6 +213,14 @@ def _amounts_match(left: float, right: float) -> bool:
     return abs(left - right) <= tolerance
 
 
+def _resolve_vat_total_amount(document: DocumentSchema) -> float | None:
+    if document.vat_total_amount is not None:
+        return document.vat_total_amount
+    if document.document_type not in {"cash_receipt", "bso"}:
+        return document.vat_total_amount
+    return _extract_receipt_vat_from_text(document.raw_text, total=document.total)
+
+
 def _resolve_vat_scope(document: DocumentSchema) -> str | None:
     labels = {
         normalized
@@ -223,6 +232,11 @@ def _resolve_vat_scope(document: DocumentSchema) -> str | None:
 
     if _should_force_mixed_vat_scope(document.document_type, vat_total, labels, raw_text):
         return "mixed"
+
+    if vat_total is not None and vat_total > 0 and document.document_type in {"cash_receipt", "bso"}:
+        if _contains_no_vat_signal(raw_text):
+            return "mixed"
+        return "document"
 
     if document.vat_scope in ALLOWED_VAT_SCOPES:
         return document.vat_scope
@@ -254,6 +268,57 @@ def _should_force_mixed_vat_scope(
         return True
     return False
 
+
+
+def _extract_receipt_vat_from_text(
+    raw_text: str | None,
+    *,
+    total: float | None = None,
+) -> float | None:
+    if not raw_text:
+        return None
+
+    translated = raw_text.lower().replace("ё", "е")
+    compact = re.sub(r"[^а-яa-z0-9%хx.,:\-\s]", " ", translated)
+    compact = re.sub(r"\s+", " ", compact).strip()
+    if not compact:
+        return None
+
+    money_value = r"(?:[0-9]{3,}(?:[\s.][0-9]{3})*(?:[.,][0-9]{1,2})?|[0-9]{1,2}[.,][0-9]{2})"
+    vat_label = r"н[дaа][сc5]"
+    patterns = (
+        rf"(?:сумм[аоу]?\s+)?(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*[-:=])?(?:\s*\d{{1,2}}\s*[%хx])?(?:\s*[-:=])?\s*({money_value})",
+        rf"({money_value})\s*(?:руб(?:\.|лей)?\s*)?(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*\d{{1,2}}\s*[%хx])?",
+    )
+
+    candidates: list[float] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, compact):
+            value = _coerce_number(match.group(1))
+            if isinstance(value, (int, float)) and value > 0:
+                candidates.append(float(value))
+
+    if not candidates:
+        return None
+
+    unique_candidates: list[float] = []
+    for value in candidates:
+        if not any(abs(value - existing) <= 0.01 for existing in unique_candidates):
+            unique_candidates.append(value)
+
+    if total is not None:
+        below_total = [value for value in unique_candidates if value < total]
+        if below_total:
+            if len(below_total) == 1:
+                return below_total[0]
+            summed = round(sum(below_total), 2)
+            if summed < total:
+                return summed
+            return max(below_total)
+
+    if len(unique_candidates) == 1:
+        return unique_candidates[0]
+    return max(unique_candidates)
 
 
 def _normalize_vat_label(value: str | None) -> str | None:
