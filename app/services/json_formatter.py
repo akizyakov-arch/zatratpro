@@ -99,7 +99,7 @@ def _format_item(document_type: str, item: DocumentItem, currency_display: str) 
             details.append(f"цена: {price} {currency_display}")
 
         if line_total is not None:
-            details.append(f"сумма строки: {line_total} {currency_display}")
+            details.append(f"без НДС: {line_total} {currency_display}")
         if vat_amount is not None:
             vat_text = f"НДС: {vat_amount} {currency_display}"
             if vat_label:
@@ -107,6 +107,9 @@ def _format_item(document_type: str, item: DocumentItem, currency_display: str) 
             details.append(vat_text)
         elif vat_label:
             details.append(f"НДС: {vat_label}")
+
+        if item.line_total is not None and item.vat_amount is not None:
+            details.append(f"с НДС: {_format_amount(item.line_total + item.vat_amount)} {currency_display}")
 
         if details:
             return prefix + ', '.join(details)
