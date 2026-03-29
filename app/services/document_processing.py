@@ -452,11 +452,23 @@ class DocumentProcessingService:
             ocr_elapsed_ms=ocr_result.ocr_elapsed_ms,
         )
 
-    async def _cleanup_pending_preview_failure(self, telegram_user_id: int) -> None:
+    async def cancel_pending_document_flow(self, telegram_user_id: int) -> None:
+        await self._clear_pending_document_flow(
+            telegram_user_id,
+            error_message='Failed to cleanup pending document after explicit cancel',
+        )
+
+    async def _clear_pending_document_flow(self, telegram_user_id: int, *, error_message: str) -> None:
         try:
             await clear_document_flow(telegram_user_id)
         except Exception:  # noqa: BLE001
-            logger.exception('Failed to cleanup pending document after preview failure')
+            logger.exception(error_message)
+
+    async def _cleanup_pending_preview_failure(self, telegram_user_id: int) -> None:
+        await self._clear_pending_document_flow(
+            telegram_user_id,
+            error_message='Failed to cleanup pending document after preview failure',
+        )
 
     async def select_project_for_pending_document(
         self,
@@ -485,10 +497,10 @@ class DocumentProcessingService:
         return selection_result
 
     async def _cleanup_pending_project_selection_failure(self, telegram_user_id: int) -> None:
-        try:
-            await clear_document_flow(telegram_user_id)
-        except Exception:  # noqa: BLE001
-            logger.exception('Failed to cleanup pending document after project selection failure')
+        await self._clear_pending_document_flow(
+            telegram_user_id,
+            error_message='Failed to cleanup pending document after project selection failure',
+        )
 
     async def load_project_selection_context(
         self,
@@ -578,10 +590,10 @@ class DocumentProcessingService:
         return DocumentDuplicateSaveLoaded(project=project, pending_document=pending_document)
 
     async def _cleanup_pending_duplicate_failure(self, telegram_user_id: int) -> None:
-        try:
-            await clear_document_flow(telegram_user_id)
-        except Exception:  # noqa: BLE001
-            logger.exception('Failed to cleanup pending document after duplicate-confirm failure')
+        await self._clear_pending_document_flow(
+            telegram_user_id,
+            error_message='Failed to cleanup pending document after duplicate-confirm failure',
+        )
 
     async def load_preview_project_options(
         self,
@@ -640,10 +652,10 @@ class DocumentProcessingService:
             logger.exception('Document save failed after duplicate confirmation')
             return DocumentDuplicateSaveFailure(stage='save', reason='unexpected', details=str(exc))
 
-        try:
-            await clear_document_flow(telegram_user.id)
-        except Exception:  # noqa: BLE001
-            logger.exception('Failed to cleanup pending document after duplicate-confirm save')
+        await self._clear_pending_document_flow(
+            telegram_user.id,
+            error_message='Failed to cleanup pending document after duplicate-confirm save',
+        )
 
         duplicate_check = pending_document.duplicate_check
         if duplicate_check is None:

@@ -16,7 +16,6 @@ from app.services.document_processing import (
     DocumentUploadInput,
 )
 from app.state.pending_actions import set_pending_action
-from app.state.pending_documents import clear_document_flow
 from app.handlers.common import ensure_user_context, main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
 from app.ui.projects import (
@@ -393,7 +392,7 @@ async def process_document_file(message: Message, access_context: AccessContext 
 async def cancel_project_selection(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    await clear_document_flow(callback.from_user.id)
+    await document_processing_service.cancel_pending_document_flow(callback.from_user.id)
     await callback.answer('Загрузка отменена.')
     await callback.message.answer(
         'Подготовка документа отменена.',
@@ -457,7 +456,7 @@ async def process_project_selection(callback: CallbackQuery, access_context: Acc
 async def duplicate_cancel_callback(callback: CallbackQuery, access_context: AccessContext | None = None) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    await clear_document_flow(callback.from_user.id)
+    await document_processing_service.cancel_pending_document_flow(callback.from_user.id)
     await callback.answer('Загрузка отменена.')
     await callback.message.answer(
         'Документ не сохранен. Можно отправить новый файл.',
