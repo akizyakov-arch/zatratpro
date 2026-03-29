@@ -291,6 +291,7 @@ async def _process_upload_preview(
         return
 
     user_name = _person_name(message.from_user)
+    await message.answer(f'{user_name}, файл получен. Подготавливаю документ.', reply_markup=menu_markup)
 
     async def _on_prepared(preparation_result) -> None:
         prepared_upload = preparation_result.prepared_upload
@@ -302,12 +303,12 @@ async def _process_upload_preview(
             prepared_upload.original_file_size,
             prepared_upload.normalized_file_size,
         )
-        received_label = {
-            'photo': 'фото получено',
-            'pdf': 'PDF получен',
-            'image_file': 'файл получен',
+        prepared_label = {
+            'photo': 'фото подготовлено',
+            'pdf': 'PDF подготовлен',
+            'image_file': 'файл подготовлен',
         }[prepared_upload.original_kind]
-        await message.answer(f'{user_name}, {received_label}. Начинаю распознавание.', reply_markup=menu_markup)
+        await message.answer(f'{user_name}, {prepared_label}. Начинаю распознавание.', reply_markup=menu_markup)
 
     async def _on_ocr_completed(prepared_upload, ocr_result) -> None:
         logger.info(
@@ -417,12 +418,12 @@ async def process_project_selection(callback: CallbackQuery, access_context: Acc
         await callback.answer('Проект недоступен. Обнови список и попробуй снова.', show_alert=True)
         return
 
-    selection_started = False
+    await callback.answer()
+    progress_notified = False
 
     async def _on_ready_to_resolve() -> None:
-        nonlocal selection_started
-        selection_started = True
-        await callback.answer()
+        nonlocal progress_notified
+        progress_notified = True
         await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
 
     selection_result = await document_processing_service.select_project_for_pending_document(
@@ -431,9 +432,6 @@ async def process_project_selection(callback: CallbackQuery, access_context: Acc
         on_ready_to_resolve=_on_ready_to_resolve,
     )
     if isinstance(selection_result, DocumentProjectSelectionFailure):
-        if not selection_started:
-            await callback.answer(_project_selection_failure_message(selection_result), show_alert=True)
-            return
         await callback.message.answer(_project_selection_failure_message(selection_result), reply_markup=menu_markup)
         return
     if isinstance(selection_result, DocumentProjectSelectionDuplicate):
@@ -466,23 +464,12 @@ async def duplicate_save_callback(callback: CallbackQuery, access_context: Acces
         return
 
     menu_markup = await main_menu_markup_for_user(callback.from_user, access_context)
-    save_started = False
-
-    async def _on_ready_to_save() -> None:
-        nonlocal save_started
-        save_started = True
-        await callback.answer()
+    await callback.answer()
 
     save_result = await document_processing_service.confirm_duplicate_save(
         telegram_user=callback.from_user,
-        on_ready_to_save=_on_ready_to_save,
     )
     if isinstance(save_result, DocumentDuplicateSaveFailure):
-        if not save_started and save_result.stage == 'pending' and save_result.reason == 'validation_error' and save_result.details in {'missing_pending', 'missing_duplicate_check'}:
-            await callback.answer(_duplicate_save_failure_message(save_result), show_alert=True)
-            return
-        if not save_started:
-            await callback.answer()
         await callback.message.answer(_duplicate_save_failure_message(save_result), reply_markup=menu_markup)
         return
 
