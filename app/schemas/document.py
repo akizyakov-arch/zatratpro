@@ -222,6 +222,8 @@ def _resolve_vat_total_amount(document: DocumentSchema) -> float | None:
     if current_vat is None:
         return fallback_vat
     if document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
+        if fallback_vat is None or _looks_like_total_instead_of_vat(fallback_vat, document.total):
+            return None
         return fallback_vat
     if fallback_vat is None:
         return current_vat
@@ -321,14 +323,21 @@ def _extract_receipt_vat_from_text(
             unique_candidates.append(value)
 
     if total is not None:
-        below_total = [value for value in unique_candidates if value < total]
-        if below_total:
-            if len(below_total) == 1:
-                return below_total[0]
-            summed = round(sum(below_total), 2)
-            if summed < total:
-                return summed
-            return max(below_total)
+        non_total_candidates = [
+            value for value in unique_candidates
+            if not _looks_like_total_instead_of_vat(value, total)
+        ]
+        if non_total_candidates:
+            below_total = [value for value in non_total_candidates if value < total]
+            if below_total:
+                if len(below_total) == 1:
+                    return below_total[0]
+                summed = round(sum(below_total), 2)
+                if summed < total:
+                    return summed
+                return max(below_total)
+            return max(non_total_candidates)
+        return None
 
     if len(unique_candidates) == 1:
         return unique_candidates[0]
