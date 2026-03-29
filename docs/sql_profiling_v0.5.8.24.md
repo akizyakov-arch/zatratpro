@@ -28,7 +28,7 @@ Working rules:
 | my documents list | `ViewService.list_my_documents(...)` | `app/services/views.py` | employee/my documents | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
 | report documents list | `ViewService._list_report_documents(...)` | `app/services/views.py` | manager report drilldown | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
 | report items list | `ViewService._list_report_items(...)` | `app/services/views.py` | manager report drilldown | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| export source rows | `DocumentExportService._list_company_source_rows(...)` | `app/services/document_exports.py` | ZIP export | P2 | planned | TBD | TBD | TBD | TBD |
+| export source rows | `DocumentExportService._list_company_source_rows(...)` | `app/services/document_exports.py` | ZIP export | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
 | save/lookups if needed | `project/pending/document lookup path` | `document_processing.py` + related services | upload -> preview -> save | P3 | optional | TBD | TBD | TBD | TBD |
 
 ## Per-query Capture Template
@@ -243,6 +243,62 @@ Artifacts:
 ### Phase 4
 - `DocumentExportService._list_company_source_rows(...)`
 - save/lookups only if latency evidence justifies measuring them
+
+## Phase 4 Export Pack
+
+Phase 4 target query:
+- `DocumentExportService._list_company_source_rows(...)`
+
+Current query shape:
+- filters by `company_id` and optional `document_date` range
+- joins `projects`, optional `users`, optional `document_files`
+- orders by `d.document_date DESC NULLS LAST, d.created_at DESC, d.id DESC`
+- wide rowset is then post-processed in Python to resolve `storage_key` and skip missing source references
+
+Current index support from schema:
+- `idx_documents_document_date`
+- `idx_documents_company_created_at_desc`
+- `idx_documents_company_project_created_at_desc`
+- `idx_document_files_document_id`
+- `uq_document_files_document_role_page`
+
+Known gaps before profiling:
+- no composite index tailored to `company_id + document_date + created_at + id`
+- `NULLS LAST` on `document_date` may force extra sort work depending on planner choice
+- `LEFT JOIN document_files` depends on unique key shape but may still add cost on large exports
+- period filter uses `document_date`, while many other flows are indexed around `created_at`
+
+Phase 4 runbook:
+1. load a realistic dataset
+2. run `ANALYZE documents; ANALYZE document_files; ANALYZE projects;`
+3. fill real bind values in [sql_profiling_phase4_export.sql](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_phase4_export.sql)
+4. capture `EXPLAIN (ANALYZE, BUFFERS)` for:
+   - all-time export query
+   - period export query
+5. write verdict:
+   - `critical`
+   - `acceptable`
+   - `no action needed`
+6. only after that choose one action:
+   - `none`
+   - `index`
+   - `rewrite`
+
+Evidence to capture during Phase 4:
+- scan and join type per table
+- whether planner reuses index order or introduces explicit `Sort`
+- rows removed by date filters
+- buffer hits/reads
+- actual runtime and planning time
+- bind values and export period used for the run
+
+Artifacts:
+- profiling report: [sql_profiling_v0.5.8.24.md](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_v0.5.8.24.md)
+- runnable SQL: [sql_profiling_phase4_export.sql](/home/kizz/DEVV/ZATRATPRO/docs/sql_profiling_phase4_export.sql)
+
+Optional save/lookups:
+- keep `project/pending/document lookup path` in `optional`
+- only profile it after export if there is direct latency evidence from logs or user-visible delay
 
 ## Expected Findings
 
