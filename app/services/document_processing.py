@@ -320,9 +320,22 @@ def _unsupported_document_reason(document: DocumentSchema, raw_text: str | None)
         'расходный кассовый ордер',
         'транспортная накладная',
     )
-    if has_payment_invoice_marker:
+    has_supported_primary_type = document.document_type in {
+        'goods_invoice',
+        'service_act',
+        'upd',
+        'vat_invoice',
+        'transport_invoice',
+        'cash_out_order',
+    }
+    if has_payment_invoice_marker and not has_supported_primary_marker and not has_supported_primary_type:
         return UNSUPPORTED_PAYMENT_INVOICE_REASON
-    if bank_marker_count >= 2 and not has_fiscal_marker and not has_supported_primary_marker:
+    if (
+        bank_marker_count >= 2
+        and not has_fiscal_marker
+        and not has_supported_primary_marker
+        and not has_supported_primary_type
+    ):
         return UNSUPPORTED_PAYMENT_INVOICE_REASON
     return None
 
