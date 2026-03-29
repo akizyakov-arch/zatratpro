@@ -27,6 +27,14 @@ def report_period_label(period: str) -> str:
     return REPORT_PERIOD_LABELS.get(period, period)
 
 
+def format_datetime(value) -> str:
+    if value is None:
+        return '—'
+    if hasattr(value, 'strftime'):
+        return value.strftime('%d.%m.%Y %H:%M')
+    return str(value)
+
+
 def format_report_overview(summary, title: str) -> str:
     return NL.join([
         f'<b>{title}</b>',
@@ -133,6 +141,7 @@ def format_items_only(title: str, items) -> str:
 def format_report_document_card(title: str, document, items) -> str:
     number = document.document_number or 'без номера'
     date_line = format_date(document.document_date)
+    created_line = format_datetime(document.created_at)
     vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
     executor = document.uploaded_by_name or 'не указан'
     project_name = document.project_name or 'Проект не указан'
@@ -141,7 +150,8 @@ def format_report_document_card(title: str, document, items) -> str:
         f'<b>{title}</b>',
         f'Проект: {project_name}',
         f'Контрагент: {vendor}',
-        f'Дата: {date_line}',
+        f'Дата документа: {date_line}',
+        f'Дата ввода: {created_line}',
         f'Номер: {number}',
         f'Сумма: {format_amount(document.total_amount)}',
         f'Исполнитель: {executor}',
@@ -152,6 +162,7 @@ def format_report_document_card(title: str, document, items) -> str:
 def format_report_document_items(title: str, period: str, document, items) -> str:
     number = document.document_number or 'без номера'
     date_line = format_date(document.document_date)
+    created_line = format_datetime(document.created_at)
     vendor = document.vendor or document.vendor_inn or 'Контрагент не указан'
     executor = document.uploaded_by_name or 'не указан'
     project_name = document.project_name or 'Проект не указан'
@@ -159,7 +170,8 @@ def format_report_document_items(title: str, period: str, document, items) -> st
         f'<b>{title}</b>',
         f'Проект: {project_name}',
         f'Контрагент: {vendor}',
-        f'Дата: {date_line}',
+        f'Дата документа: {date_line}',
+        f'Дата ввода: {created_line}',
         f'Номер: {number}',
         f'Сумма: {format_amount(document.total_amount)}',
         f'Исполнитель: {executor}',

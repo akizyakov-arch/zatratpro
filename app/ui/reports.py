@@ -226,7 +226,7 @@ def _employee_row_text(row: Any) -> str:
     return f"{employee_name} | {row.document_count} док. | {total_amount}"
 def _document_row_text(document: Any) -> str:
     created_at = getattr(document, 'created_at', None)
-    created_line = created_at.strftime('%d.%m.%Y') if hasattr(created_at, 'strftime') else '—'
+    created_line = created_at.strftime('%d.%m.%Y %H:%M') if hasattr(created_at, 'strftime') else '—'
     total_amount = getattr(document, 'total_amount', 0) or 0
     vendor = getattr(document, 'vendor', None) or getattr(document, 'vendor_inn', None) or 'Без поставщика'
     uploader = getattr(document, 'uploaded_by_name', None) or 'не указан'
