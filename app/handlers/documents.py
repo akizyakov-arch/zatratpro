@@ -303,12 +303,6 @@ async def _process_upload_preview(
             prepared_upload.original_file_size,
             prepared_upload.normalized_file_size,
         )
-        prepared_label = {
-            'photo': 'фото подготовлено',
-            'pdf': 'PDF подготовлен',
-            'image_file': 'файл подготовлен',
-        }[prepared_upload.original_kind]
-        await message.answer(f'{user_name}, {prepared_label}. Начинаю распознавание.', reply_markup=menu_markup)
 
     async def _on_ocr_completed(prepared_upload, ocr_result) -> None:
         logger.info(
