@@ -370,6 +370,7 @@ async def _send_report_document_source(callback: CallbackQuery, document_id: int
         return
     file_path = document_storage_service.resolve_path(source.storage_key)
     if not file_path.exists():
+        logger.warning('Stored document file missing in manager report open: document_id=%s storage_key=%s', document_id, source.storage_key)
         await callback.answer('Файл документа не найден в storage.', show_alert=True)
         return
     await callback.answer()

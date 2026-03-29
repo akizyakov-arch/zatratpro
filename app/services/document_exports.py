@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
@@ -14,6 +15,9 @@ from app.config import TMP_DIR
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.database import get_pool
 from app.services.document_storage import DocumentStorageService
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -60,6 +64,11 @@ class DocumentExportService:
         for row in rows:
             source_path = self.document_storage.resolve_path(row.storage_key)
             if not source_path.exists():
+                logger.warning(
+                    'Stored document file missing during accountant export: document_id=%s storage_key=%s',
+                    row.document_id,
+                    row.storage_key,
+                )
                 continue
             ext = _resolve_export_ext(row, source_path)
             archive_name = f'files/{row.document_id}{ext}'

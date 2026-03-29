@@ -1,8 +1,12 @@
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import shutil
 
 from app.config import get_settings
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -37,13 +41,18 @@ class DocumentStorageService:
         original_kind: str | None = None,
     ) -> StoredDocumentFile:
         source = Path(source_path)
+        if not source.exists() or not source.is_file():
+            raise FileNotFoundError(f'Prepared document file is missing before storage save: {source}')
         ext = file_ext or source.suffix or '.bin'
         if not ext.startswith('.'):
             ext = f'.{ext}'
         storage_key = f'documents/{company_id}/{document_id}/source{ext.lower()}'
         target_path = self.root / storage_key
         target_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info('Persisting prepared document file: source=%s target=%s', source, target_path)
         shutil.move(str(source), str(target_path))
+        if not target_path.exists() or not target_path.is_file():
+            raise FileNotFoundError(f'Prepared document file is missing after storage save: {target_path}')
         stored_file_size = target_path.stat().st_size
         return StoredDocumentFile(
             storage_key=storage_key,
