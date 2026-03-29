@@ -60,7 +60,7 @@ class DeepSeekService:
             raise DeepSeekError("DeepSeek вернул пустой нормализованный текст.")
         return _apply_currency_symbols(content)
 
-    async def extract_document(self, ocr_text: str) -> dict:
+    async def extract_document(self, ocr_text: str, *, system_prompt: str | None = None) -> dict:
         started = perf_counter()
         settings = get_settings()
         payload = {
@@ -68,7 +68,7 @@ class DeepSeekService:
             "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": EXTRACTION_PROMPT},
+                {"role": "system", "content": system_prompt or EXTRACTION_PROMPT},
                 {"role": "user", "content": ocr_text},
             ],
         }

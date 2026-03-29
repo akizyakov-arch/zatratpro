@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.document_rules import ALLOWED_DOCUMENT_TYPES, detect_document_type_from_text
+
 
 NUMERIC_FIXES = str.maketrans({
     "O": "0",
@@ -60,17 +62,6 @@ class DocumentItem(BaseModel):
     def normalize_numbers(cls, value: Any) -> Any:
         return _coerce_number(value)
 
-
-ALLOWED_DOCUMENT_TYPES = {
-    "goods_invoice",
-    "service_act",
-    "upd",
-    "vat_invoice",
-    "cash_receipt",
-    "bso",
-    "transport_invoice",
-    "cash_out_order",
-}
 
 ALLOWED_VAT_SCOPES = {
     "document",
@@ -141,28 +132,7 @@ def _coerce_number(value: Any) -> Any:
 
 
 def _detect_document_type(current_type: str | None, raw_text: str | None) -> str:
-    text = (raw_text or "").lower()
-
-    if any(token in text for token in ("универсальный передаточный документ", " упд", "упд ")):
-        return "upd"
-    if any(token in text for token in ("счет-фактура", "счёт-фактура")):
-        return "vat_invoice"
-    if any(token in text for token in ("товарная накладная", "торг-12")):
-        return "goods_invoice"
-    if any(token in text for token in ("транспортная накладная",)):
-        return "transport_invoice"
-    if any(token in text for token in ("акт выполненных работ", "акт оказанных услуг")):
-        return "service_act"
-    if any(token in text for token in ("бланк строгой отчетности", "бланк строгой отчётности", " бсо", "бсо ")):
-        return "bso"
-    if any(token in text for token in ("расходный кассовый ордер", "рко")):
-        return "cash_out_order"
-    if any(token in text for token in ("кассовый чек", "фискальный чек", "чек ккт", "кассовый документ", "чек")):
-        return "cash_receipt"
-
-    if current_type in ALLOWED_DOCUMENT_TYPES:
-        return current_type
-    return "unknown"
+    return detect_document_type_from_text(raw_text, current_type)
 
 
 def _sanitize_items(items: list[DocumentItem], document_type: str) -> list[DocumentItem]:

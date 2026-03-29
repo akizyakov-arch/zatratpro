@@ -12,6 +12,7 @@ from aiogram.types import Document, PhotoSize, User
 from app.schemas.document import DocumentSchema
 from app.services.companies import CompanyAccessError
 from app.services.deepseek import DeepSeekError, DeepSeekService
+from app.services.document_extraction import DocumentExtractionInput, DocumentExtractionService
 from app.services.documents import (
     DocumentService,
     DocumentValidationError,
@@ -372,11 +373,15 @@ class DocumentProcessingService:
         *,
         ocr_service: OCRSpaceService | None = None,
         deepseek_service: DeepSeekService | None = None,
+        document_extraction_service: DocumentExtractionService | None = None,
         document_service: DocumentService | None = None,
         project_service: ProjectService | None = None,
     ) -> None:
         self.ocr_service = ocr_service or OCRSpaceService()
         self.deepseek_service = deepseek_service or DeepSeekService()
+        self.document_extraction_service = document_extraction_service or DocumentExtractionService(
+            deepseek_service=self.deepseek_service,
+        )
         self.document_service = document_service or DocumentService()
         self.project_service = project_service or ProjectService()
 
@@ -820,8 +825,15 @@ class DocumentProcessingService:
         started = perf_counter()
         try:
             async with asyncio.timeout(EXTRACT_TIMEOUT_SECONDS):
-                extracted_document = await self.deepseek_service.extract_document(ocr_text)
-            document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
+                extraction_result = await self.document_extraction_service.extract_from_source(
+                    DocumentExtractionInput(
+                        ocr_text=ocr_text,
+                        source_kind=prepared_upload.original_kind,
+                        mime_type=prepared_upload.mime_type,
+                        source_path=str(prepared_upload.ocr_temp_path),
+                    )
+                )
+            document = DocumentSchema.model_validate({**extraction_result.payload, 'raw_text': ocr_text})
             unsupported_reason = _unsupported_document_reason(document, ocr_text)
             if unsupported_reason is not None:
                 safe_unlink(prepared_upload.ocr_temp_path)

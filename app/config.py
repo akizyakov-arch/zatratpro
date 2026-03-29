@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     bot_owner_telegram_id: int = Field(default=0, alias='BOT_OWNER_TELEGRAM_ID')
     document_storage_root: Path = Field(default=STORAGE_DIR, alias='DOCUMENT_STORAGE_ROOT')
     max_upload_bytes: int = Field(default=20 * 1024 * 1024, alias='MAX_UPLOAD_BYTES')
+    document_extraction_strategy: str = Field(default='generic', alias='DOCUMENT_EXTRACTION_STRATEGY')
 
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', case_sensitive=False, extra='ignore')
 
