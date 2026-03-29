@@ -303,55 +303,81 @@ class ManagerReportDataBuilder:
             values.append(params.employee_user_id)
             index += 1
         query = f"""
-            SELECT d.id AS document_id,
-                   d.created_at,
-                   d.document_date,
+            WITH filtered_documents AS (
+                SELECT d.id AS document_id,
+                       d.company_id,
+                       d.project_id,
+                       d.uploaded_by_user_id,
+                       d.created_at,
+                       d.document_date,
+                       d.document_type,
+                       d.external_document_number,
+                       d.incoming_number,
+                       d.vendor,
+                       d.vendor_inn,
+                       d.vendor_kpp,
+                       d.total_amount,
+                       d.vat_total_amount,
+                       d.vat_scope,
+                       d.duplicate_status,
+                       d.duplicate_of_document_id,
+                       d.preview_text,
+                       d.raw_text,
+                       d.source_file_path
+                FROM documents d
+                WHERE {' AND '.join(conditions)}
+            ),
+            item_counts AS (
+                SELECT di.document_id,
+                       COUNT(*) AS item_count
+                FROM document_items di
+                JOIN filtered_documents fd ON fd.document_id = di.document_id
+                GROUP BY di.document_id
+            )
+            SELECT fd.document_id,
+                   fd.created_at,
+                   fd.document_date,
                    c.name AS company_name,
                    p.id AS project_id,
                    p.name AS project_name,
-                   d.uploaded_by_user_id,
+                   fd.uploaded_by_user_id,
                    uploader.username,
                    uploader.first_name,
                    uploader.last_name,
                    cm.status AS member_status,
-                   d.document_type,
-                   d.external_document_number,
-                   d.incoming_number,
-                   d.vendor,
-                   d.vendor_inn,
-                   d.vendor_kpp,
-                   d.total_amount,
-                   d.vat_total_amount,
-                   d.vat_scope,
-                   d.duplicate_status,
-                   d.duplicate_of_document_id,
-                   d.preview_text,
-                   d.raw_text,
-                   d.source_file_path,
+                   fd.document_type,
+                   fd.external_document_number,
+                   fd.incoming_number,
+                   fd.vendor,
+                   fd.vendor_inn,
+                   fd.vendor_kpp,
+                   fd.total_amount,
+                   fd.vat_total_amount,
+                   fd.vat_scope,
+                   fd.duplicate_status,
+                   fd.duplicate_of_document_id,
+                   fd.preview_text,
+                   fd.raw_text,
+                   fd.source_file_path,
                    df.storage_key AS document_file_storage_key,
                    df.original_filename,
                    df.mime_type,
                    df.original_kind,
                    COALESCE(df.was_normalized, FALSE) AS was_normalized,
                    COALESCE(item_counts.item_count, 0) AS item_count
-            FROM documents d
-            JOIN companies c ON c.id = d.company_id
-            JOIN projects p ON p.id = d.project_id
-            LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+            FROM filtered_documents fd
+            JOIN companies c ON c.id = fd.company_id
+            JOIN projects p ON p.id = fd.project_id
+            LEFT JOIN users uploader ON uploader.id = fd.uploaded_by_user_id
             LEFT JOIN company_members cm
-              ON cm.company_id = d.company_id
-             AND cm.user_id = d.uploaded_by_user_id
+              ON cm.company_id = fd.company_id
+             AND cm.user_id = fd.uploaded_by_user_id
             LEFT JOIN document_files df
-              ON df.document_id = d.id
+              ON df.document_id = fd.document_id
              AND df.file_role = 'source'
              AND df.page_no = 0
-            LEFT JOIN LATERAL (
-                SELECT COUNT(*) AS item_count
-                FROM document_items di
-                WHERE di.document_id = d.id
-            ) item_counts ON TRUE
-            WHERE {' AND '.join(conditions)}
-            ORDER BY d.created_at DESC, d.id DESC
+            LEFT JOIN item_counts ON item_counts.document_id = fd.document_id
+            ORDER BY fd.created_at DESC, fd.document_id DESC
         """
         pool = get_pool()
         async with pool.acquire() as connection:
