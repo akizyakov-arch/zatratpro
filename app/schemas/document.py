@@ -221,11 +221,11 @@ def _resolve_vat_total_amount(document: DocumentSchema) -> float | None:
     current_vat = document.vat_total_amount
     if current_vat is None:
         return fallback_vat
+    if document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
+        return fallback_vat
     if fallback_vat is None:
         return current_vat
     if current_vat <= 0:
-        return fallback_vat
-    if document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
         return fallback_vat
     return current_vat
 
@@ -299,7 +299,7 @@ def _extract_receipt_vat_from_text(
         return None
 
     money_value = r"(?:[0-9]{3,}(?:[\s.][0-9]{3})*(?:[.,][0-9]{1,2})?|[0-9]{1,2}[.,][0-9]{2})"
-    vat_label = r"н[дaа][сc5]"
+    vat_label = r"[нnh][дdаa][сc5]"
     patterns = (
         rf"(?:сумм[аоу]?\s+)?(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*[-:=])?(?:\s*\d{{1,2}}\s*[%хx])?(?:\s*[-:=])?\s*({money_value})",
         rf"({money_value})\s*(?:руб(?:\.|лей)?\s*)?(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*\d{{1,2}}\s*[%хx])?",
