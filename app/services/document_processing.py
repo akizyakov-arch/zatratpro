@@ -35,7 +35,7 @@ DocumentPreviewFailureStage = Literal["preprocess", "ocr", "extract", "pending"]
 DocumentPreviewFailureReason = Literal["timeout", "service_error", "validation_error", "unexpected"]
 DocumentProjectSelectionFailureStage = Literal["pending", "project", "duplicate_check", "save"]
 DocumentProjectSelectionFailureReason = Literal["validation_error", "access_error", "unexpected"]
-DocumentDuplicateSaveFailureStage = Literal["pending", "save"]
+DocumentDuplicateSaveFailureStage = Literal["pending", "project", "save"]
 DocumentDuplicateSaveFailureReason = Literal["validation_error", "access_error", "unexpected"]
 OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
@@ -158,6 +158,12 @@ class DocumentProjectSelectionFailure:
 
 
 @dataclass(slots=True)
+class DocumentDuplicateSaveLoaded:
+    project: Project
+    pending_document: PendingDocument
+
+
+@dataclass(slots=True)
 class DocumentDuplicateSaveSuccess:
     document_id: int
     project_name: str
@@ -181,6 +187,7 @@ DocumentProjectSelectionResult = (
     | DocumentProjectSelectionSaved
     | DocumentProjectSelectionFailure
 )
+DocumentDuplicateSaveLoadResult = DocumentDuplicateSaveLoaded | DocumentDuplicateSaveFailure
 DocumentDuplicateSaveResult = DocumentDuplicateSaveSuccess | DocumentDuplicateSaveFailure
 
 
@@ -450,6 +457,47 @@ class DocumentProcessingService:
             return DocumentProjectSelectionFailure(stage='project', reason='validation_error', details='project_unavailable')
 
         return DocumentProjectSelectionLoaded(project=project, pending_document=pending_document)
+
+    async def load_duplicate_save_context(
+        self,
+        *,
+        telegram_user: User,
+    ) -> DocumentDuplicateSaveLoadResult:
+        try:
+            pending_document = await get_pending_document(telegram_user.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Failed to load pending document for duplicate-confirm save')
+            return DocumentDuplicateSaveFailure(stage='pending', reason='unexpected', details=str(exc))
+
+        if pending_document is None:
+            return DocumentDuplicateSaveFailure(stage='pending', reason='validation_error', details='missing_pending')
+        if pending_document.duplicate_check is None:
+            return DocumentDuplicateSaveFailure(stage='pending', reason='validation_error', details='missing_duplicate_check')
+        if pending_document.extracted_document is None or pending_document.selected_project_id is None:
+            await self._cleanup_pending_duplicate_failure(telegram_user.id)
+            return DocumentDuplicateSaveFailure(stage='pending', reason='validation_error', details='missing_document')
+
+        try:
+            project = await self.project_service.get_active_project(telegram_user.id, pending_document.selected_project_id)
+        except CompanyAccessError as exc:
+            await self._cleanup_pending_duplicate_failure(telegram_user.id)
+            return DocumentDuplicateSaveFailure(stage='project', reason='access_error', details=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Failed to load project for duplicate-confirm save')
+            await self._cleanup_pending_duplicate_failure(telegram_user.id)
+            return DocumentDuplicateSaveFailure(stage='project', reason='unexpected', details=str(exc))
+
+        if project is None:
+            await self._cleanup_pending_duplicate_failure(telegram_user.id)
+            return DocumentDuplicateSaveFailure(stage='project', reason='validation_error', details='project_unavailable')
+
+        return DocumentDuplicateSaveLoaded(project=project, pending_document=pending_document)
+
+    async def _cleanup_pending_duplicate_failure(self, telegram_user_id: int) -> None:
+        try:
+            await clear_document_flow(telegram_user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception('Failed to cleanup pending document after duplicate-confirm failure')
 
     async def save_duplicate_confirmed(
         self,

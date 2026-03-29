@@ -17,7 +17,7 @@ from app.services.document_processing import (
 )
 from app.services.projects import ProjectService
 from app.state.pending_actions import set_pending_action
-from app.state.pending_documents import clear_document_flow, get_pending_document
+from app.state.pending_documents import clear_document_flow
 from app.handlers.common import ensure_user_context, main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
 from app.ui.projects import (
@@ -221,10 +221,15 @@ def _saved_duplicate_message(duplicate_check) -> str:
 
 
 def _duplicate_save_failure_message(failure: DocumentDuplicateSaveFailure) -> str:
-    if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'missing_document':
-        return 'Не удалось восстановить подготовленный документ. Отправь фото заново.'
-    if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'missing_duplicate_check':
-        return 'Не удалось восстановить подтверждение дубля. Отправь фото заново.'
+    if failure.stage == 'pending' and failure.reason == 'validation_error':
+        if failure.details == 'missing_pending':
+            return 'Нет документа для подтверждения. Отправь фото заново.'
+        if failure.details == 'missing_document':
+            return 'Не удалось восстановить подготовленный документ. Отправь фото заново.'
+        if failure.details == 'missing_duplicate_check':
+            return 'Не удалось восстановить подтверждение дубля. Отправь фото заново.'
+    if failure.stage == 'project' and failure.reason == 'validation_error' and failure.details == 'project_unavailable':
+        return 'Проект больше недоступен. Отправь документ заново.'
     if failure.reason in {'validation_error', 'access_error'}:
         return failure.details or 'Не удалось сохранить документ.'
     return f'Не удалось сохранить документ: {failure.details or "неизвестная ошибка"}'
@@ -463,37 +468,23 @@ async def duplicate_save_callback(callback: CallbackQuery, access_context: Acces
     if callback.from_user is None or callback.message is None:
         return
 
-    pending_document = await get_pending_document(callback.from_user.id)
-    if pending_document is None or pending_document.duplicate_check is None:
-        await callback.answer('Нет документа для подтверждения. Отправь фото заново.', show_alert=True)
-        return
-
     menu_markup = await main_menu_markup_for_user(callback.from_user, access_context)
-    if pending_document.selected_project_id is None:
-        await clear_document_flow(callback.from_user.id)
+    save_context = await document_processing_service.load_duplicate_save_context(
+        telegram_user=callback.from_user,
+    )
+    if isinstance(save_context, DocumentDuplicateSaveFailure):
+        if save_context.stage == 'pending' and save_context.reason == 'validation_error' and save_context.details in {'missing_pending', 'missing_duplicate_check'}:
+            await callback.answer(_duplicate_save_failure_message(save_context), show_alert=True)
+            return
         await callback.answer()
-        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
-        return
-
-    try:
-        project = await project_service.get_active_project(callback.from_user.id, pending_document.selected_project_id)
-    except CompanyAccessError as exc:
-        await clear_document_flow(callback.from_user.id)
-        await callback.answer()
-        await callback.message.answer(str(exc), reply_markup=menu_markup)
-        return
-
-    if project is None:
-        await clear_document_flow(callback.from_user.id)
-        await callback.answer()
-        await callback.message.answer('Проект больше недоступен. Отправь документ заново.', reply_markup=menu_markup)
+        await callback.message.answer(_duplicate_save_failure_message(save_context), reply_markup=menu_markup)
         return
 
     await callback.answer()
     save_result = await document_processing_service.save_duplicate_confirmed(
         telegram_user=callback.from_user,
-        project=project,
-        pending_document=pending_document,
+        project=save_context.project,
+        pending_document=save_context.pending_document,
     )
     if isinstance(save_result, DocumentDuplicateSaveFailure):
         await clear_document_flow(callback.from_user.id)
