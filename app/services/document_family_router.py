@@ -13,6 +13,8 @@ from app.document_rules import (
 
 SHORT_ALPHA_LINE_RE = re.compile(r'[A-Za-zА-Яа-я]')
 SUSPICIOUS_CHAR_RE = re.compile(r'[?~_|]{2,}|�')
+SINGLE_CHAR_TOKEN_RE = re.compile(r'\b[0-9A-Za-zА-Яа-я]\b')
+MIXED_ALNUM_TOKEN_RE = re.compile(r'(?=.*[A-Za-zА-Яа-я])(?=.*\d)[A-Za-zА-Яа-я\d/-]{3,}')
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,9 +124,21 @@ def _looks_like_noisy_ocr(raw_text: str) -> bool:
     if not compact_lines:
         return False
 
-    short_alpha_lines = sum(
-        1
-        for line in compact_lines
-        if SHORT_ALPHA_LINE_RE.search(line) and len(line) <= 3
-    )
-    return suspicious_blocks >= 3 or short_alpha_lines >= max(4, len(compact_lines) // 2)
+    alpha_lines = [line for line in compact_lines if SHORT_ALPHA_LINE_RE.search(line)]
+    short_alpha_lines = sum(1 for line in alpha_lines if len(line) <= 3)
+    single_char_tokens = len(SINGLE_CHAR_TOKEN_RE.findall(text))
+    mixed_alnum_tokens = len(MIXED_ALNUM_TOKEN_RE.findall(text))
+
+    score = 0
+    if suspicious_blocks >= 1:
+        score += 1
+
+    has_fragmented_lines = alpha_lines and short_alpha_lines >= max(2, len(alpha_lines) // 3)
+    if has_fragmented_lines:
+        score += 1
+    if single_char_tokens >= max(4, len(compact_lines) // 2):
+        score += 1
+    if mixed_alnum_tokens >= max(6, len(compact_lines) // 2):
+        score += 1
+
+    return score >= 2 and (suspicious_blocks >= 1 or has_fragmented_lines or single_char_tokens >= 4)
