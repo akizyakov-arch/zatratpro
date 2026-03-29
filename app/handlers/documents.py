@@ -471,25 +471,23 @@ async def duplicate_save_callback(callback: CallbackQuery, access_context: Acces
         return
 
     menu_markup = await main_menu_markup_for_user(callback.from_user, access_context)
-    save_context = await document_processing_service.load_duplicate_save_context(
-        telegram_user=callback.from_user,
-    )
-    if isinstance(save_context, DocumentDuplicateSaveFailure):
-        if save_context.stage == 'pending' and save_context.reason == 'validation_error' and save_context.details in {'missing_pending', 'missing_duplicate_check'}:
-            await callback.answer(_duplicate_save_failure_message(save_context), show_alert=True)
-            return
-        await callback.answer()
-        await callback.message.answer(_duplicate_save_failure_message(save_context), reply_markup=menu_markup)
-        return
+    save_started = False
 
-    await callback.answer()
-    save_result = await document_processing_service.save_duplicate_confirmed(
+    async def _on_ready_to_save() -> None:
+        nonlocal save_started
+        save_started = True
+        await callback.answer()
+
+    save_result = await document_processing_service.confirm_duplicate_save(
         telegram_user=callback.from_user,
-        project=save_context.project,
-        pending_document=save_context.pending_document,
+        on_ready_to_save=_on_ready_to_save,
     )
     if isinstance(save_result, DocumentDuplicateSaveFailure):
-        await clear_document_flow(callback.from_user.id)
+        if not save_started and save_result.stage == 'pending' and save_result.reason == 'validation_error' and save_result.details in {'missing_pending', 'missing_duplicate_check'}:
+            await callback.answer(_duplicate_save_failure_message(save_result), show_alert=True)
+            return
+        if not save_started:
+            await callback.answer()
         await callback.message.answer(_duplicate_save_failure_message(save_result), reply_markup=menu_markup)
         return
 

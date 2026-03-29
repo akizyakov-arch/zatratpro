@@ -43,6 +43,7 @@ EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
 OcrRetryNotifier = Callable[[], Awaitable[None]]
 ProjectSelectionResolveNotifier = Callable[[], Awaitable[None]]
+DuplicateSaveStartNotifier = Callable[[], Awaitable[None]]
 UNSUPPORTED_GUEST_BILL_REASON = 'unsupported_guest_bill'
 UNSUPPORTED_PAYMENT_INVOICE_REASON = 'unsupported_payment_invoice'
 ACTIVE_DOCUMENT_FLOW_REASON = 'active_document_flow'
@@ -503,6 +504,30 @@ class DocumentProcessingService:
             return DocumentProjectSelectionFailure(stage='project', reason='validation_error', details='project_unavailable')
 
         return DocumentProjectSelectionLoaded(project=project, pending_document=pending_document)
+
+    async def confirm_duplicate_save(
+        self,
+        *,
+        telegram_user: User,
+        on_ready_to_save: DuplicateSaveStartNotifier | None = None,
+    ) -> DocumentDuplicateSaveResult:
+        save_context = await self.load_duplicate_save_context(
+            telegram_user=telegram_user,
+        )
+        if isinstance(save_context, DocumentDuplicateSaveFailure):
+            return save_context
+
+        if on_ready_to_save is not None:
+            await on_ready_to_save()
+
+        save_result = await self.save_duplicate_confirmed(
+            telegram_user=telegram_user,
+            project=save_context.project,
+            pending_document=save_context.pending_document,
+        )
+        if isinstance(save_result, DocumentDuplicateSaveFailure):
+            await self._cleanup_pending_duplicate_failure(telegram_user.id)
+        return save_result
 
     async def load_duplicate_save_context(
         self,
