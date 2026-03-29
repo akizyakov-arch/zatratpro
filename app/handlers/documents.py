@@ -57,6 +57,12 @@ def _is_message_upload_too_large(message: Message) -> bool:
     return bool(file_size is not None and file_size > MAX_UPLOAD_BYTES)
 
 
+def _has_expected_upload_payload(upload_kind: str, upload_input: DocumentUploadInput) -> bool:
+    if upload_kind == 'photo':
+        return bool(upload_input.photo_sizes)
+    return upload_input.document is not None
+
+
 async def _main_menu_markup(
     message: Message,
     access_context: AccessContext | None = None,
@@ -151,29 +157,22 @@ async def _handle_upload_message(
         logger.info('Upload stopped before OCR: context unavailable upload_kind=%s', upload_kind)
         return
 
+    telegram_user = message.from_user
     menu_markup = build_main_menu_keyboard(
         menu_kind=context.menu_kind,
         has_company=context.has_company,
         can_view_reports=context.can_view_reports,
     )
     upload_input = _build_upload_input(message)
-    if message.from_user is None:
-        logger.info('Upload rejected: user missing upload_kind=%s', upload_kind)
-        await message.answer(missing_payload_message, reply_markup=menu_markup)
-        return
-    if upload_kind == 'photo' and not upload_input.photo_sizes:
-        logger.info('Photo upload rejected: photo payload missing')
-        await message.answer(missing_payload_message, reply_markup=menu_markup)
-        return
-    if upload_kind == 'document' and upload_input.document is None:
-        logger.info('Document upload rejected: document payload missing')
+    if not _has_expected_upload_payload(upload_kind, upload_input):
+        logger.info('Upload rejected: user_id=%s upload_kind=%s reason=missing_payload', telegram_user.id, upload_kind)
         await message.answer(missing_payload_message, reply_markup=menu_markup)
         return
     if _is_message_upload_too_large(message):
         file_size = _get_message_photo_size(message) if upload_kind == 'photo' else upload_input.document.file_size
         logger.info(
             'Upload rejected: user_id=%s upload_kind=%s reason=file_too_large size=%s limit=%s',
-            message.from_user.id,
+            telegram_user.id,
             upload_kind,
             file_size,
             MAX_UPLOAD_BYTES,
@@ -182,16 +181,18 @@ async def _handle_upload_message(
         return
     logger.info(
         'Upload accepted for OCR handoff: user_id=%s upload_kind=%s file_name=%s mime_type=%s',
-        message.from_user.id,
+        telegram_user.id,
         upload_kind,
         upload_input.document.file_name if upload_input.document is not None else None,
         upload_input.document.mime_type if upload_input.document is not None else None,
     )
     await _process_upload_preview(
         message,
-        menu_markup,
-        context,
-        upload_input,
+        telegram_user=telegram_user,
+        user_name=_person_name(telegram_user),
+        menu_markup=menu_markup,
+        can_manage_company=context.can_manage_company,
+        upload_input=upload_input,
     )
 
 
@@ -283,21 +284,20 @@ async def _get_access_context_or_reply(
 
 async def _process_upload_preview(
     message: Message,
+    *,
+    telegram_user,
+    user_name: str,
     menu_markup,
-    context,
+    can_manage_company: bool,
     upload_input: DocumentUploadInput,
 ) -> None:
-    if message.from_user is None:
-        return
-
-    user_name = _person_name(message.from_user)
     await message.answer(f'{user_name}, файл получен. Подготавливаю документ.', reply_markup=menu_markup)
 
     async def _on_prepared(preparation_result) -> None:
         prepared_upload = preparation_result.prepared_upload
         logger.info(
             'Document preprocessing completed: user_id=%s original_kind=%s prep_ms=%.1f source_size=%s ocr_size=%s',
-            message.from_user.id,
+            telegram_user.id,
             prepared_upload.original_kind,
             preparation_result.prep_elapsed_ms,
             prepared_upload.original_file_size,
@@ -307,7 +307,7 @@ async def _process_upload_preview(
     async def _on_ocr_completed(prepared_upload, ocr_result) -> None:
         logger.info(
             'OCR completed: user_id=%s original_kind=%s ocr_ms=%.1f chars=%s',
-            message.from_user.id,
+            telegram_user.id,
             prepared_upload.original_kind,
             ocr_result.ocr_elapsed_ms,
             len(ocr_result.ocr_text),
@@ -316,10 +316,10 @@ async def _process_upload_preview(
 
     async with ChatActionSender.typing(chat_id=message.chat.id, bot=message.bot):
         preview_screen_result = await document_processing_service.build_preview_screen_from_upload(
-            telegram_user_id=message.from_user.id,
-            telegram_user=message.from_user,
+            telegram_user_id=telegram_user.id,
+            telegram_user=telegram_user,
             upload_input=upload_input,
-            can_manage_company=context.can_manage_company,
+            can_manage_company=can_manage_company,
             on_prepared=_on_prepared,
             on_retry_needed=lambda: _notify_ocr_retry(message, menu_markup),
             on_ocr_completed=_on_ocr_completed,
@@ -335,7 +335,7 @@ async def _process_upload_preview(
     preview_result = preview_screen_result.preview
     logger.info(
         'Extraction completed: user_id=%s original_kind=%s extract_ms=%.1f items=%s',
-        message.from_user.id,
+        telegram_user.id,
         preview_screen_result.prepared_upload.original_kind,
         preview_result.extract_elapsed_ms,
         len(preview_result.document.items),
@@ -343,7 +343,7 @@ async def _process_upload_preview(
     await message.answer(preview_result.preview_text, reply_markup=menu_markup)
     await message.answer(
         f'{user_name}, выбери проект для сохранения документа.',
-        reply_markup=build_projects_keyboard(preview_screen_result.projects, allow_create_project=context.can_manage_company),
+        reply_markup=build_projects_keyboard(preview_screen_result.projects, allow_create_project=can_manage_company),
     )
 
 
@@ -413,11 +413,8 @@ async def process_project_selection(callback: CallbackQuery, access_context: Acc
         return
 
     await callback.answer()
-    progress_notified = False
 
     async def _on_ready_to_resolve() -> None:
-        nonlocal progress_notified
-        progress_notified = True
         await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
 
     selection_result = await document_processing_service.select_project_for_pending_document(
