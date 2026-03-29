@@ -20,16 +20,16 @@ Working rules:
 
 | Query | Owner | Location | User flow | Priority | Status | Observed latency | Plan summary | Verdict | Action |
 |---|---|---|---|---|---|---:|---|---|---|
-| exact duplicate lookup | `DocumentService._find_exact_duplicate_document(...)` | `app/services/documents.py` | upload -> project select/save | P1 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| probable duplicate lookup | `DocumentService._find_probable_duplicate_document(...)` | `app/services/documents.py` | upload -> project select/save | P1 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| manager report documents | `ManagerReportDataBuilder._fetch_documents(...)` | `app/services/report_data_builder.py` | manager reports | P1 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| manager report items | `ManagerReportDataBuilder._fetch_items(...)` | `app/services/report_data_builder.py` | manager report detail/export | P1 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| project document list | `ViewService.list_project_documents(...)` | `app/services/views.py` | manager project documents | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| my documents list | `ViewService.list_my_documents(...)` | `app/services/views.py` | employee/my documents | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| report documents list | `ViewService._list_report_documents(...)` | `app/services/views.py` | manager report drilldown | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| report items list | `ViewService._list_report_items(...)` | `app/services/views.py` | manager report drilldown | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| export source rows | `DocumentExportService._list_company_source_rows(...)` | `app/services/document_exports.py` | ZIP export | P2 | prepared | TBD | ready-to-run SQL pack added | TBD | TBD |
-| save/lookups if needed | `project/pending/document lookup path` | `document_processing.py` + related services | upload -> preview -> save | P3 | optional | TBD | TBD | TBD | TBD |
+| exact duplicate lookup | `DocumentService._find_exact_duplicate_document(...)` | `app/services/documents.py` | upload -> project select/save | P1 | measured | 0.508 ms | `Seq Scan on documents` + top-N sort by `id DESC`; runtime normalization in `WHERE` | acceptable | persisted normalized key |
+| probable duplicate lookup | `DocumentService._find_probable_duplicate_document(...)` | `app/services/documents.py` | upload -> project select/save | P1 | measured | 0.142 ms | `Seq Scan on documents` + top-N sort by `id DESC`; runtime normalization in `WHERE` | acceptable | persisted normalized key |
+| manager report documents | `ManagerReportDataBuilder._fetch_documents(...)` | `app/services/report_data_builder.py` | manager reports | P1 | measured | 1.491 ms all-time / 0.802 ms filtered | wide join on `documents` plus per-row `LEFT JOIN LATERAL` count over `document_items`; filtered path still scans small sets well | acceptable | rewrite |
+| manager report items | `ManagerReportDataBuilder._fetch_items(...)` | `app/services/report_data_builder.py` | manager report detail/export | P1 | measured | 0.226 ms | `Hash Join` on `document_items -> documents` with explicit sort on `(document_id DESC, line_no ASC)` | acceptable | none |
+| project document list | `ViewService.list_project_documents(...)` | `app/services/views.py` | manager project documents | P2 | measured | 0.521 ms | uses `idx_documents_company_project_created_at_desc`; `LEFT JOIN LATERAL` for first item stays cheap | acceptable | none |
+| my documents list | `ViewService.list_my_documents(...)` | `app/services/views.py` | employee/my documents | P2 | measured | 0.521 ms / 0.338 ms with project filter | small-set `Seq Scan on documents`; planner does not need a dedicated new index at current volume | acceptable | none |
+| report documents list | `ViewService._list_report_documents(...)` | `app/services/views.py` | manager report drilldown | P2 | measured | 0.365 ms | `Seq Scan on documents`; first item lookup already uses `uq_document_items_document_line` | acceptable | none |
+| report items list | `ViewService._list_report_items(...)` | `app/services/views.py` | manager report drilldown | P2 | measured | 0.253 ms / 0.122 ms single-document | `document_items -> documents` remains cheap at current cardinality | acceptable | none |
+| export source rows | `DocumentExportService._list_company_source_rows(...)` | `app/services/document_exports.py` | ZIP export | P2 | measured | 0.617 ms all-time / 0.487 ms period | wide export rowset with sort on `document_date DESC NULLS LAST, created_at DESC, id DESC`; current volume still cheap | acceptable | none |
+| save/lookups if needed | `project/pending/document lookup path` | `document_processing.py` + related services | upload -> preview -> save | P3 | optional | not measured | no direct latency evidence collected yet | no action needed | none |
 
 ## Per-query Capture Template
 
@@ -299,6 +299,28 @@ Artifacts:
 Optional save/lookups:
 - keep `project/pending/document lookup path` in `optional`
 - only profile it after export if there is direct latency evidence from logs or user-visible delay
+
+## Phase 5 Results
+
+### Current ranking
+
+1. `ManagerReportDataBuilder._fetch_documents(...)`
+   - not slow yet, but confirmed as the strongest rewrite candidate because `LEFT JOIN LATERAL` executes a separate `document_items` count per document row
+2. duplicate lookups
+   - not slow yet, but confirmed as a future optimization block because runtime normalization prevents a clean index path
+3. export source rows
+   - acceptable on current volume; no immediate action
+4. views/lists queries
+   - acceptable on current volume; no immediate action
+
+### Practical conclusion
+
+- no query in the measured batch is `critical` on the current dataset
+- the first optimization block should target either:
+  - persisted normalized duplicate keys
+  - or a rewrite of manager report document aggregation
+- views/list/export queries can stay unchanged for now
+- optional save/lookups should only be profiled if fresh latency evidence appears in logs or UX
 
 ## Expected Findings
 
