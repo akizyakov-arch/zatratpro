@@ -24,7 +24,7 @@ from app.services.pdf_files import PDFFileService
 from app.services.projects import Project
 from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileService
 from app.services.temp_files import safe_unlink, temporary_files
-from app.state.pending_documents import PendingDocument, begin_document_flow, clear_document_flow, pop_pending_document, store_pending_document
+from app.state.pending_documents import PendingDocument, begin_document_flow, clear_document_flow, has_active_document_flow, pop_pending_document, store_pending_document
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ OCR_RETRY_DELAY_SECONDS = 3
 OcrRetryNotifier = Callable[[], Awaitable[None]]
 UNSUPPORTED_GUEST_BILL_REASON = 'unsupported_guest_bill'
 UNSUPPORTED_PAYMENT_INVOICE_REASON = 'unsupported_payment_invoice'
+ACTIVE_DOCUMENT_FLOW_REASON = 'active_document_flow'
 OCR_TEXT_FIXES = str.maketrans({
     'a': 'д',
     'c': 'с',
@@ -366,6 +367,9 @@ class DocumentProcessingService:
         on_retry_needed: OcrRetryNotifier | None = None,
         on_ocr_completed: PreviewOCRNotifier | None = None,
     ) -> DocumentUploadPreviewResult:
+        if await has_active_document_flow(telegram_user_id):
+            return DocumentPreviewFailure(stage='pending', reason='validation_error', details=ACTIVE_DOCUMENT_FLOW_REASON)
+
         preparation_result = await self.prepare_upload(upload_input)
         if isinstance(preparation_result, DocumentPreviewFailure):
             return preparation_result

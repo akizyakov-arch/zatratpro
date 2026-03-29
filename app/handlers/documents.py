@@ -17,11 +17,7 @@ from app.services.document_processing import (
 )
 from app.services.projects import ProjectService
 from app.state.pending_actions import set_pending_action
-from app.state.pending_documents import (
-    clear_document_flow,
-    get_pending_document,
-    has_active_document_flow,
-)
+from app.state.pending_documents import clear_document_flow, get_pending_document
 from app.handlers.common import ensure_user_context, main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
 from app.ui.projects import (
@@ -141,6 +137,8 @@ def _preview_failure_message(failure: DocumentPreviewFailure) -> str:
                 return 'Документ распознан, но это счет на оплату, а не поддерживаемый затратный документ. Нужен кассовый чек, БСО, накладная, акт, УПД, транспортная накладная или РКО.'
             return failure.details or 'Не удалось подготовить документ.'
         return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
+    if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'active_document_flow':
+        return 'У тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.'
     return f'Не удалось подготовить документ: {failure.details or "неизвестная ошибка"}'
 
 
@@ -184,20 +182,6 @@ async def _handle_upload_message(
             MAX_UPLOAD_BYTES,
         )
         await message.answer(_format_upload_limit_message(), reply_markup=menu_markup)
-        return
-    logger.info('Upload checking active pending flow: user_id=%s upload_kind=%s', message.from_user.id, upload_kind)
-    has_active_flow = await has_active_document_flow(message.from_user.id)
-    logger.info(
-        'Upload active pending flow result: user_id=%s upload_kind=%s active=%s',
-        message.from_user.id,
-        upload_kind,
-        has_active_flow,
-    )
-    if has_active_flow:
-        await message.answer(
-            f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
-            reply_markup=menu_markup,
-        )
         return
     logger.info(
         'Upload accepted for OCR handoff: user_id=%s upload_kind=%s file_name=%s mime_type=%s',
