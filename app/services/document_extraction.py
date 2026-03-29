@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 
 from app.config import get_settings
-from app.prompts.extraction_prompt import EXTRACTION_PROMPT
+from app.prompts.extraction_prompt_registry import build_extraction_prompt
 from app.services.deepseek import DeepSeekService
 from app.services.document_family_router import (
     DocumentFamilyRoutingResult,
@@ -118,6 +118,10 @@ class DocumentExtractionService:
         strategy: str,
         routing_result: DocumentFamilyRoutingResult,
     ) -> str:
-        # Phase A keeps one prompt contract; family-specific addons land in a later phase.
-        _ = strategy, routing_result
-        return EXTRACTION_PROMPT
+        if strategy != 'family_routing':
+            return build_extraction_prompt()
+
+        return build_extraction_prompt(
+            family=routing_result.detected_family,
+            extraction_mode=routing_result.extraction_mode,
+        )
