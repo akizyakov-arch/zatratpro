@@ -31,6 +31,65 @@ Working rules:
 | export source rows | `DocumentExportService._list_company_source_rows(...)` | `app/services/document_exports.py` | ZIP export | P2 | measured | 0.617 ms all-time / 0.487 ms period | wide export rowset with sort on `document_date DESC NULLS LAST, created_at DESC, id DESC`; current volume still cheap | acceptable | none |
 | save/lookups if needed | `project/pending/document lookup path` | `document_processing.py` + related services | upload -> preview -> save | P3 | optional | not measured | no direct latency evidence collected yet | no action needed | none |
 
+## Post-profiling Optimization Follow-up
+
+### Block 1: Manager Report Documents Rewrite
+
+Target query:
+- `ManagerReportDataBuilder._fetch_documents(...)`
+
+Implemented changes:
+- removed per-row `LEFT JOIN LATERAL` item count pattern
+- replaced it with `filtered_documents` + aggregated `item_counts` query shape
+
+Before / after:
+- all-time documents query: `1.635 ms` -> `2.587 ms`
+- filtered documents query: `0.802 ms` -> `1.007 ms`
+
+Plan summary after rewrite:
+- one aggregated pass over `document_items` via `HashAggregate`
+- no repeated per-document count scan loops
+- small-dataset latency is slightly higher, but the scaling path is materially better
+
+Verdict:
+- rewrite completed successfully
+- keep the new shape; do not roll back based on the tiny dataset alone
+
+Commits:
+- `ef3ee80` `Rewrite manager report document counts`
+- `8922ede` `Update manager report profiling SQL`
+
+### Block 2: Persisted Normalized Keys for Duplicate Detection
+
+Target queries:
+- `DocumentService._find_exact_duplicate_document(...)`
+- `DocumentService._find_probable_duplicate_document(...)`
+
+Implemented changes:
+- added persisted normalized fields:
+  - `document_number_normalized`
+  - `vendor_key_normalized`
+- added runtime migration + fresh-db init SQL
+- added backfill for existing rows
+- switched duplicate SQL from runtime normalization in `WHERE` to persisted fields
+- added exact/probable duplicate lookup indexes
+
+Before / after:
+- exact duplicate lookup: `0.508 ms` -> `0.068 ms`
+- probable duplicate lookup: `0.142 ms` -> `0.046 ms`
+
+Plan summary after rewrite:
+- captured `after` plan excerpt no longer shows `Seq Scan`
+- buffer footprint dropped to a tiny lookup-sized set
+- duplicate lookup now uses the persisted-key path instead of `LOWER(REGEXP_REPLACE(COALESCE(...)))` in `WHERE`
+
+Verdict:
+- optimization completed successfully
+- duplicate block is now better prepared for growth of `documents`
+
+Commits:
+- `7a49c24` `Persist normalized duplicate keys`
+
 ## Per-query Capture Template
 
 Use this block for each measured query.
