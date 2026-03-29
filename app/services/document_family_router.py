@@ -98,6 +98,8 @@ def build_generic_fallback_result(
         resolved_family = document_family_for_type(resolved_candidate_type) or GENERIC_FALLBACK_FAMILY
 
     is_noisy = _looks_like_noisy_ocr(raw_text)
+    if not is_noisy and _looks_like_low_signal_ocr(raw_text, fallback_reason, resolved_candidate_type):
+        is_noisy = True
     extraction_mode = STRICT_EXTRACTION_MODE if is_noisy else DEFAULT_EXTRACTION_MODE
 
     if resolved_candidate_type == 'unknown':
@@ -112,6 +114,25 @@ def build_generic_fallback_result(
         fallback_reason=fallback_reason,
         is_noisy=is_noisy,
     )
+
+
+def _looks_like_low_signal_ocr(
+    raw_text: str,
+    fallback_reason: str | None,
+    candidate_type: str | None,
+) -> bool:
+    if candidate_type not in {None, 'unknown'}:
+        return False
+    if fallback_reason not in {'no_family_markers', 'low_confidence_family'}:
+        return False
+
+    compact_text = (raw_text or '').strip()
+    if not compact_text:
+        return False
+
+    line_count = sum(1 for line in compact_text.splitlines() if line.strip())
+    alnum_chars = sum(1 for ch in compact_text if ch.isalnum())
+    return alnum_chars <= 500 and line_count <= 14
 
 
 def _looks_like_noisy_ocr(raw_text: str) -> bool:

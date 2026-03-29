@@ -28,6 +28,9 @@ def format_document_json(document: dict) -> str:
 
 
 def format_document_preview(document: DocumentSchema) -> str:
+    if _is_unrecognized_document(document):
+        return "Не удалось надежно распознать документ. Попробуйте отправить более четкое фото или PDF."
+
     title = DOCUMENT_TYPE_TITLES.get(document.document_type, "ДОКУМЕНТ")
     currency_display = _format_currency(document.currency)
     lines = [title]
@@ -73,6 +76,18 @@ def chunk_message(text: str, limit: int = 3900) -> Iterable[str]:
     while start < len(text):
         yield text[start : start + limit]
         start += limit
+
+
+def _is_unrecognized_document(document: DocumentSchema) -> bool:
+    if document.document_type != 'unknown':
+        return False
+    if document.external_document_number or document.incoming_number or document.date:
+        return False
+    if document.vendor or document.vendor_inn or document.vendor_kpp:
+        return False
+    if document.total is not None or document.vat_total_amount is not None:
+        return False
+    return not any(_item_has_value(item) for item in document.items)
 
 
 def _item_has_value(item: DocumentItem) -> bool:
