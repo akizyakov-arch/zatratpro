@@ -21,10 +21,10 @@ from app.services.documents import (
 from app.services.json_formatter import format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.pdf_files import PDFFileService
-from app.services.projects import Project
+from app.services.projects import Project, ProjectService
 from app.services.telegram_files import DownloadedTelegramPhoto, TelegramFileService
 from app.services.temp_files import safe_unlink, temporary_files
-from app.state.pending_documents import PendingDocument, begin_document_flow, clear_document_flow, has_active_document_flow, pop_pending_document, store_pending_document
+from app.state.pending_documents import PendingDocument, begin_document_flow, clear_document_flow, get_pending_document, has_active_document_flow, pop_pending_document, store_pending_document
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ SUPPORTED_IMAGE_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/he
 SUPPORTED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
 DocumentPreviewFailureStage = Literal["preprocess", "ocr", "extract", "pending"]
 DocumentPreviewFailureReason = Literal["timeout", "service_error", "validation_error", "unexpected"]
-DocumentProjectSelectionFailureStage = Literal["pending", "duplicate_check", "save"]
+DocumentProjectSelectionFailureStage = Literal["pending", "project", "duplicate_check", "save"]
 DocumentProjectSelectionFailureReason = Literal["validation_error", "access_error", "unexpected"]
 DocumentDuplicateSaveFailureStage = Literal["pending", "save"]
 DocumentDuplicateSaveFailureReason = Literal["validation_error", "access_error", "unexpected"]
@@ -131,6 +131,12 @@ class DocumentPreviewFailure:
 
 
 @dataclass(slots=True)
+class DocumentProjectSelectionLoaded:
+    project: Project
+    pending_document: PendingDocument
+
+
+@dataclass(slots=True)
 class DocumentProjectSelectionDuplicate:
     pending_document: PendingDocument
     duplicate_check: DuplicateCheckResult
@@ -169,6 +175,7 @@ DocumentUploadPreparationResult = DocumentUploadPreparationReady | DocumentPrevi
 DocumentOCRResult = DocumentOCRReady | DocumentPreviewFailure
 DocumentPreviewResult = DocumentPreviewReady | DocumentPreviewFailure
 DocumentUploadPreviewResult = DocumentUploadPreviewReady | DocumentPreviewFailure
+DocumentProjectSelectionLoadResult = DocumentProjectSelectionLoaded | DocumentProjectSelectionFailure
 DocumentProjectSelectionResult = (
     DocumentProjectSelectionDuplicate
     | DocumentProjectSelectionSaved
@@ -317,10 +324,12 @@ class DocumentProcessingService:
         ocr_service: OCRSpaceService | None = None,
         deepseek_service: DeepSeekService | None = None,
         document_service: DocumentService | None = None,
+        project_service: ProjectService | None = None,
     ) -> None:
         self.ocr_service = ocr_service or OCRSpaceService()
         self.deepseek_service = deepseek_service or DeepSeekService()
         self.document_service = document_service or DocumentService()
+        self.project_service = project_service or ProjectService()
 
     async def prepare_upload(self, upload_input: DocumentUploadInput) -> DocumentUploadPreparationResult:
         started = perf_counter()
@@ -413,6 +422,34 @@ class DocumentProcessingService:
             await clear_document_flow(telegram_user_id)
         except Exception:  # noqa: BLE001
             logger.exception('Failed to cleanup pending document after preview failure')
+
+    async def load_project_selection_context(
+        self,
+        *,
+        telegram_user: User,
+        project_id: int,
+    ) -> DocumentProjectSelectionLoadResult:
+        try:
+            pending_document = await get_pending_document(telegram_user.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Failed to load pending document for project selection')
+            return DocumentProjectSelectionFailure(stage='pending', reason='unexpected', details=str(exc))
+
+        if pending_document is None:
+            return DocumentProjectSelectionFailure(stage='pending', reason='validation_error', details='missing_pending')
+
+        try:
+            project = await self.project_service.get_active_project(telegram_user.id, project_id)
+        except CompanyAccessError as exc:
+            return DocumentProjectSelectionFailure(stage='project', reason='access_error', details=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('Failed to load project for document selection')
+            return DocumentProjectSelectionFailure(stage='project', reason='unexpected', details=str(exc))
+
+        if project is None:
+            return DocumentProjectSelectionFailure(stage='project', reason='validation_error', details='project_unavailable')
+
+        return DocumentProjectSelectionLoaded(project=project, pending_document=pending_document)
 
     async def save_duplicate_confirmed(
         self,

@@ -199,8 +199,13 @@ async def _handle_upload_message(
 
 
 def _project_selection_failure_message(failure: DocumentProjectSelectionFailure) -> str:
-    if failure.stage == 'pending' and failure.reason == 'validation_error' and failure.details == 'missing_document':
-        return 'Не удалось восстановить подготовленный документ. Отправь фото заново.'
+    if failure.stage == 'pending' and failure.reason == 'validation_error':
+        if failure.details == 'missing_document':
+            return 'Не удалось восстановить подготовленный документ. Отправь фото заново.'
+        if failure.details == 'missing_pending':
+            return 'Нет подготовленного документа. Отправь фото заново.'
+    if failure.stage == 'project' and failure.reason == 'validation_error' and failure.details == 'project_unavailable':
+        return 'Проект недоступен. Обнови список и попробуй снова.'
     if failure.reason in {'validation_error', 'access_error'}:
         return failure.details or 'Не удалось сохранить документ.'
     return f'Не удалось сохранить документ: {failure.details or "неизвестная ошибка"}'
@@ -403,31 +408,27 @@ async def process_project_selection(callback: CallbackQuery, access_context: Acc
     if callback.from_user is None or callback.message is None:
         return
     menu_markup = await main_menu_markup_for_user(callback.from_user, access_context)
-    pending_document = await get_pending_document(callback.from_user.id)
-    if pending_document is None:
-        await callback.answer('Нет подготовленного документа. Отправь фото заново.', show_alert=True)
-        return
 
     try:
         project_id = int(callback.data.removeprefix(PROJECT_CALLBACK_PREFIX))
-        project = await project_service.get_active_project(callback.from_user.id, project_id)
     except (TypeError, ValueError):
         await callback.answer('Проект недоступен. Обнови список и попробуй снова.', show_alert=True)
         return
-    except CompanyAccessError as exc:
-        await callback.answer(str(exc), show_alert=True)
-        return
 
-    if project is None:
-        await callback.answer('Проект недоступен. Обнови список и попробуй снова.', show_alert=True)
+    selection_context = await document_processing_service.load_project_selection_context(
+        telegram_user=callback.from_user,
+        project_id=project_id,
+    )
+    if isinstance(selection_context, DocumentProjectSelectionFailure):
+        await callback.answer(_project_selection_failure_message(selection_context), show_alert=True)
         return
 
     await callback.answer()
     await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
     selection_result = await document_processing_service.resolve_project_selection(
         telegram_user=callback.from_user,
-        project=project,
-        pending_document=pending_document,
+        project=selection_context.project,
+        pending_document=selection_context.pending_document,
     )
     if isinstance(selection_result, DocumentProjectSelectionFailure):
         await clear_document_flow(callback.from_user.id)
