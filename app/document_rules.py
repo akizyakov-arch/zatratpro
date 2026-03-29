@@ -147,6 +147,20 @@ DOCUMENT_FAMILY_RULES = (
 def detect_document_type_from_text(raw_text: str | None, current_type: str | None = None) -> str:
     normalized_text = _normalize_rule_text(raw_text)
     compact_text = _compact_rule_text(normalized_text)
+
+    has_ttn_title = any(
+        _marker_matches(marker, normalized_text, compact_text)
+        for marker in ('товарно-транспортная накладная', 'товарно транспортная накладная')
+    )
+    has_goods_title = any(
+        _marker_matches(marker, normalized_text, compact_text)
+        for marker in ('товарная накладная', 'торг-12', 'торг 12')
+    )
+    if has_ttn_title:
+        return 'transport_invoice'
+    if has_goods_title:
+        return 'goods_invoice'
+
     for rule in DOCUMENT_TYPE_RULES:
         if any(_marker_matches(marker, normalized_text, compact_text) for marker in rule.markers):
             return rule.document_type
