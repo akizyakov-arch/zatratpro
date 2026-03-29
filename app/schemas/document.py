@@ -214,11 +214,25 @@ def _amounts_match(left: float, right: float) -> bool:
 
 
 def _resolve_vat_total_amount(document: DocumentSchema) -> float | None:
-    if document.vat_total_amount is not None:
-        return document.vat_total_amount
     if document.document_type not in {"cash_receipt", "bso"}:
         return document.vat_total_amount
-    return _extract_receipt_vat_from_text(document.raw_text, total=document.total)
+
+    fallback_vat = _extract_receipt_vat_from_text(document.raw_text, total=document.total)
+    current_vat = document.vat_total_amount
+    if current_vat is None:
+        return fallback_vat
+    if fallback_vat is None:
+        return current_vat
+    if current_vat <= 0:
+        return fallback_vat
+    if document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
+        return fallback_vat
+    return current_vat
+
+
+def _looks_like_total_instead_of_vat(vat_amount: float, total: float) -> bool:
+    tolerance = max(0.05, abs(total) * 0.01)
+    return abs(vat_amount - total) <= tolerance
 
 
 def _resolve_vat_scope(document: DocumentSchema) -> str | None:
