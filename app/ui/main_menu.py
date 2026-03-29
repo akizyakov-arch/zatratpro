@@ -5,19 +5,19 @@ MAIN_MENU_TEXT = "Главное меню ZATRATPRO."
 
 
 MENU_BUTTONS = {
-    "upload_document": "Загрузить документ",
-    "companies": "Компании",
-    "users": "Пользователи",
-    "create_company": "Создать компанию",
-    "system_status": "Статус системы",
-    "projects": "Проекты",
-    "employees": "Сотрудники",
-    "my_company": "Моя компания",
-    "reports": "Отчеты",
-    "my_documents": "Мои документы",
-    "join_company": "Ввести invite-код",
-    "help": "Помощь",
-    "back": "Назад",
+    "upload_document": "📥 Загрузить документ",
+    "companies": "🏢 Компании",
+    "users": "👥 Пользователи",
+    "create_company": "➕ Создать компанию",
+    "system_status": "📊 Статус системы",
+    "projects": "📁 Проекты",
+    "employees": "👥 Сотрудники",
+    "my_company": "🏢 Моя компания",
+    "reports": "📈 Отчеты",
+    "my_documents": "📄 Мои документы",
+    "join_company": "🔑 Ввести invite-код",
+    "help": "❓ Помощь",
+    "back": "⬅️ Назад",
 }
 
 
