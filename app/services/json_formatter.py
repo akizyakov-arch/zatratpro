@@ -80,13 +80,26 @@ def _item_has_value(item: DocumentItem) -> bool:
 
 
 def _format_item(item: DocumentItem, currency_display: str) -> str:
-    quantity = _format_amount(item.quantity) if item.quantity is not None else "?"
-    price = _format_amount(item.price) if item.price is not None else "?"
-    line_total = _format_amount(item.line_total) if item.line_total is not None else "?"
+    quantity = _format_amount(item.quantity) if item.quantity is not None else None
+    price = _format_amount(item.price) if item.price is not None else None
+    line_total = _format_amount(item.line_total) if item.line_total is not None else None
 
-    if item.name:
-        return f"{item.name} — {quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
-    return f"{quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
+    prefix = f"{item.name} — " if item.name else ""
+    if quantity is not None and price is not None and line_total is not None:
+        return f"{prefix}{quantity} шт × {price} {currency_display} = {line_total} {currency_display}"
+    if quantity is not None and price is not None:
+        return f"{prefix}{quantity} шт × {price} {currency_display}"
+    if quantity is not None and line_total is not None:
+        return f"{prefix}{quantity} шт, сумма строки: {line_total} {currency_display}"
+    if price is not None and line_total is not None:
+        return f"{prefix}цена: {price} {currency_display}, сумма строки: {line_total} {currency_display}"
+    if line_total is not None:
+        return f"{prefix}сумма строки: {line_total} {currency_display}"
+    if quantity is not None:
+        return f"{prefix}количество: {quantity} шт"
+    if price is not None:
+        return f"{prefix}цена: {price} {currency_display}"
+    return prefix.rstrip(' —')
 
 
 def _format_amount(value: float | int | None) -> str:

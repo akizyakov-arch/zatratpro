@@ -141,6 +141,7 @@ def _sanitize_items(items: list[DocumentItem], document_type: str) -> list[Docum
 
     for item in items:
         item.name = _normalize_item_name(item.name)
+        item = _normalize_item_math(item, document_type)
         prepared.append(item)
         if item.name is not None and _item_numeric_count(item) >= 2:
             named_table_rows += 1
@@ -190,6 +191,25 @@ def _item_has_meaningful_value(
         return False
     return numeric_count >= 2
 
+
+def _normalize_item_math(item: DocumentItem, document_type: str) -> DocumentItem:
+    if document_type not in TABLE_DOCUMENT_TYPES:
+        return item
+    if item.quantity is None or item.price is None or item.line_total is None:
+        return item
+
+    expected_total = item.quantity * item.price
+    if _amounts_match(expected_total, item.line_total):
+        return item
+
+    item.quantity = None
+    item.price = None
+    return item
+
+
+def _amounts_match(left: float, right: float) -> bool:
+    tolerance = max(0.05, abs(right) * 0.02)
+    return abs(left - right) <= tolerance
 
 
 def _resolve_vat_scope(document: DocumentSchema) -> str | None:
