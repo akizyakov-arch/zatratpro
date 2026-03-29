@@ -320,39 +320,35 @@ async def _process_upload_preview(
         await message.answer(f'{user_name}, OCR завершен. Извлекаю структуру документа.', reply_markup=menu_markup)
 
     async with ChatActionSender.typing(chat_id=message.chat.id, bot=message.bot):
-        preview_pipeline_result = await document_processing_service.build_pending_preview_from_upload(
+        preview_screen_result = await document_processing_service.build_preview_screen_from_upload(
             telegram_user_id=message.from_user.id,
+            telegram_user=message.from_user,
             upload_input=upload_input,
+            can_manage_company=context.can_manage_company,
             on_prepared=_on_prepared,
             on_retry_needed=lambda: _notify_ocr_retry(message, menu_markup),
             on_ocr_completed=_on_ocr_completed,
         )
 
-    if isinstance(preview_pipeline_result, DocumentPreviewFailure):
-        await message.answer(_preview_failure_message(preview_pipeline_result), reply_markup=menu_markup)
+    if isinstance(preview_screen_result, DocumentPreviewFailure):
+        await message.answer(_preview_failure_message(preview_screen_result), reply_markup=menu_markup)
+        return
+    if isinstance(preview_screen_result, DocumentPreviewProjectOptionsFailure):
+        await message.answer(_preview_project_options_failure_message(preview_screen_result), reply_markup=menu_markup)
         return
 
-    preview_result = preview_pipeline_result.preview
+    preview_result = preview_screen_result.preview
     logger.info(
         'Extraction completed: user_id=%s original_kind=%s extract_ms=%.1f items=%s',
         message.from_user.id,
-        preview_pipeline_result.prepared_upload.original_kind,
+        preview_screen_result.prepared_upload.original_kind,
         preview_result.extract_elapsed_ms,
         len(preview_result.document.items),
     )
     await message.answer(preview_result.preview_text, reply_markup=menu_markup)
-
-    project_options = await document_processing_service.load_preview_project_options(
-        telegram_user=message.from_user,
-        can_manage_company=context.can_manage_company,
-    )
-    if isinstance(project_options, DocumentPreviewProjectOptionsFailure):
-        await message.answer(_preview_project_options_failure_message(project_options), reply_markup=menu_markup)
-        return
-
     await message.answer(
         f'{user_name}, выбери проект для сохранения документа.',
-        reply_markup=build_projects_keyboard(project_options.projects, allow_create_project=context.can_manage_company),
+        reply_markup=build_projects_keyboard(preview_screen_result.projects, allow_create_project=context.can_manage_company),
     )
 
 

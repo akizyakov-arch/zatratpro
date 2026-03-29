@@ -127,6 +127,15 @@ class DocumentUploadPreviewReady:
 
 
 @dataclass(slots=True)
+class DocumentUploadPreviewScreenReady:
+    prepared_upload: PreparedUpload
+    preview: DocumentPreviewReady
+    projects: list[Project]
+    prep_elapsed_ms: float
+    ocr_elapsed_ms: float
+
+
+@dataclass(slots=True)
 class DocumentPreviewFailure:
     stage: DocumentPreviewFailureStage
     reason: DocumentPreviewFailureReason
@@ -195,6 +204,11 @@ DocumentUploadPreparationResult = DocumentUploadPreparationReady | DocumentPrevi
 DocumentOCRResult = DocumentOCRReady | DocumentPreviewFailure
 DocumentPreviewResult = DocumentPreviewReady | DocumentPreviewFailure
 DocumentUploadPreviewResult = DocumentUploadPreviewReady | DocumentPreviewFailure
+DocumentUploadPreviewScreenResult = (
+    DocumentUploadPreviewScreenReady
+    | DocumentPreviewFailure
+    | DocumentPreviewProjectOptionsFailure
+)
 DocumentPreviewProjectOptionsResult = DocumentPreviewProjectOptionsReady | DocumentPreviewProjectOptionsFailure
 DocumentProjectSelectionLoadResult = DocumentProjectSelectionLoaded | DocumentProjectSelectionFailure
 DocumentProjectSelectionResult = (
@@ -468,6 +482,42 @@ class DocumentProcessingService:
         await self._clear_pending_document_flow(
             telegram_user_id,
             error_message='Failed to cleanup pending document after preview failure',
+        )
+
+    async def build_preview_screen_from_upload(
+        self,
+        *,
+        telegram_user_id: int,
+        telegram_user: User,
+        upload_input: DocumentUploadInput,
+        can_manage_company: bool,
+        on_prepared: PreviewPreparationNotifier | None = None,
+        on_retry_needed: OcrRetryNotifier | None = None,
+        on_ocr_completed: PreviewOCRNotifier | None = None,
+    ) -> DocumentUploadPreviewScreenResult:
+        preview_pipeline_result = await self.build_pending_preview_from_upload(
+            telegram_user_id=telegram_user_id,
+            upload_input=upload_input,
+            on_prepared=on_prepared,
+            on_retry_needed=on_retry_needed,
+            on_ocr_completed=on_ocr_completed,
+        )
+        if isinstance(preview_pipeline_result, DocumentPreviewFailure):
+            return preview_pipeline_result
+
+        project_options = await self.load_preview_project_options(
+            telegram_user=telegram_user,
+            can_manage_company=can_manage_company,
+        )
+        if isinstance(project_options, DocumentPreviewProjectOptionsFailure):
+            return project_options
+
+        return DocumentUploadPreviewScreenReady(
+            prepared_upload=preview_pipeline_result.prepared_upload,
+            preview=preview_pipeline_result.preview,
+            projects=project_options.projects,
+            prep_elapsed_ms=preview_pipeline_result.prep_elapsed_ms,
+            ocr_elapsed_ms=preview_pipeline_result.ocr_elapsed_ms,
         )
 
     async def select_project_for_pending_document(
