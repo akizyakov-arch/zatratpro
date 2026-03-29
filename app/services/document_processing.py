@@ -42,6 +42,7 @@ OCR_TIMEOUT_SECONDS = 120
 EXTRACT_TIMEOUT_SECONDS = 120
 OCR_RETRY_DELAY_SECONDS = 3
 OcrRetryNotifier = Callable[[], Awaitable[None]]
+ProjectSelectionResolveNotifier = Callable[[], Awaitable[None]]
 UNSUPPORTED_GUEST_BILL_REASON = 'unsupported_guest_bill'
 UNSUPPORTED_PAYMENT_INVOICE_REASON = 'unsupported_payment_invoice'
 ACTIVE_DOCUMENT_FLOW_REASON = 'active_document_flow'
@@ -442,6 +443,38 @@ class DocumentProcessingService:
             await clear_document_flow(telegram_user_id)
         except Exception:  # noqa: BLE001
             logger.exception('Failed to cleanup pending document after preview failure')
+
+    async def select_project_for_pending_document(
+        self,
+        *,
+        telegram_user: User,
+        project_id: int,
+        on_ready_to_resolve: ProjectSelectionResolveNotifier | None = None,
+    ) -> DocumentProjectSelectionResult:
+        selection_context = await self.load_project_selection_context(
+            telegram_user=telegram_user,
+            project_id=project_id,
+        )
+        if isinstance(selection_context, DocumentProjectSelectionFailure):
+            return selection_context
+
+        if on_ready_to_resolve is not None:
+            await on_ready_to_resolve()
+
+        selection_result = await self.resolve_project_selection(
+            telegram_user=telegram_user,
+            project=selection_context.project,
+            pending_document=selection_context.pending_document,
+        )
+        if isinstance(selection_result, DocumentProjectSelectionFailure):
+            await self._cleanup_pending_project_selection_failure(telegram_user.id)
+        return selection_result
+
+    async def _cleanup_pending_project_selection_failure(self, telegram_user_id: int) -> None:
+        try:
+            await clear_document_flow(telegram_user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception('Failed to cleanup pending document after project selection failure')
 
     async def load_project_selection_context(
         self,

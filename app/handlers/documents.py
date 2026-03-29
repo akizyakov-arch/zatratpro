@@ -422,23 +422,23 @@ async def process_project_selection(callback: CallbackQuery, access_context: Acc
         await callback.answer('Проект недоступен. Обнови список и попробуй снова.', show_alert=True)
         return
 
-    selection_context = await document_processing_service.load_project_selection_context(
+    selection_started = False
+
+    async def _on_ready_to_resolve() -> None:
+        nonlocal selection_started
+        selection_started = True
+        await callback.answer()
+        await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
+
+    selection_result = await document_processing_service.select_project_for_pending_document(
         telegram_user=callback.from_user,
         project_id=project_id,
-    )
-    if isinstance(selection_context, DocumentProjectSelectionFailure):
-        await callback.answer(_project_selection_failure_message(selection_context), show_alert=True)
-        return
-
-    await callback.answer()
-    await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
-    selection_result = await document_processing_service.resolve_project_selection(
-        telegram_user=callback.from_user,
-        project=selection_context.project,
-        pending_document=selection_context.pending_document,
+        on_ready_to_resolve=_on_ready_to_resolve,
     )
     if isinstance(selection_result, DocumentProjectSelectionFailure):
-        await clear_document_flow(callback.from_user.id)
+        if not selection_started:
+            await callback.answer(_project_selection_failure_message(selection_result), show_alert=True)
+            return
         await callback.message.answer(_project_selection_failure_message(selection_result), reply_markup=menu_markup)
         return
     if isinstance(selection_result, DocumentProjectSelectionDuplicate):
