@@ -87,7 +87,8 @@ def _format_item(document_type: str, item: DocumentItem, currency_display: str) 
     vat_label = item.vat_label.strip() if item.vat_label else None
 
     prefix = f"{item.name} — " if item.name else ""
-    is_vat_line = document_type in {'upd', 'vat_invoice'}
+    has_item_vat = item.vat_amount is not None or vat_label is not None
+    is_vat_line = document_type in {'upd', 'vat_invoice'} or has_item_vat
 
     if is_vat_line:
         details: list[str] = []
@@ -99,7 +100,10 @@ def _format_item(document_type: str, item: DocumentItem, currency_display: str) 
             details.append(f"цена: {price} {currency_display}")
 
         if line_total is not None:
-            details.append(f"без НДС: {line_total} {currency_display}")
+            line_label = 'сумма строки'
+            if has_item_vat:
+                line_label = 'без НДС'
+            details.append(f"{line_label}: {line_total} {currency_display}")
         if vat_amount is not None:
             vat_text = f"НДС: {vat_amount} {currency_display}"
             if vat_label:
