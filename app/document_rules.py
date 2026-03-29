@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 
@@ -31,12 +32,12 @@ class DocumentFamilyRule:
 
 
 DOCUMENT_TYPE_RULES = (
-    DocumentTypeRule('upd', ('универсальный передаточный документ', ' упд', 'упд ')),
-    DocumentTypeRule('vat_invoice', ('счет-фактура', 'счёт-фактура')),
-    DocumentTypeRule('goods_invoice', ('товарная накладная', 'торг-12')),
-    DocumentTypeRule('transport_invoice', ('транспортная накладная',)),
+    DocumentTypeRule('upd', ('универсальный передаточный документ', 'универсальный передаточный', 'упд')),
+    DocumentTypeRule('transport_invoice', ('товарно-транспортная накладная', 'товарно транспортная накладная', 'транспортная накладная')),
+    DocumentTypeRule('vat_invoice', ('счет-фактура', 'счёт-фактура', 'счет фактура', 'счёт фактура')),
+    DocumentTypeRule('goods_invoice', ('товарная накладная', 'торг-12', 'торг 12')),
     DocumentTypeRule('service_act', ('акт выполненных работ', 'акт оказанных услуг')),
-    DocumentTypeRule('bso', ('бланк строгой отчетности', 'бланк строгой отчётности', ' бсо', 'бсо ')),
+    DocumentTypeRule('bso', ('бланк строгой отчетности', 'бланк строгой отчётности', 'бсо')),
     DocumentTypeRule('cash_out_order', ('расходный кассовый ордер', 'рко')),
     DocumentTypeRule('cash_receipt', ('кассовый чек', 'фискальный чек', 'чек ккт', 'кассовый документ', 'чек')),
 )
@@ -144,9 +145,10 @@ DOCUMENT_FAMILY_RULES = (
 
 
 def detect_document_type_from_text(raw_text: str | None, current_type: str | None = None) -> str:
-    text = (raw_text or '').lower()
+    normalized_text = _normalize_rule_text(raw_text)
+    compact_text = _compact_rule_text(normalized_text)
     for rule in DOCUMENT_TYPE_RULES:
-        if any(marker in text for marker in rule.markers):
+        if any(_marker_matches(marker, normalized_text, compact_text) for marker in rule.markers):
             return rule.document_type
     if current_type in ALLOWED_DOCUMENT_TYPES:
         return current_type
@@ -157,3 +159,24 @@ def document_family_for_type(document_type: str | None) -> str | None:
     if document_type is None:
         return None
     return DOCUMENT_FAMILY_BY_TYPE.get(document_type)
+
+
+def _normalize_rule_text(raw_text: str | None) -> str:
+    text = (raw_text or '').lower().replace('ё', 'е')
+    text = text.replace('‑', '-').replace('–', '-').replace('—', '-')
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def _compact_rule_text(normalized_text: str) -> str:
+    return re.sub(r'[^a-zа-я0-9]+', '', normalized_text)
+
+
+def _marker_matches(marker: str, normalized_text: str, compact_text: str) -> bool:
+    normalized_marker = _normalize_rule_text(marker)
+    if normalized_marker in normalized_text:
+        return True
+    compact_marker = _compact_rule_text(normalized_marker)
+    if compact_marker and compact_marker in compact_text:
+        return True
+    return False
