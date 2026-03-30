@@ -103,7 +103,37 @@ def _format_item(document_type: str, item: DocumentItem, currency_display: str) 
 
     prefix = f"{item.name} — " if item.name else ""
     has_item_vat = item.vat_amount is not None or vat_label is not None
+    is_receipt_line = document_type in {'cash_receipt', 'bso'}
     is_vat_line = document_type in {'upd', 'vat_invoice'} or has_item_vat
+
+    if is_receipt_line:
+        details: list[str] = []
+        if quantity is not None and price is not None and line_total is not None:
+            details.append(f"{quantity} шт × {price} {currency_display} = {line_total} {currency_display}")
+        elif quantity is not None and price is not None:
+            details.append(f"{quantity} шт × {price} {currency_display}")
+        elif quantity is not None and line_total is not None:
+            details.append(f"{quantity} шт, сумма строки: {line_total} {currency_display}")
+        elif price is not None and line_total is not None:
+            details.append(f"цена: {price} {currency_display}, сумма строки: {line_total} {currency_display}")
+        elif line_total is not None:
+            details.append(f"сумма строки: {line_total} {currency_display}")
+        elif quantity is not None:
+            details.append(f"количество: {quantity} шт")
+        elif price is not None:
+            details.append(f"цена: {price} {currency_display}")
+
+        if vat_amount is not None:
+            vat_text = f"в т.ч. НДС: {vat_amount} {currency_display}"
+            if vat_label:
+                vat_text = f"{vat_text} ({vat_label})"
+            details.append(vat_text)
+        elif vat_label:
+            details.append(f"НДС: {vat_label}")
+
+        if details:
+            return prefix + ', '.join(details)
+        return prefix.rstrip(' —')
 
     if is_vat_line:
         details: list[str] = []
