@@ -15,9 +15,17 @@ _deepseek_client_lock = asyncio.Lock()
 
 
 def _build_ocr_client() -> httpx.AsyncClient:
-    timeout = httpx.Timeout(120.0, connect=20.0)
+    settings = get_settings()
+    timeout = httpx.Timeout(settings.ocr_space_read_timeout, connect=settings.ocr_space_connect_timeout)
     limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
-    return httpx.AsyncClient(timeout=timeout, limits=limits)
+    client_kwargs = {
+        "timeout": timeout,
+        "limits": limits,
+    }
+    proxy_url = settings.effective_ocr_space_proxy_url
+    if proxy_url:
+        client_kwargs["proxy"] = proxy_url
+    return httpx.AsyncClient(**client_kwargs)
 
 
 def _build_deepseek_client() -> httpx.AsyncClient:

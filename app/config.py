@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     telegram_proxy_enabled: bool = Field(default=False, alias='TELEGRAM_PROXY_ENABLED')
     telegram_proxy_url: str | None = Field(default=None, alias='TELEGRAM_PROXY_URL')
     ocr_space_api_key: str = Field(alias='OCR_SPACE_API_KEY')
+    ocr_space_proxy_enabled: bool = Field(default=False, alias='OCR_SPACE_PROXY_ENABLED')
+    ocr_space_proxy_url: str | None = Field(default=None, alias='OCR_SPACE_PROXY_URL')
+    ocr_space_connect_timeout: float = Field(default=20.0, alias='OCR_SPACE_CONNECT_TIMEOUT')
+    ocr_space_read_timeout: float = Field(default=120.0, alias='OCR_SPACE_READ_TIMEOUT')
     deepseek_api_key: str = Field(alias='DEEPSEEK_API_KEY')
     deepseek_base_url: str = Field(default='https://api.deepseek.com', alias='DEEPSEEK_BASE_URL')
     deepseek_model: str = Field(default='deepseek-chat', alias='DEEPSEEK_MODEL')
@@ -42,6 +46,16 @@ class Settings(BaseSettings):
     @property
     def postgres_dsn(self) -> str:
         return f'postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}'
+
+    @property
+    def effective_ocr_space_proxy_url(self) -> str | None:
+        if not self.ocr_space_proxy_enabled:
+            return None
+        if self.ocr_space_proxy_url:
+            return self.ocr_space_proxy_url
+        if self.telegram_proxy_enabled and self.telegram_proxy_url:
+            return self.telegram_proxy_url
+        return None
 
     @property
     def effective_deepseek_proxy_url(self) -> str | None:
