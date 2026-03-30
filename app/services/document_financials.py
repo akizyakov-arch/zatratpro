@@ -147,6 +147,10 @@ class GoodsInvoiceFinancialResolver(BaseFinancialResolver):
         )
 
 
+class UPDFinancialResolver(GoodsInvoiceFinancialResolver):
+    """UPD uses the same line/vat reconciliation rules as goods invoices for now."""
+
+
 class GenericFinancialResolver(BaseFinancialResolver):
     """Fallback resolver for document types without dedicated normalization yet."""
 
@@ -157,10 +161,12 @@ class DocumentFinancialNormalizationService:
         *,
         receipt_resolver: ReceiptFinancialResolver | None = None,
         goods_invoice_resolver: GoodsInvoiceFinancialResolver | None = None,
+        upd_resolver: UPDFinancialResolver | None = None,
         generic_resolver: GenericFinancialResolver | None = None,
     ) -> None:
         self.receipt_resolver = receipt_resolver or ReceiptFinancialResolver()
         self.goods_invoice_resolver = goods_invoice_resolver or GoodsInvoiceFinancialResolver()
+        self.upd_resolver = upd_resolver or UPDFinancialResolver()
         self.generic_resolver = generic_resolver or GenericFinancialResolver()
 
     def normalize_document(self, document: DocumentSchema) -> DocumentFinancialNormalizationResult:
@@ -182,6 +188,8 @@ class DocumentFinancialNormalizationService:
             return self.receipt_resolver
         if document_type == 'goods_invoice':
             return self.goods_invoice_resolver
+        if document_type == 'upd':
+            return self.upd_resolver
         return self.generic_resolver
 
 
