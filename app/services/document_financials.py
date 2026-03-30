@@ -10,6 +10,7 @@ PASSTHROUGH_SOURCE = 'schema_passthrough'
 OCR_TOTALS_BLOCK_SOURCE = 'ocr_totals_block'
 ITEM_VAT_SUM_SOURCE = 'item_vat_sum'
 ITEM_TOTAL_WITH_VAT_SUM_SOURCE = 'item_sum_with_vat'
+RATE_INFERENCE_SOURCE = 'receipt_rate_inclusive'
 NULLIFIED_SOURCE = 'nullified'
 ALLOWED_VAT_SCOPES = {'document', 'mixed', 'no_vat', 'unknown'}
 OCR_TEXT_FIXES = str.maketrans({
@@ -58,28 +59,44 @@ class BaseFinancialResolver:
 class ReceiptFinancialResolver(BaseFinancialResolver):
     def normalize(self, document: DocumentSchema) -> DocumentFinancialNormalizationResult:
         fallback_vat = _extract_receipt_vat_from_text(document.raw_text, total=document.total)
+        inferred_vat = None if fallback_vat is not None else _infer_receipt_vat_from_rate(document.raw_text, total=document.total)
+        fallback_source = None
+        if fallback_vat is not None:
+            fallback_source = OCR_TOTALS_BLOCK_SOURCE
+        elif inferred_vat is not None:
+            fallback_source = RATE_INFERENCE_SOURCE
+
         current_vat = document.vat_total_amount
         vat_source = PASSTHROUGH_SOURCE if current_vat is not None else None
         suppressed_values: tuple[str, ...] = ()
         warnings: list[str] = []
 
+        replacement_vat = fallback_vat if fallback_vat is not None else inferred_vat
+        replacement_source = fallback_source
+
         if current_vat is None:
-            current_vat = fallback_vat
-            vat_source = OCR_TOTALS_BLOCK_SOURCE if fallback_vat is not None else None
+            current_vat = replacement_vat
+            vat_source = replacement_source
         elif document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
-            if fallback_vat is None or _looks_like_total_instead_of_vat(fallback_vat, document.total):
+            if replacement_vat is None or _looks_like_total_instead_of_vat(replacement_vat, document.total):
                 current_vat = None
                 vat_source = NULLIFIED_SOURCE
                 suppressed_values = ('vat_total_amount',)
                 warnings.append('vat_equal_total_rejected')
             else:
-                current_vat = fallback_vat
-                vat_source = OCR_TOTALS_BLOCK_SOURCE
-                warnings.append('vat_equal_total_replaced_from_ocr')
-        elif fallback_vat is not None and current_vat <= 0:
-            current_vat = fallback_vat
-            vat_source = OCR_TOTALS_BLOCK_SOURCE
-            warnings.append('vat_non_positive_replaced_from_ocr')
+                current_vat = replacement_vat
+                vat_source = replacement_source
+                if replacement_source == OCR_TOTALS_BLOCK_SOURCE:
+                    warnings.append('vat_equal_total_replaced_from_ocr')
+                elif replacement_source == RATE_INFERENCE_SOURCE:
+                    warnings.append('vat_equal_total_replaced_from_rate')
+        elif replacement_vat is not None and current_vat <= 0:
+            current_vat = replacement_vat
+            vat_source = replacement_source
+            if replacement_source == OCR_TOTALS_BLOCK_SOURCE:
+                warnings.append('vat_non_positive_replaced_from_ocr')
+            elif replacement_source == RATE_INFERENCE_SOURCE:
+                warnings.append('vat_non_positive_replaced_from_rate')
 
         document.vat_total_amount = current_vat
         document.vat_scope = _resolve_receipt_vat_scope(document, current_vat)
@@ -303,6 +320,35 @@ def _should_force_mixed_vat_scope(
 def _looks_like_total_instead_of_vat(vat_amount: float, total: float) -> bool:
     tolerance = max(0.05, abs(total) * 0.01)
     return abs(vat_amount - total) <= tolerance
+
+
+def _infer_receipt_vat_from_rate(
+    raw_text: str | None,
+    *,
+    total: float | None = None,
+) -> float | None:
+    if not raw_text or total is None or total <= 0:
+        return None
+    if _contains_no_vat_signal(raw_text.lower()):
+        return None
+
+    translated = raw_text.lower().replace('ё', 'е')
+    compact = re.sub(r'[^а-яa-z0-9%хx.,:\-\s]', ' ', translated)
+    compact = re.sub(r'\s+', ' ', compact).strip()
+    if not compact:
+        return None
+
+    vat_label = r'[нnh][дdаa][сc5]'
+    rate_pattern = rf'(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*[-:=])?\s*(\d{{1,2}})\s*[%хx]'
+    rates = {int(match.group(1)) for match in re.finditer(rate_pattern, compact) if match.group(1).isdigit()}
+    if len(rates) != 1:
+        return None
+
+    rate = next(iter(rates))
+    if rate <= 0:
+        return None
+    return round(float(total) * rate / (100 + rate), 2)
+
 
 
 def _extract_receipt_vat_from_text(

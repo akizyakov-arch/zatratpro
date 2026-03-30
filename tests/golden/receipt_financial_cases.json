@@ -151,6 +151,41 @@
     }
   },
   {
+    "id": "receipt_vat_inferred_from_rate",
+    "document": {
+      "document_type": "cash_receipt",
+      "external_document_number": "1710482",
+      "date": "2024-06-05",
+      "vendor": "М. ВИДЕО",
+      "total": 9999,
+      "raw_text": "КАССОВЫЙ ЧЕК Номер 1710482 ИТОГ 9999.00 НДС 20X оплата картой 9999.00",
+      "items": [
+        {
+          "name": "Водонагреватель",
+          "quantity": 1,
+          "price": 9999,
+          "line_total": 9999
+        }
+      ]
+    },
+    "expected": {
+      "vat_total_amount": 1666.5,
+      "vat_scope": "document",
+      "provenance": {
+        "vat_total_amount_source": "receipt_rate_inclusive",
+        "warnings": [],
+        "suppressed_values": []
+      },
+      "preview_contains": [
+        "Итого: 9999.00 ₽",
+        "НДС: 1666.50 ₽"
+      ],
+      "preview_not_contains": [
+        "НДС: 9999.00 ₽"
+      ]
+    }
+  },
+  {
     "id": "bso_vat_backfilled_from_ocr",
     "document": {
       "document_type": "bso",
