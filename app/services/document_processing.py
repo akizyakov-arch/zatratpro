@@ -13,6 +13,7 @@ from app.schemas.document import DocumentSchema
 from app.services.companies import CompanyAccessError
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.document_extraction import DocumentExtractionInput, DocumentExtractionService
+from app.services.document_financials import DocumentFinancialNormalizationService
 from app.services.documents import (
     DocumentService,
     DocumentValidationError,
@@ -374,6 +375,7 @@ class DocumentProcessingService:
         ocr_service: OCRSpaceService | None = None,
         deepseek_service: DeepSeekService | None = None,
         document_extraction_service: DocumentExtractionService | None = None,
+        document_financial_service: DocumentFinancialNormalizationService | None = None,
         document_service: DocumentService | None = None,
         project_service: ProjectService | None = None,
     ) -> None:
@@ -382,6 +384,7 @@ class DocumentProcessingService:
         self.document_extraction_service = document_extraction_service or DocumentExtractionService(
             deepseek_service=self.deepseek_service,
         )
+        self.document_financial_service = document_financial_service or DocumentFinancialNormalizationService()
         self.document_service = document_service or DocumentService()
         self.project_service = project_service or ProjectService()
 
@@ -834,6 +837,8 @@ class DocumentProcessingService:
                     )
                 )
             document = DocumentSchema.model_validate({**extraction_result.payload, 'raw_text': ocr_text})
+            financial_result = self.document_financial_service.normalize_document(document)
+            document = financial_result.document
             unsupported_reason = _unsupported_document_reason(document, ocr_text)
             if unsupported_reason is not None:
                 safe_unlink(prepared_upload.ocr_temp_path)
