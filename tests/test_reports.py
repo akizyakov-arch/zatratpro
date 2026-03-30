@@ -18,12 +18,13 @@ class ReportAlertsTests(unittest.IsolatedAsyncioTestCase):
 
         notify_mock.assert_awaited_once()
         args = notify_mock.await_args.args
+        kwargs = notify_mock.await_args.kwargs
         self.assertIs(args[0], bot)
-        self.assertEqual(args[1], 'export-failure')
-        self.assertIn('type=accountant export', args[2])
-        self.assertIn('company_id=2', args[2])
-        self.assertIn('user_id=555', args[2])
-        self.assertIn('error=boom', args[2])
+        self.assertEqual(kwargs['title'], 'export-failure')
+        self.assertIn('type=accountant export', kwargs['lines'])
+        self.assertIn('company_id=2', kwargs['lines'])
+        self.assertIn('user_id=555', kwargs['lines'])
+        self.assertIn('error=boom', kwargs['lines'])
 
 
 if __name__ == '__main__':
