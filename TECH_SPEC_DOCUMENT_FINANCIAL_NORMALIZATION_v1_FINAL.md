@@ -95,7 +95,11 @@ Routing отвечает за:
 - `total` = итог чека;
 - `vat_total_amount` = НДС по документу из итогового блока;
 - `vat_scope` = `document`, `mixed`, `no_vat`, `unknown`;
-- line-level VAT необязателен.
+- line-level VAT необязателен;
+- если по строке чека есть `price` и `line_total`, по умолчанию они трактуются как суммы, уже включающие НДС;
+- `vat_amount` в строке чека трактуется как `в т.ч. НДС`, а не как сумма, которую нужно прибавлять поверх `line_total`;
+- preview для чека не должен вычислять `с НДС = line_total + vat_amount`, если `line_total` уже представляет итоговую стоимость строки;
+- для `cash_receipt` и `bso` формат строки в preview должен быть отдельным от `goods_invoice` / `upd`.
 
 #### `goods_invoice`
 - если по строкам есть отдельные колонки:
@@ -261,6 +265,11 @@ Routing block считать отдельным завершенным этап�
 ### Phase 4 — ReceiptFinancialResolver
 Закрыть `cash_receipt` и `bso`.
 
+Внутри этой фазы отдельно зафиксировать:
+- семантику `line_total` для строк чека;
+- семантику `vat_amount` как `в т.ч. НДС`;
+- receipt-specific preview rendering без прибавления НДС к строковой сумме.
+
 ### Phase 5 — GoodsInvoiceFinancialResolver
 Закрыть товарные накладные и line semantics.
 
@@ -281,9 +290,10 @@ Routing block считать отдельным завершенным этап�
 3. для `cash_receipt`, `goods_invoice`, `upd` есть явные правила financial resolution;
 4. `vat_total_amount` не путается с `total`;
 5. preview не показывает ложный VAT;
-6. спорные значения гасятся в `null`, а не показываются неверно;
-7. golden corpus прогоняется предсказуемо;
-8. новые исправления не делаются через бесконечные точечные regex-hotfixes.
+6. preview для `cash_receipt` не прибавляет `vat_amount` поверх строки, если НДС уже входит в стоимость;
+7. спорные значения гасятся в `null`, а не показываются неверно;
+8. golden corpus прогоняется предсказуемо;
+9. новые исправления не делаются через бесконечные точечные regex-hotfixes.
 
 ---
 
@@ -305,6 +315,7 @@ Routing block считать отдельным завершенным этап�
   - `ReceiptFinancialResolver`
   - `GoodsInvoiceFinancialResolver`
   - `UPDFinancialResolver`
+- для чеков отдельно зафиксировать, что line-level VAT обычно входит в стоимость строки и должен отображаться как `в т.ч. НДС`, а не как надбавка сверху;
 - собрать golden corpus документов;
 - перестать чинить VAT по одному кейсу regex-патчами.
 
