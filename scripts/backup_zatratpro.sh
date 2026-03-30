@@ -2,10 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKUP_ROOT="${ROOT_DIR}/backups"
+BACKUP_ROOT="${HOST_BACKUPS_DIR:-${ROOT_DIR}/backups}"
 DB_BACKUP_DIR="${BACKUP_ROOT}/db"
 STORAGE_BACKUP_DIR="${BACKUP_ROOT}/storage"
-STORAGE_DIR="${ROOT_DIR}/storage"
+STORAGE_DIR="${HOST_STORAGE_DIR:-${ROOT_DIR}/storage}"
+STORAGE_PARENT_DIR="$(dirname "${STORAGE_DIR}")"
+STORAGE_BASENAME="$(basename "${STORAGE_DIR}")"
 TIMESTAMP="$(date +%F_%H%M)"
 DB_FILE="${DB_BACKUP_DIR}/db_${TIMESTAMP}.dump"
 STORAGE_FILE="${STORAGE_BACKUP_DIR}/storage_${TIMESTAMP}.tar.gz"
@@ -19,7 +21,7 @@ echo "[backup] dumping postgres from ${DB_CONTAINER} -> ${DB_FILE}"
 docker exec -i "${DB_CONTAINER}" sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "${DB_FILE}"
 
 echo "[backup] archiving storage -> ${STORAGE_FILE}"
-tar -czf "${STORAGE_FILE}" -C "${ROOT_DIR}" storage
+tar -czf "${STORAGE_FILE}" -C "${STORAGE_PARENT_DIR}" "${STORAGE_BASENAME}"
 
 cleanup_old() {
   local pattern=$1

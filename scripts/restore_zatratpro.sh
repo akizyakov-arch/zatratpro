@@ -2,10 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKUP_ROOT="${ROOT_DIR}/backups"
+BACKUP_ROOT="${HOST_BACKUPS_DIR:-${ROOT_DIR}/backups}"
 DB_BACKUP_DIR="${BACKUP_ROOT}/db"
 STORAGE_BACKUP_DIR="${BACKUP_ROOT}/storage"
-STORAGE_DIR="${ROOT_DIR}/storage"
+STORAGE_DIR="${HOST_STORAGE_DIR:-${ROOT_DIR}/storage}"
+STORAGE_PARENT_DIR="$(dirname "${STORAGE_DIR}")"
+STORAGE_BASENAME="$(basename "${STORAGE_DIR}")"
 TIMESTAMP="$(date +%F_%H%M%S)"
 DB_CONTAINER="${DB_CONTAINER:-zatratpro-db}"
 DB_SERVICE="${DB_SERVICE:-zatratpro-db}"
@@ -161,7 +163,7 @@ docker exec -i "${DB_CONTAINER}" sh -lc "pg_restore -U \"\$POSTGRES_USER\" -d \"
 if [[ "${RESTORE_STORAGE}" == "true" && -n "${STORAGE_FILE}" ]]; then
   if [[ -d "${STORAGE_DIR}" ]]; then
     if [[ "${KEEP_OLD_STORAGE}" == "true" ]]; then
-      backup_storage_dir="${ROOT_DIR}/storage_before_restore_${TIMESTAMP}"
+      backup_storage_dir="${STORAGE_PARENT_DIR}/${STORAGE_BASENAME}_before_restore_${TIMESTAMP}"
       echo "[restore] moving current storage -> ${backup_storage_dir}"
       mv "${STORAGE_DIR}" "${backup_storage_dir}"
     elif [[ "${REPLACE_STORAGE}" == "true" ]]; then
@@ -172,9 +174,9 @@ if [[ "${RESTORE_STORAGE}" == "true" && -n "${STORAGE_FILE}" ]]; then
       exit 1
     fi
   fi
-  mkdir -p "${ROOT_DIR}"
+  mkdir -p "${STORAGE_PARENT_DIR}"
   echo "[restore] restoring storage"
-  tar -xzf "${STORAGE_BACKUP_DIR}/${STORAGE_FILE}" -C "${ROOT_DIR}"
+  tar -xzf "${STORAGE_BACKUP_DIR}/${STORAGE_FILE}" -C "${STORAGE_PARENT_DIR}"
 fi
 
 echo "[restore] starting bot"

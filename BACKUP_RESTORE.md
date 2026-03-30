@@ -9,6 +9,14 @@
 
 Эти файлы не живут в Postgres volume. Команда удаления volume базы их не трогает.
 
+При необходимости host-каталоги можно вынести из git-репозитория через `.env`:
+
+```env
+HOST_STORAGE_DIR=/srv/zatratpro/storage
+HOST_TMP_DIR=/srv/zatratpro/tmp
+HOST_BACKUPS_DIR=/srv/zatratpro/backups
+```
+
 ## Ручной backup
 
 Выполнить из директории проекта:
