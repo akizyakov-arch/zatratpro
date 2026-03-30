@@ -22,6 +22,7 @@ from app.handlers.common import (
 )
 from app.services.companies import CompanyAccessError
 from app.services.document_storage import DocumentStorageService
+from app.services.owner_alerts import notify_owner_security_warning
 from app.state.pending_actions import set_pending_action
 from app.ui.company import (
     MANAGER_EMPLOYEES_ACTIVE_CALLBACK,
@@ -77,6 +78,23 @@ logger = logging.getLogger(__name__)
 router = Router()
 NL = chr(10)
 document_storage_service = DocumentStorageService()
+_SUSPICIOUS_DOCUMENT_SOURCE_MESSAGE = 'Исходный файл документа недоступен для просмотра.'
+
+
+async def _notify_owner_tenant_isolation_warning(bot, telegram_user_id: int, *, operation: str, document_id: int) -> None:
+    try:
+        company = await company_service.get_active_company_for_user(telegram_user_id)
+    except Exception:  # noqa: BLE001
+        logger.warning('Failed to resolve company for tenant isolation alert: user_id=%s operation=%s', telegram_user_id, operation, exc_info=True)
+        company = None
+    await notify_owner_security_warning(
+        bot,
+        company=company,
+        telegram_user_id=telegram_user_id,
+        operation=operation,
+        document_id=document_id,
+        details='mismatched storage prefix',
+    )
 
 
 @router.message(Command('invite'))
@@ -559,6 +577,13 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
         source = await view_service.get_my_document_source(callback.from_user.id, document_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        if isinstance(exc, CompanyAccessError) and message == _SUSPICIOUS_DOCUMENT_SOURCE_MESSAGE:
+            await _notify_owner_tenant_isolation_warning(
+                callback.bot,
+                callback.from_user.id,
+                operation='my_documents_open',
+                document_id=document_id,
+            )
         await callback.answer(message, show_alert=True)
         return
     file_path = document_storage_service.resolve_path(source.storage_key)

@@ -20,11 +20,11 @@ class ReportAlertsTests(unittest.IsolatedAsyncioTestCase):
         args = notify_mock.await_args.args
         kwargs = notify_mock.await_args.kwargs
         self.assertIs(args[0], bot)
-        self.assertEqual(kwargs['title'], 'export-failure')
-        self.assertIn('type=accountant export', kwargs['lines'])
-        self.assertIn('company_id=2', kwargs['lines'])
-        self.assertIn('user_id=555', kwargs['lines'])
-        self.assertIn('error=boom', kwargs['lines'])
+        self.assertEqual(kwargs['title'], '❌ Ошибка экспорта')
+        self.assertIn('Тип: accountant export', kwargs['lines'])
+        self.assertIn('Компания: id=2', kwargs['lines'])
+        self.assertIn('Пользователь: 555', kwargs['lines'])
+        self.assertIn('Ошибка: boom', kwargs['lines'])
 
 
 if __name__ == '__main__':

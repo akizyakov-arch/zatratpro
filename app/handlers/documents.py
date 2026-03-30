@@ -15,9 +15,9 @@ from app.services.document_processing import (
     DocumentProjectSelectionFailure,
     DocumentUploadInput,
 )
-from app.services.owner_alerts import notify_owner_critical
+from app.services.owner_alerts import format_owner_company_line, notify_owner_critical
 from app.state.pending_actions import set_pending_action
-from app.handlers.common import ensure_user_context, main_menu_markup_for_user
+from app.handlers.common import company_service, ensure_user_context, main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
 from app.ui.projects import (
     DOCUMENT_DUPLICATE_CANCEL_CALLBACK,
@@ -243,7 +243,9 @@ def _duplicate_save_failure_message(failure: DocumentDuplicateSaveFailure) -> st
 
 
 def _is_critical_preview_failure(failure: DocumentPreviewFailure) -> bool:
-    return failure.reason in {'service_error', 'unexpected'}
+    if failure.stage == 'ocr':
+        return failure.reason in {'timeout', 'service_error', 'validation_error', 'unexpected'}
+    return failure.reason in {'timeout', 'service_error', 'unexpected'}
 
 
 def _is_critical_selection_failure(failure: DocumentProjectSelectionFailure) -> bool:
@@ -254,52 +256,70 @@ def _is_critical_duplicate_save_failure(failure: DocumentDuplicateSaveFailure) -
     return failure.reason == 'unexpected'
 
 
+async def _get_company_alert_line(telegram_user_id: int) -> str:
+    try:
+        company = await company_service.get_active_company_for_user(telegram_user_id)
+    except Exception:  # noqa: BLE001
+        logger.warning('Failed to resolve company for document owner alert: user_id=%s', telegram_user_id, exc_info=True)
+        return 'Компания: id=-'
+    return format_owner_company_line(company)
+
+
 async def _notify_owner_preview_failure(message: Message, failure: DocumentPreviewFailure) -> None:
     if message.from_user is None:
         return
+    company_line = await _get_company_alert_line(message.from_user.id)
+    title = '⚠️ OCR ошибка' if failure.stage == 'ocr' else '❌ Ошибка обработки документа'
     await notify_owner_critical(
         message.bot,
-        title='document-preview-failure',
+        title=title,
         lines=(
-            f'user_id={message.from_user.id}',
-            f'stage={failure.stage}',
-            f'reason={failure.reason}',
-            f'details={failure.details or "-"}',
-            f'file_name={message.document.file_name if message.document is not None else "photo"}',
-            f'mime_type={message.document.mime_type if message.document is not None else "image/*"}',
+            company_line,
+            f'Пользователь: {message.from_user.id}',
+            f'Этап: {failure.stage}',
+            f'Причина: {failure.reason}',
+            f'Ошибка: {failure.details or "-"}',
+            f'Файл: {message.document.file_name if message.document is not None else "photo"}',
         ),
+        alert_key=f'preview-failure:{message.from_user.id}:{failure.stage}:{failure.reason}:{failure.details or "-"}',
     )
 
 
 async def _notify_owner_selection_failure(callback: CallbackQuery, failure: DocumentProjectSelectionFailure) -> None:
     if callback.from_user is None:
         return
+    company_line = await _get_company_alert_line(callback.from_user.id)
     await notify_owner_critical(
         callback.bot,
-        title='document-save-failure',
+        title='❌ Ошибка сохранения документа',
         lines=(
-            f'user_id={callback.from_user.id}',
-            f'callback_data={callback.data or "-"}',
-            f'stage={failure.stage}',
-            f'reason={failure.reason}',
-            f'details={failure.details or "-"}',
+            company_line,
+            f'Пользователь: {callback.from_user.id}',
+            f'Этап: {failure.stage}',
+            f'Причина: {failure.reason}',
+            f'Ошибка: {failure.details or "-"}',
+            f'Контекст: {callback.data or "-"}',
         ),
+        alert_key=f'document-save-failure:{callback.from_user.id}:{failure.stage}:{failure.reason}:{failure.details or "-"}',
     )
 
 
 async def _notify_owner_duplicate_save_failure(callback: CallbackQuery, failure: DocumentDuplicateSaveFailure) -> None:
     if callback.from_user is None:
         return
+    company_line = await _get_company_alert_line(callback.from_user.id)
     await notify_owner_critical(
         callback.bot,
-        title='duplicate-save-failure',
+        title='❌ Ошибка сохранения документа',
         lines=(
-            f'user_id={callback.from_user.id}',
-            f'callback_data={callback.data or "-"}',
-            f'stage={failure.stage}',
-            f'reason={failure.reason}',
-            f'details={failure.details or "-"}',
+            company_line,
+            f'Пользователь: {callback.from_user.id}',
+            f'Этап: {failure.stage}',
+            f'Причина: {failure.reason}',
+            f'Ошибка: {failure.details or "-"}',
+            f'Контекст: {callback.data or "-"}',
         ),
+        alert_key=f'duplicate-save-failure:{callback.from_user.id}:{failure.stage}:{failure.reason}:{failure.details or "-"}',
     )
 
 

@@ -10,7 +10,7 @@ from app.handlers.common import build_main_menu_markup_from_context, company_ser
 from app.services.companies import CompanyAccessError
 from app.services.document_exports import DocumentExportService
 from app.services.document_storage import DocumentStorageService
-from app.services.owner_alerts import notify_owner_critical
+from app.services.owner_alerts import format_owner_company_line, notify_owner_critical, notify_owner_security_warning
 from app.services.report_exports import ManagerReportExportService
 from app.services.temp_files import safe_unlink
 from app.state.pending_actions import set_pending_action
@@ -75,25 +75,42 @@ NL = '\n'
 document_storage_service = DocumentStorageService()
 document_export_service = DocumentExportService(document_storage_service)
 manager_report_export_service = ManagerReportExportService()
+_SUSPICIOUS_DOCUMENT_SOURCE_MESSAGE = 'Исходный файл документа недоступен для просмотра.'
+
+
+async def _resolve_company_for_alert(telegram_user_id: int):
+    try:
+        return await company_service.get_active_company_for_user(telegram_user_id)
+    except Exception:  # noqa: BLE001
+        logger.warning('Failed to resolve company for owner alert: user_id=%s', telegram_user_id, exc_info=True)
+        return None
 
 
 async def _notify_owner_export_failure(bot, telegram_user_id: int, *, export_kind: str, error: str) -> None:
-    company_id = '-'
-    try:
-        company = await company_service.get_active_company_for_user(telegram_user_id)
-        company_id = str(company.id)
-    except Exception:  # noqa: BLE001
-        logger.warning('Failed to resolve company for export failure alert: user_id=%s export_kind=%s', telegram_user_id, export_kind, exc_info=True)
-
+    company = await _resolve_company_for_alert(telegram_user_id)
+    company_id = str(getattr(company, 'id', '-'))
     await notify_owner_critical(
         bot,
-        title='export-failure',
+        title='❌ Ошибка экспорта',
         lines=(
-            f'type={export_kind}',
-            f'company_id={company_id}',
-            f'user_id={telegram_user_id}',
-            f'error={error}',
+            f'Тип: {export_kind}',
+            format_owner_company_line(company),
+            f'Пользователь: {telegram_user_id}',
+            f'Ошибка: {error}',
         ),
+        alert_key=f'export-failure:{company_id}:{export_kind}:{error}',
+    )
+
+
+async def _notify_owner_source_security_warning(bot, telegram_user_id: int, *, operation: str, document_id: int) -> None:
+    company = await _resolve_company_for_alert(telegram_user_id)
+    await notify_owner_security_warning(
+        bot,
+        company=company,
+        telegram_user_id=telegram_user_id,
+        operation=operation,
+        document_id=document_id,
+        details='mismatched storage prefix',
     )
 
 
@@ -399,6 +416,13 @@ async def _send_report_document_source(callback: CallbackQuery, document_id: int
     try:
         source = await view_service.get_manager_document_source(callback.from_user.id, document_id)
     except CompanyAccessError as exc:
+        if str(exc) == _SUSPICIOUS_DOCUMENT_SOURCE_MESSAGE:
+            await _notify_owner_source_security_warning(
+                callback.bot,
+                callback.from_user.id,
+                operation='manager_report_document_open',
+                document_id=document_id,
+            )
         await callback.answer(str(exc), show_alert=True)
         return
     file_path = document_storage_service.resolve_path(source.storage_key)
