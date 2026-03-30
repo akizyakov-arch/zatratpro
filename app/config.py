@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 import logging
 from pathlib import Path
 
@@ -57,12 +58,15 @@ def get_settings() -> Settings:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     settings.document_storage_root.mkdir(parents=True, exist_ok=True)
 
-    if TMP_DIR.resolve() == (BASE_DIR / 'tmp').resolve():
+    host_tmp_dir = os.getenv('HOST_TMP_DIR', '').strip()
+    host_storage_dir = os.getenv('HOST_STORAGE_DIR', '').strip()
+
+    if not host_tmp_dir and TMP_DIR.resolve() == (BASE_DIR / 'tmp').resolve():
         logger.warning(
             'TMP_DIR is using repo-local fallback path: %s. Configure HOST_TMP_DIR mount for safer runtime storage.',
             TMP_DIR,
         )
-    if settings.document_storage_root.resolve() == STORAGE_DIR.resolve():
+    if not host_storage_dir and settings.document_storage_root.resolve() == STORAGE_DIR.resolve():
         logger.warning(
             'DOCUMENT_STORAGE_ROOT is using repo-local fallback path: %s. Configure DOCUMENT_STORAGE_ROOT or HOST_STORAGE_DIR for safer persistent storage.',
             settings.document_storage_root,
