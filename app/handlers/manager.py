@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, FSInputFile, Message
@@ -71,6 +73,7 @@ from app.ui.my_documents import (
     parse_my_documents_scoped_document,
 )
 
+logger = logging.getLogger(__name__)
 router = Router()
 NL = chr(10)
 document_storage_service = DocumentStorageService()
