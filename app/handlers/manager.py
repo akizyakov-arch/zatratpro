@@ -551,11 +551,22 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
 async def my_document_open_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
+    logger.info(
+        'My-documents open requested: user_id=%s callback_data=%s',
+        callback.from_user.id,
+        callback.data,
+    )
     try:
         _, document_id = parse_my_documents_scoped_document(callback.data, MY_DOCUMENTS_OPEN_PREFIX)
         source = await view_service.get_my_document_source(callback.from_user.id, document_id)
     except (ValueError, CompanyAccessError) as exc:
         message = str(exc) if isinstance(exc, CompanyAccessError) else 'Документ не найден.'
+        logger.warning(
+            'My-documents open rejected: user_id=%s callback_data=%s error=%s',
+            callback.from_user.id,
+            callback.data,
+            exc,
+        )
         await callback.answer(message, show_alert=True)
         return
     file_path = document_storage_service.resolve_path(source.storage_key)
@@ -581,7 +592,17 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
         file_path,
         file_size,
     )
-    await callback.message.answer_document(FSInputFile(file_path, filename=filename), caption=caption)
+    try:
+        await callback.message.answer_document(FSInputFile(file_path, filename=filename), caption=caption)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            'My-documents open send failed: document_id=%s storage_key=%s filename=%s path=%s',
+            document_id,
+            source.storage_key,
+            filename,
+            file_path,
+        )
+        raise
     logger.info(
         'My-documents open sent as document: document_id=%s storage_key=%s filename=%s',
         document_id,
