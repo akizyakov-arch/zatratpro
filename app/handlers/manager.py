@@ -489,7 +489,7 @@ async def my_documents_entry(message: Message, access_context: AccessContext | N
 async def my_documents_filters_callback(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
-    logger.info('My-documents filters callback: user_id=%s callback_data=%s', getattr(callback.from_user, 'id', None), callback.data)
+    logger.warning('My-documents filters callback: user_id=%s callback_data=%s', getattr(callback.from_user, 'id', None), callback.data)
     await callback.answer()
     await _send_my_documents_filters(callback.message, edit=True)
 
@@ -498,7 +498,7 @@ async def my_documents_filters_callback(callback: CallbackQuery) -> None:
 async def my_documents_projects_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    logger.info('My-documents projects callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
+    logger.warning('My-documents projects callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
     try:
         await callback.answer()
         await _send_my_documents_projects(callback.message, callback.from_user.id, edit=True)
@@ -510,7 +510,7 @@ async def my_documents_projects_callback(callback: CallbackQuery) -> None:
 async def my_documents_list_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    logger.info('My-documents list callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
+    logger.warning('My-documents list callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
     try:
         scope_token = parse_my_documents_list_scope(callback.data)
         await callback.answer()
@@ -523,7 +523,7 @@ async def my_documents_list_callback(callback: CallbackQuery) -> None:
 async def my_document_view_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    logger.info('My-documents view callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
+    logger.warning('My-documents view callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
     try:
         scope_token, document_id = parse_my_documents_scoped_document(callback.data, MY_DOCUMENTS_VIEW_PREFIX)
         document, items = await view_service.get_my_document_detail(callback.from_user.id, document_id)
@@ -555,7 +555,7 @@ async def my_document_view_callback(callback: CallbackQuery) -> None:
 async def my_document_open_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    logger.info(
+    logger.warning(
         'My-documents open requested: user_id=%s callback_data=%s',
         callback.from_user.id,
         callback.data,
@@ -587,7 +587,7 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
     except OSError:
         pass
 
-    logger.info(
+    logger.warning(
         'My-documents open resolved: document_id=%s storage_key=%s mime_type=%s file_ext=%s path=%s size=%s',
         document_id,
         source.storage_key,
@@ -607,7 +607,7 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
             file_path,
         )
         raise
-    logger.info(
+    logger.warning(
         'My-documents open sent as document: document_id=%s storage_key=%s filename=%s',
         document_id,
         source.storage_key,
@@ -619,7 +619,7 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
 async def my_document_items_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    logger.info('My-documents items callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
+    logger.warning('My-documents items callback: user_id=%s callback_data=%s', callback.from_user.id, callback.data)
     try:
         scope_token, document_id = parse_my_documents_scoped_document(callback.data, MY_DOCUMENTS_ITEMS_PREFIX)
         document, items = await view_service.get_my_document_detail(callback.from_user.id, document_id)
