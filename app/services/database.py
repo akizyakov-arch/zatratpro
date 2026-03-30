@@ -1,10 +1,13 @@
 import asyncpg
+import logging
 from asyncpg import Pool
 
 from app.config import get_settings
 
 
 _pool: Pool | None = None
+
+logger = logging.getLogger(__name__)
 
 
 async def init_db() -> Pool:
@@ -13,6 +16,7 @@ async def init_db() -> Pool:
         settings = get_settings()
         _pool = await asyncpg.create_pool(settings.postgres_dsn, min_size=1, max_size=5)
         await _run_runtime_migrations(_pool)
+        await _align_runtime_sequences(_pool)
         from app.state.pending_actions import cleanup_expired_pending_actions
         from app.state.pending_documents import cleanup_expired_pending_documents
 
@@ -214,3 +218,49 @@ async def _run_runtime_migrations(pool: Pool) -> None:
                 CHECK (status IN ('new', 'active', 'blocked', 'removed'))
                 '''
             )
+
+
+async def _align_runtime_sequences(pool: Pool) -> None:
+    serial_targets = (
+        ('users', 'id'),
+        ('companies', 'id'),
+        ('company_members', 'id'),
+        ('company_invites', 'id'),
+        ('projects', 'id'),
+        ('documents', 'id'),
+        ('document_items', 'id'),
+        ('document_files', 'id'),
+    )
+    async with pool.acquire() as connection:
+        for table_name, column_name in serial_targets:
+            sequence_name = await connection.fetchval(
+                "SELECT pg_get_serial_sequence($1, $2)",
+                table_name,
+                column_name,
+            )
+            if not sequence_name:
+                continue
+            max_id = int(
+                await connection.fetchval(
+                    f"SELECT COALESCE(MAX({column_name}), 0) FROM {table_name}"
+                )
+            )
+            if max_id <= 0:
+                continue
+            last_value = int(await connection.fetchval(f"SELECT last_value FROM {sequence_name}"))
+            if last_value >= max_id:
+                continue
+            await connection.execute(
+                "SELECT setval($1::regclass, $2, true)",
+                sequence_name,
+                max_id,
+            )
+            logger.warning(
+                "Aligned serial sequence: table=%s column=%s sequence=%s old_last_value=%s new_last_value=%s",
+                table_name,
+                column_name,
+                sequence_name,
+                last_value,
+                max_id,
+            )
+

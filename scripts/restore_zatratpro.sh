@@ -190,6 +190,36 @@ docker exec -i "${DB_CONTAINER}" sh -lc 'dropdb -U "$POSTGRES_USER" --if-exists 
 echo "[restore] restoring database"
 docker exec -i "${DB_CONTAINER}" sh -lc "pg_restore -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" --no-owner --no-privileges /backups/db/${DB_FILE}"
 
+echo "[restore] aligning serial sequences"
+docker exec -i "${DB_CONTAINER}" sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+DO $$
+DECLARE
+    targets TEXT[][] := ARRAY[
+        ARRAY['users', 'id'],
+        ARRAY['companies', 'id'],
+        ARRAY['company_members', 'id'],
+        ARRAY['company_invites', 'id'],
+        ARRAY['projects', 'id'],
+        ARRAY['documents', 'id'],
+        ARRAY['document_items', 'id'],
+        ARRAY['document_files', 'id']
+    ];
+    target TEXT[];
+    sequence_name TEXT;
+    max_id BIGINT;
+BEGIN
+    FOREACH target SLICE 1 IN ARRAY targets LOOP
+        SELECT pg_get_serial_sequence(target[1], target[2]) INTO sequence_name;
+        IF sequence_name IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        EXECUTE format('SELECT COALESCE(MAX(%I), 0) FROM %I', target[2], target[1]) INTO max_id;
+        PERFORM setval(sequence_name, GREATEST(max_id, 1), max_id > 0);
+    END LOOP;
+END $$;
+SQL
+
 if [[ "${RESTORE_STORAGE}" == "true" && -n "${STORAGE_FILE}" ]]; then
   if [[ -d "${STORAGE_DIR}" ]]; then
     if [[ "${KEEP_OLD_STORAGE}" == "true" ]]; then
