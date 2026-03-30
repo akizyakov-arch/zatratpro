@@ -329,25 +329,34 @@ def _infer_receipt_vat_from_rate(
 ) -> float | None:
     if not raw_text or total is None or total <= 0:
         return None
-    if _contains_no_vat_signal(raw_text.lower()):
-        return None
-
-    translated = raw_text.lower().replace('ё', 'е')
-    compact = re.sub(r'[^а-яa-z0-9%хx.,:\-\s]', ' ', translated)
-    compact = re.sub(r'\s+', ' ', compact).strip()
-    if not compact:
-        return None
 
     vat_label = r'[нnh][дdаa][сc5]'
     rate_pattern = rf'(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*[-:=])?\s*(\d{{1,2}})\s*[%хx]'
-    rates = {int(match.group(1)) for match in re.finditer(rate_pattern, compact) if match.group(1).isdigit()}
-    if len(rates) != 1:
+    inferred_values: list[float] = []
+
+    for compact in _iter_receipt_vat_contexts(raw_text):
+        if _contains_no_vat_signal(compact):
+            continue
+        rates = {int(match.group(1)) for match in re.finditer(rate_pattern, compact) if match.group(1).isdigit()}
+        if len(rates) != 1:
+            continue
+
+        rate = next(iter(rates))
+        if rate <= 0:
+            continue
+        inferred_values.append(round(float(total) * rate / (100 + rate), 2))
+
+    if not inferred_values:
         return None
 
-    rate = next(iter(rates))
-    if rate <= 0:
-        return None
-    return round(float(total) * rate / (100 + rate), 2)
+    unique_values: list[float] = []
+    for value in inferred_values:
+        if not any(abs(value - existing) <= 0.01 for existing in unique_values):
+            unique_values.append(value)
+
+    if len(unique_values) == 1:
+        return unique_values[0]
+    return None
 
 
 
@@ -356,15 +365,6 @@ def _extract_receipt_vat_from_text(
     *,
     total: float | None = None,
 ) -> float | None:
-    if not raw_text:
-        return None
-
-    translated = raw_text.lower().replace('ё', 'е')
-    compact = re.sub(r'[^а-яa-z0-9%хx.,:\-\s]', ' ', translated)
-    compact = re.sub(r'\s+', ' ', compact).strip()
-    if not compact:
-        return None
-
     money_value = r'(?:[0-9]{3,}(?:[\s.][0-9]{3})*(?:[.,][0-9]{1,2})?|[0-9]{1,2}[.,][0-9]{2})'
     vat_label = r'[нnh][дdаa][сc5]'
     patterns = (
@@ -373,11 +373,12 @@ def _extract_receipt_vat_from_text(
     )
 
     candidates: list[float] = []
-    for pattern in patterns:
-        for match in re.finditer(pattern, compact):
-            value = _coerce_number(match.group(1))
-            if isinstance(value, (int, float)) and value > 0:
-                candidates.append(float(value))
+    for compact in _iter_receipt_vat_contexts(raw_text):
+        for pattern in patterns:
+            for match in re.finditer(pattern, compact):
+                value = _coerce_number(match.group(1))
+                if isinstance(value, (int, float)) and value > 0:
+                    candidates.append(float(value))
 
     if not candidates:
         return None
@@ -407,6 +408,75 @@ def _extract_receipt_vat_from_text(
     if len(unique_candidates) == 1:
         return unique_candidates[0]
     return max(unique_candidates)
+
+
+def _iter_receipt_vat_contexts(raw_text: str | None) -> list[str]:
+    if not raw_text:
+        return []
+
+    normalized_text = raw_text.lower().replace('ё', 'е')
+    line_contexts = [line for line in (_normalize_receipt_line(part) for part in normalized_text.splitlines()) if line]
+    contexts: list[str] = []
+
+    footer_context = _extract_receipt_footer_context(normalized_text)
+    if footer_context:
+        contexts.append(footer_context)
+
+    for index, line in enumerate(line_contexts):
+        if not _looks_like_receipt_vat_line(line):
+            continue
+        chunk = ' '.join(line_contexts[max(0, index - 1): min(len(line_contexts), index + 2)])
+        chunk = _normalize_receipt_line(chunk)
+        if chunk and chunk not in contexts:
+            contexts.append(chunk)
+
+    return contexts
+
+
+
+def _extract_receipt_footer_context(raw_text: str) -> str:
+    normalized = _normalize_receipt_line(raw_text)
+    if not normalized:
+        return ''
+
+    anchors = (
+        'сумма ндс',
+        'в т ч ндс',
+        'итог',
+        'итого',
+        'к оплате',
+        'оплата картой',
+        'безнал',
+        'безналичный',
+        'наличными',
+    )
+    cutoff = max(len(normalized) // 3, len(normalized) - 500)
+    anchor_positions = [pos for anchor in anchors if (pos := normalized.rfind(anchor)) >= cutoff]
+    if anchor_positions:
+        start = max(0, min(anchor_positions) - 120)
+        return normalized[start:]
+    if len(normalized) > 500:
+        return normalized[-500:]
+    return normalized
+
+
+
+def _looks_like_receipt_vat_line(line: str) -> bool:
+    vat_label = r'[нnh][дdаa][сc5]'
+    if re.search(vat_label, line) is None:
+        return False
+    if any(keyword in line for keyword in ('сумма', 'в т ч', 'итог', 'итого', 'к оплате', 'оплата', 'безнал', 'налич')):
+        return True
+    if len(line) <= 24:
+        return True
+    tokens = line.split()
+    return len(tokens) <= 4
+
+
+
+def _normalize_receipt_line(value: str) -> str:
+    return re.sub(r'\s+', ' ', value).strip()
+
 
 
 def _normalize_vat_label(value: str | None) -> str | None:
