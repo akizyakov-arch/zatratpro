@@ -8,6 +8,8 @@ from app.schemas.document import DocumentSchema
 logger = logging.getLogger(__name__)
 PASSTHROUGH_SOURCE = 'schema_passthrough'
 OCR_TOTALS_BLOCK_SOURCE = 'ocr_totals_block'
+ITEM_VAT_SUM_SOURCE = 'item_vat_sum'
+ITEM_TOTAL_WITH_VAT_SUM_SOURCE = 'item_sum_with_vat'
 NULLIFIED_SOURCE = 'nullified'
 ALLOWED_VAT_SCOPES = {'document', 'mixed', 'no_vat', 'unknown'}
 OCR_TEXT_FIXES = str.maketrans({
@@ -93,6 +95,58 @@ class ReceiptFinancialResolver(BaseFinancialResolver):
         )
 
 
+class GoodsInvoiceFinancialResolver(BaseFinancialResolver):
+    def normalize(self, document: DocumentSchema) -> DocumentFinancialNormalizationResult:
+        item_vat_total = _sum_item_vat_amount(document)
+        item_total_with_vat = _sum_item_total_with_vat(document)
+
+        total_source = PASSTHROUGH_SOURCE if document.total is not None else None
+        vat_source = PASSTHROUGH_SOURCE if document.vat_total_amount is not None else None
+        suppressed_values: tuple[str, ...] = ()
+        warnings: list[str] = []
+
+        if document.total is None and item_total_with_vat is not None:
+            document.total = item_total_with_vat
+            total_source = ITEM_TOTAL_WITH_VAT_SUM_SOURCE
+
+        current_vat = document.vat_total_amount
+        if item_vat_total is None:
+            if current_vat is not None and document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
+                current_vat = None
+                vat_source = NULLIFIED_SOURCE
+                suppressed_values = ('vat_total_amount',)
+                warnings.append('vat_equal_total_rejected')
+        else:
+            if current_vat is None:
+                current_vat = item_vat_total
+                vat_source = ITEM_VAT_SUM_SOURCE
+            elif current_vat <= 0:
+                current_vat = item_vat_total
+                vat_source = ITEM_VAT_SUM_SOURCE
+                warnings.append('vat_non_positive_replaced_from_items')
+            elif document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
+                current_vat = item_vat_total
+                vat_source = ITEM_VAT_SUM_SOURCE
+                warnings.append('vat_equal_total_replaced_from_items')
+            elif document.total is not None and current_vat > document.total and item_vat_total < document.total:
+                current_vat = item_vat_total
+                vat_source = ITEM_VAT_SUM_SOURCE
+                warnings.append('vat_exceeds_total_replaced_from_items')
+
+        document.vat_total_amount = current_vat
+        document.vat_scope = _resolve_goods_vat_scope(document, current_vat)
+
+        return DocumentFinancialNormalizationResult(
+            document=document,
+            provenance=FinancialProvenance(
+                total_source=total_source,
+                vat_total_amount_source=vat_source,
+                suppressed_values=suppressed_values,
+                warnings=tuple(warnings),
+            ),
+        )
+
+
 class GenericFinancialResolver(BaseFinancialResolver):
     """Fallback resolver for document types without dedicated normalization yet."""
 
@@ -102,9 +156,11 @@ class DocumentFinancialNormalizationService:
         self,
         *,
         receipt_resolver: ReceiptFinancialResolver | None = None,
+        goods_invoice_resolver: GoodsInvoiceFinancialResolver | None = None,
         generic_resolver: GenericFinancialResolver | None = None,
     ) -> None:
         self.receipt_resolver = receipt_resolver or ReceiptFinancialResolver()
+        self.goods_invoice_resolver = goods_invoice_resolver or GoodsInvoiceFinancialResolver()
         self.generic_resolver = generic_resolver or GenericFinancialResolver()
 
     def normalize_document(self, document: DocumentSchema) -> DocumentFinancialNormalizationResult:
@@ -124,7 +180,71 @@ class DocumentFinancialNormalizationService:
     def _resolve_resolver(self, document_type: str) -> BaseFinancialResolver:
         if document_type in {'cash_receipt', 'bso'}:
             return self.receipt_resolver
+        if document_type == 'goods_invoice':
+            return self.goods_invoice_resolver
         return self.generic_resolver
+
+
+def _sum_item_vat_amount(document: DocumentSchema) -> float | None:
+    values = [float(item.vat_amount) for item in document.items if item.vat_amount is not None and item.vat_amount > 0]
+    if not values:
+        return None
+    return round(sum(values), 2)
+
+
+
+def _sum_item_total_with_vat(document: DocumentSchema) -> float | None:
+    relevant_items = [item for item in document.items if item.line_total is not None or item.vat_amount is not None or item.vat_label]
+    if not relevant_items:
+        return None
+
+    total = 0.0
+    counted = 0
+    for item in relevant_items:
+        if item.line_total is None:
+            return None
+
+        vat_amount = item.vat_amount
+        normalized_label = _normalize_vat_label(item.vat_label)
+        if vat_amount is None:
+            if normalized_label == 'без ндс':
+                vat_amount = 0.0
+            else:
+                return None
+
+        total += float(item.line_total) + float(vat_amount)
+        counted += 1
+
+    if counted == 0:
+        return None
+    return round(total, 2)
+
+
+
+def _resolve_goods_vat_scope(
+    document: DocumentSchema,
+    vat_total_amount: float | None,
+) -> str | None:
+    labels = {
+        normalized
+        for normalized in (_normalize_vat_label(item.vat_label) for item in document.items)
+        if normalized is not None
+    }
+
+    if 'без ндс' in labels and any(label != 'без ндс' for label in labels):
+        return 'mixed'
+
+    if document.vat_scope in ALLOWED_VAT_SCOPES and document.vat_scope != 'unknown':
+        return document.vat_scope
+
+    if vat_total_amount is not None and vat_total_amount > 0:
+        return 'document'
+    if labels == {'без ндс'}:
+        return 'no_vat'
+    if labels:
+        return 'document'
+    return document.vat_scope
+
 
 
 def _resolve_receipt_vat_scope(
