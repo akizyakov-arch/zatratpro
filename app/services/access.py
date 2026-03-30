@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from aiogram.types import User
 
+from app.config import get_settings
 from app.services.companies import (
     ACTIVE_MEMBER_STATUS,
     ADMIN_ROLES,
@@ -55,9 +56,6 @@ class AccessService:
 
     async def get_access_context(self, telegram_user: User) -> AccessContext:
         row = await self._fetch_access_row(telegram_user.id)
-        if row is None:
-            await self.company_service.ensure_platform_user(telegram_user)
-            row = await self._fetch_access_row(telegram_user.id)
         return self._build_access_context(row, telegram_user.id)
 
     async def get_access_context_by_telegram_id(self, telegram_user_id: int) -> AccessContext:
@@ -118,10 +116,13 @@ class AccessService:
             )
             company_role = row["company_role"]
 
+        settings = get_settings()
+        default_system_role = "owner" if telegram_user_id == settings.bot_owner_telegram_id and settings.bot_owner_telegram_id else "user"
+
         return AccessContext(
             platform_user_id=row["platform_user_id"] if row is not None else 0,
             telegram_id=telegram_user_id,
-            system_role=row["system_role"] if row is not None else "user",
+            system_role=row["system_role"] if row is not None else default_system_role,
             company=company,
             company_role=company_role,
             membership_status=membership_status,

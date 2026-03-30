@@ -119,6 +119,9 @@ class CompanyService:
             )
 
     async def is_platform_owner(self, telegram_user_id: int) -> bool:
+        settings = get_settings()
+        if telegram_user_id == settings.bot_owner_telegram_id and settings.bot_owner_telegram_id:
+            return True
         pool = get_pool()
         async with pool.acquire() as connection:
             role = await connection.fetchval(
@@ -136,7 +139,9 @@ class CompanyService:
             )
             rows = await self._get_active_membership_rows(connection, telegram_user_id)
 
-        system_role = base_row["system_role"] if base_row is not None else "user"
+        settings = get_settings()
+        default_system_role = "owner" if telegram_user_id == settings.bot_owner_telegram_id and settings.bot_owner_telegram_id else "user"
+        system_role = base_row["system_role"] if base_row is not None else default_system_role
         if not rows:
             return UserContext(system_role=system_role, company=None, member_role=None)
 
