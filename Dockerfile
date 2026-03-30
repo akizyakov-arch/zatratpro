@@ -10,6 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY scripts ./scripts
-COPY tmp ./tmp
+RUN mkdir -p /app/tmp
 
 CMD ["python", "-m", "app.main"]
