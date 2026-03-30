@@ -139,170 +139,177 @@ class DocumentService:
         vat_total_amount = _resolve_document_vat_total(document, items)
         vat_scope = _resolve_document_vat_scope(document, items)
         is_fiscalized = document.is_fiscalized
+        prepared_source = None
 
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                user_id = await connection.fetchval(
-                    """
-                    INSERT INTO users (telegram_id, username, first_name, last_name)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (telegram_id) DO UPDATE
-                    SET username = EXCLUDED.username,
-                        first_name = EXCLUDED.first_name,
-                        last_name = EXCLUDED.last_name,
-                        updated_at = NOW()
-                    RETURNING id
-                    """,
-                    telegram_user.id,
-                    telegram_user.username,
-                    telegram_user.first_name,
-                    telegram_user.last_name,
-                )
-                document_id = await connection.fetchval(
-                    """
-                    INSERT INTO documents (
-                        company_id,
-                        project_id,
-                        uploaded_by_user_id,
-                        document_type,
+        try:
+            async with pool.acquire() as connection:
+                async with connection.transaction():
+                    user_id = await connection.fetchval(
+                        """
+                        INSERT INTO users (telegram_id, username, first_name, last_name)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (telegram_id) DO UPDATE
+                        SET username = EXCLUDED.username,
+                            first_name = EXCLUDED.first_name,
+                            last_name = EXCLUDED.last_name,
+                            updated_at = NOW()
+                        RETURNING id
+                        """,
+                        telegram_user.id,
+                        telegram_user.username,
+                        telegram_user.first_name,
+                        telegram_user.last_name,
+                    )
+                    document_id = await connection.fetchval(
+                        """
+                        INSERT INTO documents (
+                            company_id,
+                            project_id,
+                            uploaded_by_user_id,
+                            document_type,
+                            source_type,
+                            external_document_number,
+                            incoming_number,
+                            vendor,
+                            vendor_inn,
+                            vendor_kpp,
+                            document_number_normalized,
+                            vendor_key_normalized,
+                            document_date,
+                            currency,
+                            total_amount,
+                            vat_total_amount,
+                            vat_scope,
+                            is_fiscalized,
+                            raw_text,
+                            preview_text,
+                            duplicate_status,
+                            duplicate_of_document_id,
+                            duplicate_checked_at,
+                            ocr_provider,
+                            llm_provider,
+                            source_file_path,
+                            source_file_id
+                        )
+                        VALUES (
+                            $1, $2, $3, $4, $5, $6, $7, $8,
+                            $9, $10, $11, $12, $13, $14, $15, $16,
+                            $17, $18, $19, $20, $21, $22, NOW(), 'ocr_space', 'deepseek', NULL, NULL
+                        )
+                        RETURNING id
+                        """,
+                        project.company_id,
+                        project.id,
+                        user_id,
+                        document.document_type,
                         source_type,
-                        external_document_number,
-                        incoming_number,
-                        vendor,
-                        vendor_inn,
-                        vendor_kpp,
-                        document_number_normalized,
-                        vendor_key_normalized,
+                        duplicate_check.fields.document_number,
+                        document.incoming_number,
+                        duplicate_check.fields.vendor_name,
+                        duplicate_check.fields.vendor_inn,
+                        document.vendor_kpp,
+                        _normalize_text_key(duplicate_check.fields.document_number),
+                        _normalize_text_key(duplicate_check.fields.vendor_key),
                         document_date,
-                        currency,
-                        total_amount,
+                        document.currency,
+                        duplicate_check.fields.total_amount,
                         vat_total_amount,
                         vat_scope,
                         is_fiscalized,
-                        raw_text,
-                        preview_text,
-                        duplicate_status,
-                        duplicate_of_document_id,
-                        duplicate_checked_at,
-                        ocr_provider,
-                        llm_provider,
-                        source_file_path,
-                        source_file_id
+                        document.raw_text,
+                        normalized_text,
+                        duplicate_check.status,
+                        duplicate_check.duplicate_document_id,
                     )
-                    VALUES (
-                        $1, $2, $3, $4, $5, $6, $7, $8,
-                        $9, $10, $11, $12, $13, $14, $15, $16,
-                        $17, $18, $19, $20, $21, $22, NOW(), 'ocr_space', 'deepseek', NULL, NULL
-                    )
-                    RETURNING id
-                    """,
-                    project.company_id,
-                    project.id,
-                    user_id,
-                    document.document_type,
-                    source_type,
-                    duplicate_check.fields.document_number,
-                    document.incoming_number,
-                    duplicate_check.fields.vendor_name,
-                    duplicate_check.fields.vendor_inn,
-                    document.vendor_kpp,
-                    _normalize_text_key(duplicate_check.fields.document_number),
-                    _normalize_text_key(duplicate_check.fields.vendor_key),
-                    document_date,
-                    document.currency,
-                    duplicate_check.fields.total_amount,
-                    vat_total_amount,
-                    vat_scope,
-                    is_fiscalized,
-                    document.raw_text,
-                    normalized_text,
-                    duplicate_check.status,
-                    duplicate_check.duplicate_document_id,
-                )
-                if source_temp_path is not None:
-                    stored_source = self.document_storage.save_source(
-                        company_id=project.company_id,
-                        document_id=document_id,
-                        source_path=source_temp_path,
-                        original_filename=source_original_name,
-                        mime_type=source_mime_type,
-                        file_ext=source_file_ext,
-                        original_file_size=source_original_file_size,
-                        was_normalized=source_was_normalized,
-                        original_kind=source_original_kind,
-                    )
-                    await connection.execute(
-                        """
-                        INSERT INTO document_files (
-                            document_id,
-                            file_role,
-                            page_no,
-                            storage_key,
-                            mime_type,
-                            original_filename,
-                            file_ext,
-                            file_size,
-                            original_file_size,
-                            stored_file_size,
-                            was_normalized,
-                            original_kind
+                    if source_temp_path is not None:
+                        prepared_source = self.document_storage.prepare_source(
+                            company_id=project.company_id,
+                            document_id=document_id,
+                            source_path=source_temp_path,
+                            original_filename=source_original_name,
+                            mime_type=source_mime_type,
+                            file_ext=source_file_ext,
+                            original_file_size=source_original_file_size,
+                            was_normalized=source_was_normalized,
+                            original_kind=source_original_kind,
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                        """,
-                        document_id,
-                        stored_source.file_role,
-                        stored_source.page_no,
-                        stored_source.storage_key,
-                        stored_source.mime_type,
-                        stored_source.original_filename,
-                        stored_source.file_ext,
-                        stored_source.file_size,
-                        stored_source.original_file_size,
-                        source_stored_file_size or stored_source.stored_file_size,
-                        stored_source.was_normalized,
-                        stored_source.original_kind,
-                    )
-                    await connection.execute(
-                        """
-                        UPDATE documents
-                        SET source_file_path = $2,
-                            source_file_id = $3,
-                            updated_at = NOW()
-                        WHERE id = $1
-                        """,
-                        document_id,
-                        stored_source.storage_key,
-                        stored_source.file_role,
-                    )
-                if items:
-                    await connection.executemany(
-                        """
-                        INSERT INTO document_items (
-                            document_id,
-                            line_no,
-                            name,
-                            quantity,
-                            price,
-                            line_total,
-                            vat_label,
-                            vat_amount
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        """,
-                        [
-                            (
+                        stored_source = self.document_storage.finalize_prepared_source(prepared_source)
+                        await connection.execute(
+                            """
+                            INSERT INTO document_files (
                                 document_id,
-                                index,
-                                item.name,
-                                _as_decimal(item.quantity, "0.001"),
-                                _as_decimal(item.price, "0.01"),
-                                _as_decimal(item.line_total, "0.01"),
-                                _normalize_vat_label(item.vat_label),
-                                _as_decimal(item.vat_amount, "0.01"),
+                                file_role,
+                                page_no,
+                                storage_key,
+                                mime_type,
+                                original_filename,
+                                file_ext,
+                                file_size,
+                                original_file_size,
+                                stored_file_size,
+                                was_normalized,
+                                original_kind
                             )
-                            for index, item in enumerate(items, start=1)
-                        ],
-                    )
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                            """,
+                            document_id,
+                            stored_source.file_role,
+                            stored_source.page_no,
+                            stored_source.storage_key,
+                            stored_source.mime_type,
+                            stored_source.original_filename,
+                            stored_source.file_ext,
+                            stored_source.file_size,
+                            stored_source.original_file_size,
+                            source_stored_file_size or stored_source.stored_file_size,
+                            stored_source.was_normalized,
+                            stored_source.original_kind,
+                        )
+                        await connection.execute(
+                            """
+                            UPDATE documents
+                            SET source_file_path = $2,
+                                source_file_id = $3,
+                                updated_at = NOW()
+                            WHERE id = $1
+                            """,
+                            document_id,
+                            stored_source.storage_key,
+                            stored_source.file_role,
+                        )
+                    if items:
+                        await connection.executemany(
+                            """
+                            INSERT INTO document_items (
+                                document_id,
+                                line_no,
+                                name,
+                                quantity,
+                                price,
+                                line_total,
+                                vat_label,
+                                vat_amount
+                            )
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                            """,
+                            [
+                                (
+                                    document_id,
+                                    index,
+                                    item.name,
+                                    _as_decimal(item.quantity, "0.001"),
+                                    _as_decimal(item.price, "0.01"),
+                                    _as_decimal(item.line_total, "0.01"),
+                                    _normalize_vat_label(item.vat_label),
+                                    _as_decimal(item.vat_amount, "0.01"),
+                                )
+                                for index, item in enumerate(items, start=1)
+                            ],
+                        )
+        except Exception:
+            if prepared_source is not None:
+                self.document_storage.discard_prepared_source(prepared_source)
+            raise
         return document_id
 
     async def find_company_duplicate_document(
