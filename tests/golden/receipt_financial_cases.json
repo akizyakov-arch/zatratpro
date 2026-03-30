@@ -1,0 +1,186 @@
+[
+  {
+    "id": "receipt_vat_replaced_from_ocr",
+    "document": {
+      "document_type": "cash_receipt",
+      "external_document_number": "1710482",
+      "date": "2024-06-05",
+      "vendor": "М. ВИДЕО",
+      "total": 9999,
+      "vat_total_amount": 9999,
+      "raw_text": "КАССОВЫЙ ЧЕК Номер 1710482 ИТОГ 9999.00 СУММА НДС 20% 1666.50 безналичный 9999.00",
+      "items": [
+        {
+          "name": "Водонагреватель",
+          "quantity": 1,
+          "price": 9999,
+          "line_total": 9999
+        }
+      ]
+    },
+    "expected": {
+      "vat_total_amount": 1666.5,
+      "vat_scope": "document",
+      "provenance": {
+        "vat_total_amount_source": "ocr_totals_block",
+        "warnings": [
+          "vat_equal_total_replaced_from_ocr"
+        ],
+        "suppressed_values": []
+      },
+      "preview_contains": [
+        "КАССОВЫЙ ЧЕК",
+        "Итого: 9999.00 ₽",
+        "НДС: 1666.50 ₽"
+      ],
+      "preview_not_contains": [
+        "НДС: 9999.00 ₽"
+      ]
+    }
+  },
+  {
+    "id": "receipt_vat_rejected_without_confirmation",
+    "document": {
+      "document_type": "cash_receipt",
+      "external_document_number": "1710482",
+      "date": "2024-06-05",
+      "vendor": "М. ВИДЕО",
+      "total": 9999,
+      "vat_total_amount": 9999,
+      "raw_text": "КАССОВЫЙ ЧЕК Номер 1710482 ИТОГ 9999.00 безналичный 9999.00 оплата картой 9999.00",
+      "items": [
+        {
+          "name": "Водонагреватель",
+          "quantity": 1,
+          "price": 9999,
+          "line_total": 9999
+        }
+      ]
+    },
+    "expected": {
+      "vat_total_amount": null,
+      "vat_scope": null,
+      "provenance": {
+        "vat_total_amount_source": "nullified",
+        "warnings": [
+          "vat_equal_total_rejected"
+        ],
+        "suppressed_values": [
+          "vat_total_amount"
+        ]
+      },
+      "preview_contains": [
+        "КАССОВЫЙ ЧЕК",
+        "Итого: 9999.00 ₽"
+      ],
+      "preview_not_contains": [
+        "НДС: 9999.00 ₽",
+        "Тип НДС:"
+      ]
+    }
+  },
+  {
+    "id": "receipt_inclusive_line_vat_preview",
+    "document": {
+      "document_type": "cash_receipt",
+      "external_document_number": "N331",
+      "vendor": "Трансторг",
+      "total": 550,
+      "vat_total_amount": 91.67,
+      "vat_scope": "document",
+      "items": [
+        {
+          "name": "Бизнес-ланч",
+          "quantity": 1,
+          "price": 550,
+          "line_total": 550,
+          "vat_amount": 91.67,
+          "vat_label": "НДС 20%"
+        }
+      ]
+    },
+    "expected": {
+      "vat_total_amount": 91.67,
+      "vat_scope": "document",
+      "provenance": {
+        "vat_total_amount_source": "schema_passthrough",
+        "warnings": [],
+        "suppressed_values": []
+      },
+      "preview_contains": [
+        "Бизнес-ланч — 1.00 шт × 550.00 ₽ = 550.00 ₽, в т.ч. НДС: 91.67 ₽ (НДС 20%)",
+        "Итого: 550.00 ₽",
+        "НДС: 91.67 ₽"
+      ],
+      "preview_not_contains": [
+        "без НДС: 550.00 ₽",
+        "с НДС: 641.67 ₽"
+      ]
+    }
+  },
+  {
+    "id": "receipt_mixed_scope_from_no_vat_signal",
+    "document": {
+      "document_type": "cash_receipt",
+      "external_document_number": "MIX-01",
+      "vendor": "Кафе Тест",
+      "total": 1200,
+      "vat_total_amount": 200,
+      "raw_text": "КАССОВЫЙ ЧЕК ИТОГ 1200.00 СУММА НДС 20% 200.00 СУММА БЕЗ НДС 300.00",
+      "items": [
+        {
+          "name": "Комбо-обед",
+          "quantity": 1,
+          "price": 1200,
+          "line_total": 1200
+        }
+      ]
+    },
+    "expected": {
+      "vat_total_amount": 200.0,
+      "vat_scope": "mixed",
+      "provenance": {
+        "vat_total_amount_source": "schema_passthrough",
+        "warnings": [],
+        "suppressed_values": []
+      },
+      "preview_contains": [
+        "Тип НДС: смешанный"
+      ],
+      "preview_not_contains": []
+    }
+  },
+  {
+    "id": "bso_vat_backfilled_from_ocr",
+    "document": {
+      "document_type": "bso",
+      "external_document_number": "BSO-77",
+      "vendor": "Сервис Тест",
+      "total": 3600,
+      "vat_total_amount": null,
+      "raw_text": "БСО Номер BSO-77 ИТОГ 3600.00 В Т.Ч. НДС 20% 600.00",
+      "items": [
+        {
+          "name": "Услуга размещения",
+          "quantity": 1,
+          "price": 3600,
+          "line_total": 3600
+        }
+      ]
+    },
+    "expected": {
+      "vat_total_amount": 600.0,
+      "vat_scope": "document",
+      "provenance": {
+        "vat_total_amount_source": "ocr_totals_block",
+        "warnings": [],
+        "suppressed_values": []
+      },
+      "preview_contains": [
+        "БСО",
+        "НДС: 600.00 ₽"
+      ],
+      "preview_not_contains": []
+    }
+  }
+]
