@@ -6,10 +6,11 @@ from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from app.services.access import AccessContext
 
-from app.handlers.common import build_main_menu_markup_from_context, document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
+from app.handlers.common import build_main_menu_markup_from_context, company_service, document_service, ensure_context, format_duplicate_card, main_menu_markup, view_service
 from app.services.companies import CompanyAccessError
 from app.services.document_exports import DocumentExportService
 from app.services.document_storage import DocumentStorageService
+from app.services.owner_alerts import notify_owner_critical
 from app.services.report_exports import ManagerReportExportService
 from app.services.temp_files import safe_unlink
 from app.state.pending_actions import set_pending_action
@@ -76,6 +77,26 @@ document_export_service = DocumentExportService(document_storage_service)
 manager_report_export_service = ManagerReportExportService()
 
 
+async def _notify_owner_export_failure(bot, telegram_user_id: int, *, export_kind: str, error: str) -> None:
+    company_id = '-'
+    try:
+        company = await company_service.get_active_company_for_user(telegram_user_id)
+        company_id = str(company.id)
+    except Exception:  # noqa: BLE001
+        logger.warning('Failed to resolve company for export failure alert: user_id=%s export_kind=%s', telegram_user_id, export_kind, exc_info=True)
+
+    await notify_owner_critical(
+        bot,
+        title='export-failure',
+        lines=(
+            f'type={export_kind}',
+            f'company_id={company_id}',
+            f'user_id={telegram_user_id}',
+            f'error={error}',
+        ),
+    )
+
+
 async def _send_duplicate_report(message, period: str, summary, rows) -> None:
     await message.answer(
         format_duplicate_report(summary, rows),
@@ -100,6 +121,12 @@ async def _send_accountant_export(message: Message, telegram_user_id: int, *, pe
         await message.answer(str(exc), reply_markup=build_reports_menu_keyboard())
     except Exception as exc:  # noqa: BLE001
         logger.exception('Accountant export build failed')
+        await _notify_owner_export_failure(
+            message.bot,
+            telegram_user_id,
+            export_kind='accountant export',
+            error=str(exc),
+        )
         await message.answer(f'Не удалось собрать архив чеков: {exc}', reply_markup=build_reports_menu_keyboard())
     finally:
         if archive_path is not None:
@@ -259,6 +286,12 @@ async def report_period_callback(callback: CallbackQuery) -> None:
                 await callback.message.edit_text(str(exc), reply_markup=build_reports_menu_keyboard())
             except Exception as exc:  # noqa: BLE001
                 logger.exception('Manager Excel export build failed')
+                await _notify_owner_export_failure(
+                    callback.bot,
+                    callback.from_user.id,
+                    export_kind='manager excel export',
+                    error=str(exc),
+                )
                 await callback.message.edit_text(f'Не удалось собрать Excel-отчет: {exc}', reply_markup=build_reports_menu_keyboard())
             finally:
                 if export_path is not None:
