@@ -22,6 +22,7 @@ class SlowUpdateMiddleware(BaseMiddleware):
             return await handler(event, data)
         finally:
             elapsed_ms = (perf_counter() - started) * 1000
+            self._trace_my_documents_callback(event)
             self._log_non_text_update(event)
             if elapsed_ms < self.threshold_ms:
                 return
@@ -29,6 +30,24 @@ class SlowUpdateMiddleware(BaseMiddleware):
                 "Slow update: %s",
                 self._build_message(event, elapsed_ms),
             )
+
+    def _trace_my_documents_callback(self, event: TelegramObject) -> None:
+        callback_query = None
+        if isinstance(event, Update):
+            callback_query = event.callback_query
+        elif isinstance(event, CallbackQuery):
+            callback_query = event
+        if callback_query is None or not callback_query.data:
+            return
+        if not callback_query.data.startswith('my_documents:'):
+            return
+        self.logger.warning(
+            "My-documents middleware trace: user_id=%s data=%r has_message=%s message_type=%s",
+            callback_query.from_user.id if callback_query.from_user else 0,
+            callback_query.data,
+            callback_query.message is not None,
+            callback_query.message.__class__.__name__ if callback_query.message is not None else None,
+        )
 
     def _log_non_text_update(self, event: TelegramObject) -> None:
         message = None
