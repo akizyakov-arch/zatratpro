@@ -10,3 +10,5 @@ tmp/*
 bot.log
 
 backups/
+storage/
+storage_before_restore_*/
