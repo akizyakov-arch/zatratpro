@@ -18,22 +18,6 @@ NUMERIC_FIXES = str.maketrans({
     ",": ".",
 })
 
-OCR_TEXT_FIXES = str.maketrans({
-    "a": "д",
-    "c": "с",
-    "e": "е",
-    "h": "н",
-    "k": "к",
-    "m": "м",
-    "o": "о",
-    "p": "р",
-    "t": "т",
-    "x": "х",
-    "y": "у",
-    "3": "з",
-    "6": "б",
-})
-
 PLACEHOLDER_ITEM_NAMES = {
     "без названия",
     "товар",
@@ -108,7 +92,6 @@ class DocumentSchema(BaseModel):
     def normalize_document(self) -> "DocumentSchema":
         self.document_type = _detect_document_type(self.document_type, self.raw_text)
         self.items = _sanitize_items(self.items, self.document_type)
-        self.vat_total_amount = _resolve_vat_total_amount(self)
         self.vat_scope = _resolve_vat_scope(self)
         return self
 
@@ -213,46 +196,12 @@ def _amounts_match(left: float, right: float) -> bool:
     return abs(left - right) <= tolerance
 
 
-def _resolve_vat_total_amount(document: DocumentSchema) -> float | None:
-    if document.document_type not in {"cash_receipt", "bso"}:
-        return document.vat_total_amount
-
-    fallback_vat = _extract_receipt_vat_from_text(document.raw_text, total=document.total)
-    current_vat = document.vat_total_amount
-    if current_vat is None:
-        return fallback_vat
-    if document.total is not None and _looks_like_total_instead_of_vat(current_vat, document.total):
-        if fallback_vat is None or _looks_like_total_instead_of_vat(fallback_vat, document.total):
-            return None
-        return fallback_vat
-    if fallback_vat is None:
-        return current_vat
-    if current_vat <= 0:
-        return fallback_vat
-    return current_vat
-
-
-def _looks_like_total_instead_of_vat(vat_amount: float, total: float) -> bool:
-    tolerance = max(0.05, abs(total) * 0.01)
-    return abs(vat_amount - total) <= tolerance
-
-
 def _resolve_vat_scope(document: DocumentSchema) -> str | None:
     labels = {
         normalized
         for normalized in (_normalize_vat_label(item.vat_label) for item in document.items)
         if normalized is not None
     }
-    raw_text = (document.raw_text or "").lower()
-    vat_total = document.vat_total_amount
-
-    if _should_force_mixed_vat_scope(document.document_type, vat_total, labels, raw_text):
-        return "mixed"
-
-    if vat_total is not None and vat_total > 0 and document.document_type in {"cash_receipt", "bso"}:
-        if _contains_no_vat_signal(raw_text):
-            return "mixed"
-        return "document"
 
     if document.vat_scope in ALLOWED_VAT_SCOPES:
         return document.vat_scope
@@ -265,102 +214,9 @@ def _resolve_vat_scope(document: DocumentSchema) -> str | None:
     return "document"
 
 
-
-def _should_force_mixed_vat_scope(
-    document_type: str,
-    vat_total: float | None,
-    labels: set[str],
-    raw_text: str,
-) -> bool:
-    if document_type not in {"cash_receipt", "bso"}:
-        return False
-
-    has_no_vat_signal = _contains_no_vat_signal(raw_text)
-    has_positive_vat = vat_total is not None and vat_total > 0
-
-    if "без ндс" in labels and any(label != "без ндс" for label in labels):
-        return True
-    if has_positive_vat and has_no_vat_signal:
-        return True
-    return False
-
-
-
-def _extract_receipt_vat_from_text(
-    raw_text: str | None,
-    *,
-    total: float | None = None,
-) -> float | None:
-    if not raw_text:
-        return None
-
-    translated = raw_text.lower().replace("ё", "е")
-    compact = re.sub(r"[^а-яa-z0-9%хx.,:\-\s]", " ", translated)
-    compact = re.sub(r"\s+", " ", compact).strip()
-    if not compact:
-        return None
-
-    money_value = r"(?:[0-9]{3,}(?:[\s.][0-9]{3})*(?:[.,][0-9]{1,2})?|[0-9]{1,2}[.,][0-9]{2})"
-    vat_label = r"[нnh][дdаa][сc5]"
-    patterns = (
-        rf"(?:сумм[аоу]?\s+)?(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*[-:=])?(?:\s*\d{{1,2}}\s*[%хx])?(?:\s*[-:=])?\s*({money_value})",
-        rf"({money_value})\s*(?:руб(?:\.|лей)?\s*)?(?:в\s*т\.?\s*ч\.?\s*)?{vat_label}(?:\s*[аб])?(?:\s*\d{{1,2}}\s*[%хx])?",
-    )
-
-    candidates: list[float] = []
-    for pattern in patterns:
-        for match in re.finditer(pattern, compact):
-            value = _coerce_number(match.group(1))
-            if isinstance(value, (int, float)) and value > 0:
-                candidates.append(float(value))
-
-    if not candidates:
-        return None
-
-    unique_candidates: list[float] = []
-    for value in candidates:
-        if not any(abs(value - existing) <= 0.01 for existing in unique_candidates):
-            unique_candidates.append(value)
-
-    if total is not None:
-        non_total_candidates = [
-            value for value in unique_candidates
-            if not _looks_like_total_instead_of_vat(value, total)
-        ]
-        if non_total_candidates:
-            below_total = [value for value in non_total_candidates if value < total]
-            if below_total:
-                if len(below_total) == 1:
-                    return below_total[0]
-                summed = round(sum(below_total), 2)
-                if summed < total:
-                    return summed
-                return max(below_total)
-            return max(non_total_candidates)
-        return None
-
-    if len(unique_candidates) == 1:
-        return unique_candidates[0]
-    return max(unique_candidates)
-
-
 def _normalize_vat_label(value: str | None) -> str | None:
     if value is None:
         return None
     normalized = " ".join(value.strip().split()).lower()
     return normalized or None
 
-
-def _contains_no_vat_signal(raw_text: str) -> bool:
-    translated = raw_text.lower().translate(OCR_TEXT_FIXES).replace("ё", "е")
-    compact = "".join(ch for ch in translated if ch.isalnum())
-    if "безндс" in compact or "суммабезндс" in compact:
-        return True
-
-    spaced = re.sub(r"[^а-я0-9]+", " ", translated)
-    spaced = re.sub(r"\s+", " ", spaced).strip()
-    patterns = (
-        r"бе[зс3]\s{0,3}н[дaа]?[сc5]",
-        r"сумм[аоу]?\s{0,6}бе[зс3]\s{0,3}н[дaа]?[сc5]",
-    )
-    return any(re.search(pattern, spaced) is not None for pattern in patterns)
