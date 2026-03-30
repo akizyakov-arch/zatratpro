@@ -1,4 +1,5 @@
 from functools import lru_cache
+import logging
 from pathlib import Path
 
 from pydantic import Field
@@ -8,6 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parent.parent
 TMP_DIR = BASE_DIR / 'tmp'
 STORAGE_DIR = BASE_DIR / 'storage'
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -53,4 +56,16 @@ def get_settings() -> Settings:
     settings = Settings()
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     settings.document_storage_root.mkdir(parents=True, exist_ok=True)
+
+    if TMP_DIR.resolve() == (BASE_DIR / 'tmp').resolve():
+        logger.warning(
+            'TMP_DIR is using repo-local fallback path: %s. Configure HOST_TMP_DIR mount for safer runtime storage.',
+            TMP_DIR,
+        )
+    if settings.document_storage_root.resolve() == STORAGE_DIR.resolve():
+        logger.warning(
+            'DOCUMENT_STORAGE_ROOT is using repo-local fallback path: %s. Configure DOCUMENT_STORAGE_ROOT or HOST_STORAGE_DIR for safer persistent storage.',
+            settings.document_storage_root,
+        )
+
     return settings
