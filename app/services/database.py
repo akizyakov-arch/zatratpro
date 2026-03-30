@@ -231,6 +231,7 @@ async def _align_runtime_sequences(pool: Pool) -> None:
         ('document_items', 'id'),
         ('document_files', 'id'),
     )
+    highest_stored_document_id = _find_highest_stored_document_id()
     async with pool.acquire() as connection:
         for table_name, column_name in serial_targets:
             sequence_name = await connection.fetchval(
@@ -245,22 +246,47 @@ async def _align_runtime_sequences(pool: Pool) -> None:
                     f"SELECT COALESCE(MAX({column_name}), 0) FROM {table_name}"
                 )
             )
-            if max_id <= 0:
+            effective_max_id = max_id
+            if table_name == 'documents':
+                effective_max_id = max(effective_max_id, highest_stored_document_id)
+            if effective_max_id <= 0:
                 continue
             last_value = int(await connection.fetchval(f"SELECT last_value FROM {sequence_name}"))
-            if last_value >= max_id:
+            if last_value >= effective_max_id:
                 continue
             await connection.execute(
                 "SELECT setval($1::regclass, $2, true)",
                 sequence_name,
-                max_id,
+                effective_max_id,
             )
             logger.warning(
-                "Aligned serial sequence: table=%s column=%s sequence=%s old_last_value=%s new_last_value=%s",
+                "Aligned serial sequence: table=%s column=%s sequence=%s old_last_value=%s new_last_value=%s db_max_id=%s storage_max_document_id=%s",
                 table_name,
                 column_name,
                 sequence_name,
                 last_value,
+                effective_max_id,
                 max_id,
+                highest_stored_document_id if table_name == 'documents' else None,
             )
 
+
+def _find_highest_stored_document_id() -> int:
+    documents_root = get_settings().document_storage_root / 'documents'
+    if not documents_root.exists() or not documents_root.is_dir():
+        return 0
+
+    highest_document_id = 0
+    for company_dir in documents_root.iterdir():
+        if not company_dir.is_dir():
+            continue
+        for document_dir in company_dir.iterdir():
+            if not document_dir.is_dir():
+                continue
+            try:
+                document_id = int(document_dir.name)
+            except ValueError:
+                continue
+            if document_id > highest_document_id:
+                highest_document_id = document_id
+    return highest_document_id

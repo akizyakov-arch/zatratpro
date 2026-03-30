@@ -233,7 +233,20 @@ class DocumentService:
                             was_normalized=source_was_normalized,
                             original_kind=source_original_kind,
                         )
-                        stored_source = self.document_storage.finalize_prepared_source(prepared_source)
+                        try:
+                            stored_source = self.document_storage.finalize_prepared_source(prepared_source)
+                        except FileExistsError:
+                            logger.warning(
+                                "Detected orphan document storage collision during save: company_id=%s document_id=%s storage_key=%s",
+                                project.company_id,
+                                document_id,
+                                prepared_source.storage_key,
+                            )
+                            self.document_storage.delete(
+                                prepared_source.storage_key,
+                                context='orphan-collision-retry',
+                            )
+                            stored_source = self.document_storage.finalize_prepared_source(prepared_source)
                         await connection.execute(
                             """
                             INSERT INTO document_files (
