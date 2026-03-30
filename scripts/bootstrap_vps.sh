@@ -11,7 +11,8 @@ Usage:
     [--env-file /root/zatratpro.env] \
     [--timezone Europe/Moscow] \
     [--backup-schedule "10 3 * * *"] \
-    [--rclone-remote yadisk:zatratpro-backups]
+    [--rclone-remote yadisk:zatratpro-backups] \
+    [--runtime-root /srv/zatratpro]
 
 Required:
   --repo-url         Git repository URL
@@ -23,6 +24,7 @@ Optional:
   --timezone         Timezone to set on the VPS, for example Europe/Moscow
   --backup-schedule  Cron schedule for local backups, default: 10 3 * * *
   --rclone-remote    Optional rclone remote for backup upload
+  --runtime-root     External runtime root, default: /srv/<project-name>
   --help             Show this message
 EOF
 }
@@ -49,6 +51,10 @@ ENV_FILE=""
 TIMEZONE_NAME=""
 BACKUP_SCHEDULE="10 3 * * *"
 RCLONE_REMOTE=""
+RUNTIME_ROOT=""
+HOST_STORAGE_DIR_VALUE=""
+HOST_TMP_DIR_VALUE=""
+HOST_BACKUPS_DIR_VALUE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -80,6 +86,10 @@ while [[ $# -gt 0 ]]; do
       RCLONE_REMOTE="${2:-}"
       shift 2
       ;;
+    --runtime-root)
+      RUNTIME_ROOT="${2:-}"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -94,12 +104,57 @@ require_arg "--repo-url" "$REPO_URL"
 require_arg "--project-dir" "$PROJECT_DIR"
 require_arg "--ref" "$REF"
 
+if [[ -z "$RUNTIME_ROOT" ]]; then
+  RUNTIME_ROOT="/srv/$(basename "$PROJECT_DIR")"
+fi
+
 if [[ -n "$ENV_FILE" ]]; then
   [[ -f "$ENV_FILE" ]] || die "Env file not found: $ENV_FILE"
 fi
 
 log() {
   echo "[bootstrap] $*"
+}
+
+read_env_value() {
+  local file="$1"
+  local key="$2"
+  local line value
+  [[ -f "$file" ]] || return 0
+  line="$(grep -E "^${key}=" "$file" | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 0
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf "%s" "$value"
+}
+
+ensure_env_value() {
+  local file="$1"
+  local key="$2"
+  local default_value="$3"
+  local current_value
+  current_value="$(read_env_value "$file" "$key")"
+  if [[ -n "$current_value" ]]; then
+    printf "%s" "$current_value"
+    return 0
+  fi
+  if grep -Eq "^${key}=" "$file" 2>/dev/null; then
+    sed -i "\|^${key}=|c\${key}=${default_value}" "$file"
+  else
+    printf "\n%s=%s\n" "$key" "$default_value" >> "$file"
+  fi
+  printf "%s" "$default_value"
+}
+
+ensure_runtime_env() {
+  local env_path="${PROJECT_DIR}/.env"
+  [[ -f "$env_path" ]] || touch "$env_path"
+  HOST_STORAGE_DIR_VALUE="$(ensure_env_value "$env_path" HOST_STORAGE_DIR "${RUNTIME_ROOT}/storage")"
+  HOST_TMP_DIR_VALUE="$(ensure_env_value "$env_path" HOST_TMP_DIR "${RUNTIME_ROOT}/tmp")"
+  HOST_BACKUPS_DIR_VALUE="$(ensure_env_value "$env_path" HOST_BACKUPS_DIR "${RUNTIME_ROOT}/backups")"
 }
 
 install_base_packages() {
@@ -186,30 +241,31 @@ prepare_env() {
   if [[ -n "$ENV_FILE" ]]; then
     log "Copying env file into project"
     cp "$ENV_FILE" .env
-    return
-  fi
-
-  if [[ ! -f .env && -f .env.example ]]; then
+  elif [[ ! -f .env && -f .env.example ]]; then
     log "Creating .env from .env.example"
     cp .env.example .env
     log "Fill .env before using the bot in production"
   fi
+
+  ensure_runtime_env
 }
 
 prepare_directories() {
   cd "$PROJECT_DIR"
-  log "Creating runtime directories"
-  mkdir -p tmp storage backups/db backups/storage
-  chmod +x scripts/backup_zatratpro.sh || true
+  log "Creating runtime directories under ${RUNTIME_ROOT}"
+  mkdir -p "$HOST_TMP_DIR_VALUE" "$HOST_STORAGE_DIR_VALUE" "$HOST_BACKUPS_DIR_VALUE/db" "$HOST_BACKUPS_DIR_VALUE/storage"
+  chmod +x scripts/backup_zatratpro.sh scripts/restore_zatratpro.sh || true
 }
 
 install_backup_cron() {
   cd "$PROJECT_DIR"
-  local cron_line
+  local cron_line backup_log
+  backup_log="${HOST_BACKUPS_DIR_VALUE}/backup.log"
+  mkdir -p "$(dirname "$backup_log")"
   if [[ -n "$RCLONE_REMOTE" ]]; then
-    cron_line="${BACKUP_SCHEDULE} cd ${PROJECT_DIR} && RCLONE_REMOTE=\"${RCLONE_REMOTE}\" /bin/bash scripts/backup_zatratpro.sh >> ${PROJECT_DIR}/backups/backup.log 2>&1"
+    cron_line="${BACKUP_SCHEDULE} cd ${PROJECT_DIR} && RCLONE_REMOTE=\"${RCLONE_REMOTE}\" /bin/bash scripts/backup_zatratpro.sh >> ${backup_log} 2>&1"
   else
-    cron_line="${BACKUP_SCHEDULE} cd ${PROJECT_DIR} && /bin/bash scripts/backup_zatratpro.sh >> ${PROJECT_DIR}/backups/backup.log 2>&1"
+    cron_line="${BACKUP_SCHEDULE} cd ${PROJECT_DIR} && /bin/bash scripts/backup_zatratpro.sh >> ${backup_log} 2>&1"
   fi
 
   log "Installing backup cron job"
