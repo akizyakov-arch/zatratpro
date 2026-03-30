@@ -566,22 +566,28 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
     await callback.answer()
     caption = 'Исходный файл документа'
     filename = source.original_filename or file_path.name
-    mime_type = (source.mime_type or '').lower()
+    file_size = None
+    try:
+        file_size = file_path.stat().st_size
+    except OSError:
+        pass
 
-    if mime_type.startswith('image/'):
-        try:
-            await callback.message.answer_photo(FSInputFile(file_path, filename=filename), caption=caption)
-            return
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                'My-documents photo open failed, falling back to document send: document_id=%s storage_key=%s mime_type=%s file_ext=%s',
-                document_id,
-                source.storage_key,
-                source.mime_type,
-                source.file_ext,
-            )
-
+    logger.info(
+        'My-documents open resolved: document_id=%s storage_key=%s mime_type=%s file_ext=%s path=%s size=%s',
+        document_id,
+        source.storage_key,
+        source.mime_type,
+        source.file_ext,
+        file_path,
+        file_size,
+    )
     await callback.message.answer_document(FSInputFile(file_path, filename=filename), caption=caption)
+    logger.info(
+        'My-documents open sent as document: document_id=%s storage_key=%s filename=%s',
+        document_id,
+        source.storage_key,
+        filename,
+    )
 
 
 @router.callback_query(F.data.startswith(MY_DOCUMENTS_ITEMS_PREFIX))
