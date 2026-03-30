@@ -57,11 +57,11 @@ tar -tzf "backups/storage/$LATEST_STORAGE" | head
 
 ## Полное восстановление через restore-скрипт
 
-Восстановление последних backup-файлов:
+Безопасное восстановление последних backup-файлов:
 
 ```bash
 cd ~/zatratpro
-bash scripts/restore_zatratpro.sh
+bash scripts/restore_zatratpro.sh --keep-old-storage
 ```
 
 Только БД:
@@ -85,6 +85,13 @@ cd ~/zatratpro
 bash scripts/restore_zatratpro.sh --keep-old-storage
 ```
 
+Разрушительное восстановление с явной заменой текущего `storage`:
+
+```bash
+cd ~/zatratpro
+bash scripts/restore_zatratpro.sh --replace-storage
+```
+
 Что делает скрипт:
 
 1. Поднимает БД, если контейнер еще не запущен.
@@ -92,7 +99,7 @@ bash scripts/restore_zatratpro.sh --keep-old-storage
 3. Останавливает бота.
 4. Пересоздает боевую БД.
 5. Восстанавливает dump.
-6. Восстанавливает `storage`, если архив есть и restore storage не отключен.
+6. Восстанавливает `storage`, если архив есть и выбран безопасный режим `--keep-old-storage` или явный `--replace-storage`.
 7. Поднимает бота обратно.
 
 ## Полный reset и restore вручную
@@ -116,8 +123,15 @@ docker compose up -d --build
 
 ```bash
 cd ~/zatratpro
-bash scripts/restore_zatratpro.sh
+bash scripts/restore_zatratpro.sh --keep-old-storage
 ```
+
+
+Важно:
+
+- если `storage/` уже существует, restore-скрипт теперь требует явный выбор:
+  - `--keep-old-storage` для безопасного переноса текущего каталога;
+  - `--replace-storage` для сознательной разрушительной замены.
 
 ## Проверка после restore
 

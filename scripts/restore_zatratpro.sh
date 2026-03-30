@@ -14,6 +14,7 @@ DB_FILE="${DB_RESTORE_FILE:-}"
 STORAGE_FILE="${STORAGE_RESTORE_FILE:-}"
 RESTORE_STORAGE=true
 KEEP_OLD_STORAGE=false
+REPLACE_STORAGE=false
 
 
 usage() {
@@ -24,7 +25,8 @@ Options:
   --db-file NAME         Restore a specific DB dump from backups/db
   --storage-file NAME    Restore a specific storage archive from backups/storage
   --db-only              Restore only the database
-  --keep-old-storage     Rename the current storage dir instead of replacing it in-place
+  --keep-old-storage     Rename the current storage dir before restore (safe mode)
+  --replace-storage      Explicitly delete the current storage dir before restore
   --help                 Show this help
 
 Environment overrides:
@@ -55,6 +57,10 @@ while [[ $# -gt 0 ]]; do
       KEEP_OLD_STORAGE=true
       shift
       ;;
+    --replace-storage)
+      REPLACE_STORAGE=true
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -67,6 +73,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+
+if [[ "${KEEP_OLD_STORAGE}" == "true" && "${REPLACE_STORAGE}" == "true" ]]; then
+  echo "[restore] use only one of --keep-old-storage or --replace-storage" >&2
+  exit 1
+fi
 
 pick_latest() {
   local pattern=$1
@@ -130,6 +141,14 @@ if [[ "${RESTORE_STORAGE}" == "true" && -n "${STORAGE_FILE}" ]]; then
   tar -tzf "${STORAGE_BACKUP_DIR}/${STORAGE_FILE}" >/dev/null
 fi
 
+if [[ "${RESTORE_STORAGE}" == "true" && -n "${STORAGE_FILE}" && -d "${STORAGE_DIR}" ]]; then
+  if [[ "${KEEP_OLD_STORAGE}" != "true" && "${REPLACE_STORAGE}" != "true" ]]; then
+    echo "[restore] current storage exists: ${STORAGE_DIR}" >&2
+    echo "[restore] pass --keep-old-storage for safe restore or --replace-storage for destructive replace" >&2
+    exit 1
+  fi
+fi
+
 echo "[restore] stopping bot"
 docker compose stop "${BOT_SERVICE}" || true
 
@@ -140,13 +159,18 @@ echo "[restore] restoring database"
 docker exec -i "${DB_CONTAINER}" sh -lc "pg_restore -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" --no-owner --no-privileges /backups/db/${DB_FILE}"
 
 if [[ "${RESTORE_STORAGE}" == "true" && -n "${STORAGE_FILE}" ]]; then
-  if [[ -d "${STORAGE_DIR}" && "${KEEP_OLD_STORAGE}" == "true" ]]; then
-    backup_storage_dir="${ROOT_DIR}/storage_before_restore_${TIMESTAMP}"
-    echo "[restore] moving current storage -> ${backup_storage_dir}"
-    mv "${STORAGE_DIR}" "${backup_storage_dir}"
-  else
-    echo "[restore] replacing current storage"
-    rm -rf "${STORAGE_DIR}"
+  if [[ -d "${STORAGE_DIR}" ]]; then
+    if [[ "${KEEP_OLD_STORAGE}" == "true" ]]; then
+      backup_storage_dir="${ROOT_DIR}/storage_before_restore_${TIMESTAMP}"
+      echo "[restore] moving current storage -> ${backup_storage_dir}"
+      mv "${STORAGE_DIR}" "${backup_storage_dir}"
+    elif [[ "${REPLACE_STORAGE}" == "true" ]]; then
+      echo "[restore] replacing current storage"
+      rm -rf "${STORAGE_DIR}"
+    else
+      echo "[restore] refusing to overwrite storage without --keep-old-storage or --replace-storage" >&2
+      exit 1
+    fi
   fi
   mkdir -p "${ROOT_DIR}"
   echo "[restore] restoring storage"
