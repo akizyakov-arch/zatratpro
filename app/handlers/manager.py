@@ -564,12 +564,24 @@ async def my_document_open_callback(callback: CallbackQuery) -> None:
         await callback.answer('Файл документа не найден в storage.', show_alert=True)
         return
     await callback.answer()
-    input_file = FSInputFile(file_path, filename=source.original_filename or file_path.name)
     caption = 'Исходный файл документа'
-    if (source.mime_type or '').startswith('image/'):
-        await callback.message.answer_photo(input_file, caption=caption)
-    else:
-        await callback.message.answer_document(input_file, caption=caption)
+    filename = source.original_filename or file_path.name
+    mime_type = (source.mime_type or '').lower()
+
+    if mime_type.startswith('image/'):
+        try:
+            await callback.message.answer_photo(FSInputFile(file_path, filename=filename), caption=caption)
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                'My-documents photo open failed, falling back to document send: document_id=%s storage_key=%s mime_type=%s file_ext=%s',
+                document_id,
+                source.storage_key,
+                source.mime_type,
+                source.file_ext,
+            )
+
+    await callback.message.answer_document(FSInputFile(file_path, filename=filename), caption=caption)
 
 
 @router.callback_query(F.data.startswith(MY_DOCUMENTS_ITEMS_PREFIX))
