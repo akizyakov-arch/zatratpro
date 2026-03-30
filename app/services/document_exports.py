@@ -41,6 +41,18 @@ class AccountantArchiveRow:
     duplicate_status: str
 
 
+@dataclass(slots=True)
+class AccountantArchiveItemRow:
+    document_id: int
+    line_no: int
+    name: str | None
+    quantity: Decimal | None
+    price: Decimal | None
+    line_total: Decimal | None
+    vat_label: str | None
+    vat_amount: Decimal | None
+
+
 class DocumentExportService:
     def __init__(self, document_storage: DocumentStorageService | None = None) -> None:
         self.company_service = CompanyService()
@@ -77,11 +89,14 @@ class DocumentExportService:
         if not export_rows:
             raise CompanyAccessError('Нет документов со сканами для выгрузки.')
 
+        document_rows = [(_row, archive_name) for _row, _source_path, archive_name in export_rows]
+        item_rows = await self._list_document_item_rows([row.document_id for row, _archive_name in document_rows])
+
         archive_path = TMP_DIR / f'accountant-export-{uuid4()}.zip'
         with ZipFile(archive_path, 'w', compression=ZIP_DEFLATED) as archive:
             for _row, source_path, archive_name in export_rows:
                 archive.write(source_path, arcname=archive_name)
-            manifest = _build_manifest([(_row, archive_name) for _row, _source_path, archive_name in export_rows])
+            manifest = _build_manifest(document_rows, item_rows)
             archive.writestr('manifest.xlsx', manifest)
 
         filename = f'accountant_documents_company_{company.id}_{file_label}_{datetime.now().strftime("%Y%m%d_%H%M")}.zip'
@@ -171,6 +186,41 @@ class DocumentExportService:
             )
         return result
 
+    async def _list_document_item_rows(self, document_ids: list[int]) -> list[AccountantArchiveItemRow]:
+        if not document_ids:
+            return []
+        pool = get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                '''
+                SELECT di.document_id,
+                       di.line_no,
+                       di.name,
+                       di.quantity,
+                       di.price,
+                       di.line_total,
+                       di.vat_label,
+                       di.vat_amount
+                FROM document_items di
+                WHERE di.document_id = ANY($1::bigint[])
+                ORDER BY di.document_id, di.line_no
+                ''',
+                document_ids,
+            )
+        return [
+            AccountantArchiveItemRow(
+                document_id=row['document_id'],
+                line_no=row['line_no'],
+                name=row['name'],
+                quantity=row['quantity'],
+                price=row['price'],
+                line_total=row['line_total'],
+                vat_label=row['vat_label'],
+                vat_amount=row['vat_amount'],
+            )
+            for row in rows
+        ]
+
 
 def _resolve_export_period(period: str | None, custom_year: int | None) -> tuple[date | None, date | None, str, str]:
     now = datetime.now(timezone.utc)
@@ -221,11 +271,11 @@ def _resolve_export_ext(row: AccountantArchiveRow, source_path: Path) -> str:
     return ext.lower()
 
 
-def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
+def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]], item_rows: list[AccountantArchiveItemRow]) -> bytes:
     workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = 'Документы'
-    sheet.append([
+    document_sheet = workbook.active
+    document_sheet.title = 'Документы'
+    document_sheet.append([
         'ID документа',
         'Проект',
         'Контрагент',
@@ -242,8 +292,14 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
         'Файл в архиве',
         'Открыть файл',
     ])
+
+    document_sheet_rows: dict[int, int] = {}
+    items_by_document: dict[int, list[AccountantArchiveItemRow]] = {}
+    for item_row in item_rows:
+        items_by_document.setdefault(item_row.document_id, []).append(item_row)
+
     for row, archive_name in rows:
-        sheet.append([
+        document_sheet.append([
             row.document_id,
             row.project_name,
             row.vendor or '',
@@ -260,10 +316,73 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
             archive_name,
             'Открыть файл',
         ])
-        link_cell = sheet.cell(row=sheet.max_row, column=15)
+        document_sheet_rows[row.document_id] = document_sheet.max_row
+        link_cell = document_sheet.cell(row=document_sheet.max_row, column=15)
         link_cell.hyperlink = archive_name
         link_cell.style = 'Hyperlink'
 
+    _autosize_sheet(document_sheet)
+
+    positions_sheet = workbook.create_sheet('Позиции')
+    positions_sheet.append([
+        'ID документа',
+        'Проект',
+        'Контрагент',
+        'ИНН контрагента',
+        'Номер документа',
+        'Дата документа',
+        '№ строки',
+        'Позиция',
+        'Количество',
+        'Цена',
+        'Сумма строки',
+        'Ставка НДС',
+        'НДС по строке',
+        'Сумма документа',
+        'Файл в архиве',
+        'Открыть файл',
+        'Открыть документ',
+    ])
+
+    for row, archive_name in rows:
+        document_row_no = document_sheet_rows[row.document_id]
+        for item_row in items_by_document.get(row.document_id, []):
+            positions_sheet.append([
+                row.document_id,
+                row.project_name,
+                row.vendor or '',
+                row.vendor_inn or '',
+                row.document_number or '',
+                _format_date(row.document_date),
+                item_row.line_no,
+                item_row.name or '',
+                _excel_decimal(item_row.quantity),
+                _excel_decimal(item_row.price),
+                _excel_decimal(item_row.line_total),
+                item_row.vat_label or '',
+                _excel_decimal(item_row.vat_amount),
+                float(row.total_amount or 0),
+                archive_name,
+                'Открыть файл',
+                'Открыть документ',
+            ])
+            current_row = positions_sheet.max_row
+            file_link_cell = positions_sheet.cell(row=current_row, column=16)
+            file_link_cell.hyperlink = archive_name
+            file_link_cell.style = 'Hyperlink'
+            document_link_cell = positions_sheet.cell(row=current_row, column=17)
+            document_link_cell.hyperlink = f"#'Документы'!A{document_row_no}"
+            document_link_cell.style = 'Hyperlink'
+
+    _autosize_sheet(positions_sheet)
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def _autosize_sheet(sheet) -> None:
     for column_cells in sheet.columns:
         max_length = 0
         column_letter = column_cells[0].column_letter
@@ -273,10 +392,11 @@ def _build_manifest(rows: list[tuple[AccountantArchiveRow, str]]) -> bytes:
                 max_length = len(value)
         sheet.column_dimensions[column_letter].width = min(max_length + 2, 40)
 
-    buffer = BytesIO()
-    workbook.save(buffer)
-    buffer.seek(0)
-    return buffer.getvalue()
+
+def _excel_decimal(value: Decimal | None) -> float | str:
+    if value is None:
+        return ''
+    return float(value)
 
 
 def _format_date(value: date | datetime | None) -> str:
