@@ -2,6 +2,36 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+load_path_override() {
+  local key=$1
+  local env_file="${ROOT_DIR}/.env"
+  local line value
+  if [[ -n "${!key:-}" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${env_file}" ]]; then
+    return 0
+  fi
+  line="$(grep -E "^${key}=" "${env_file}" | tail -n 1 || true)"
+  if [[ -z "${line}" ]]; then
+    return 0
+  fi
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  if [[ -n "${value}" ]]; then
+    printf -v "${key}" '%s' "${value}"
+    export "${key}"
+  fi
+}
+
+load_path_override HOST_BACKUPS_DIR
+load_path_override HOST_STORAGE_DIR
+load_path_override HOST_TMP_DIR
+
 BACKUP_ROOT="${HOST_BACKUPS_DIR:-${ROOT_DIR}/backups}"
 DB_BACKUP_DIR="${BACKUP_ROOT}/db"
 STORAGE_BACKUP_DIR="${BACKUP_ROOT}/storage"
