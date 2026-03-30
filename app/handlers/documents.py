@@ -15,6 +15,7 @@ from app.services.document_processing import (
     DocumentProjectSelectionFailure,
     DocumentUploadInput,
 )
+from app.services.owner_alerts import notify_owner_critical
 from app.state.pending_actions import set_pending_action
 from app.handlers.common import ensure_user_context, main_menu_markup_for_user
 from app.ui.main_menu import build_main_menu_keyboard
@@ -241,6 +242,67 @@ def _duplicate_save_failure_message(failure: DocumentDuplicateSaveFailure) -> st
     return f'Не удалось сохранить документ: {failure.details or "неизвестная ошибка"}'
 
 
+def _is_critical_preview_failure(failure: DocumentPreviewFailure) -> bool:
+    return failure.reason in {'service_error', 'unexpected'}
+
+
+def _is_critical_selection_failure(failure: DocumentProjectSelectionFailure) -> bool:
+    return failure.reason == 'unexpected'
+
+
+def _is_critical_duplicate_save_failure(failure: DocumentDuplicateSaveFailure) -> bool:
+    return failure.reason == 'unexpected'
+
+
+async def _notify_owner_preview_failure(message: Message, failure: DocumentPreviewFailure) -> None:
+    if message.from_user is None:
+        return
+    await notify_owner_critical(
+        message.bot,
+        title='document-preview-failure',
+        lines=(
+            f'user_id={message.from_user.id}',
+            f'stage={failure.stage}',
+            f'reason={failure.reason}',
+            f'details={failure.details or "-"}',
+            f'file_name={message.document.file_name if message.document is not None else "photo"}',
+            f'mime_type={message.document.mime_type if message.document is not None else "image/*"}',
+        ),
+    )
+
+
+async def _notify_owner_selection_failure(callback: CallbackQuery, failure: DocumentProjectSelectionFailure) -> None:
+    if callback.from_user is None:
+        return
+    await notify_owner_critical(
+        callback.bot,
+        title='document-save-failure',
+        lines=(
+            f'user_id={callback.from_user.id}',
+            f'callback_data={callback.data or "-"}',
+            f'stage={failure.stage}',
+            f'reason={failure.reason}',
+            f'details={failure.details or "-"}',
+        ),
+    )
+
+
+async def _notify_owner_duplicate_save_failure(callback: CallbackQuery, failure: DocumentDuplicateSaveFailure) -> None:
+    if callback.from_user is None:
+        return
+    await notify_owner_critical(
+        callback.bot,
+        title='duplicate-save-failure',
+        lines=(
+            f'user_id={callback.from_user.id}',
+            f'callback_data={callback.data or "-"}',
+            f'stage={failure.stage}',
+            f'reason={failure.reason}',
+            f'details={failure.details or "-"}',
+        ),
+    )
+
+
 async def _get_access_context_or_reply(
     message: Message,
     access_context: AccessContext | None = None,
@@ -327,6 +389,8 @@ async def _process_upload_preview(
 
     if isinstance(preview_screen_result, DocumentPreviewFailure):
         await message.answer(_preview_failure_message(preview_screen_result), reply_markup=menu_markup)
+        if _is_critical_preview_failure(preview_screen_result):
+            await _notify_owner_preview_failure(message, preview_screen_result)
         return
     if isinstance(preview_screen_result, DocumentPreviewProjectOptionsFailure):
         await message.answer(_preview_project_options_failure_message(preview_screen_result), reply_markup=menu_markup)
@@ -424,6 +488,8 @@ async def process_project_selection(callback: CallbackQuery, access_context: Acc
     )
     if isinstance(selection_result, DocumentProjectSelectionFailure):
         await callback.message.answer(_project_selection_failure_message(selection_result), reply_markup=menu_markup)
+        if _is_critical_selection_failure(selection_result):
+            await _notify_owner_selection_failure(callback, selection_result)
         return
     if isinstance(selection_result, DocumentProjectSelectionDuplicate):
         await callback.message.answer(
@@ -462,6 +528,8 @@ async def duplicate_save_callback(callback: CallbackQuery, access_context: Acces
     )
     if isinstance(save_result, DocumentDuplicateSaveFailure):
         await callback.message.answer(_duplicate_save_failure_message(save_result), reply_markup=menu_markup)
+        if _is_critical_duplicate_save_failure(save_result):
+            await _notify_owner_duplicate_save_failure(callback, save_result)
         return
 
     duplicate_message = {
