@@ -189,6 +189,16 @@ install_docker() {
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
+install_rclone() {
+  if command -v rclone >/dev/null 2>&1; then
+    log "rclone already installed"
+    return
+  fi
+
+  log "Installing rclone"
+  curl -fsSL https://rclone.org/install.sh | bash
+}
+
 enable_services() {
   log "Enabling docker and cron"
   systemctl enable --now docker
@@ -293,6 +303,7 @@ run_deploy() {
 
 install_base_packages
 install_docker
+install_rclone
 enable_services
 configure_timezone
 prepare_repo

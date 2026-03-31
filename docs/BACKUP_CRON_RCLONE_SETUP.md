@@ -49,6 +49,16 @@ systemctl enable --now cron
 
 ## 2. Установить rclone на VPS
 
+Если сервер поднимался через `scripts/bootstrap_vps.sh`, бинарь `rclone` уже установлен.
+
+Проверка:
+
+```bash
+rclone version
+```
+
+Если сервер поднимался вручную и `rclone` еще не установлен:
+
 ```bash
 curl https://rclone.org/install.sh | sudo bash
 rclone version

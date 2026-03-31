@@ -52,7 +52,7 @@
 
 - `scripts/bootstrap_vps.sh`
   - первичный bootstrap нового VPS
-  - ставит базовые пакеты, Docker, cron
+  - ставит базовые пакеты, Docker, cron, rclone
   - клонирует repo
   - создает внешние runtime-каталоги
   - дописывает `HOST_*` в `.env`, если их еще нет
@@ -123,7 +123,8 @@ sudo bash scripts/bootstrap_vps.sh \
 Важно:
 
 - `.env` должен уже лежать на VPS, например `/root/zatratpro.env`
-- `rclone` remote сам bootstrap-скрипт не настраивает, только использует, если он уже подготовлен
+- bootstrap-скрипт ставит бинарь `rclone`, но сам `remote` не настраивает
+- `rclone` remote все равно нужно подготовить отдельно через `rclone config`
 
 ### Вариант 2. Ручная подготовка
 
