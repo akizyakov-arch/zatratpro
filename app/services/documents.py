@@ -76,7 +76,6 @@ class DuplicateCheckResult:
             for value in (
                 self.fields.document_date,
                 self.fields.total_amount,
-                self.fields.vendor_key,
             )
         )
 
@@ -359,7 +358,7 @@ class DocumentService:
             str(fields.total_amount) if fields.total_amount is not None else None,
             fields.vendor_key,
             all(value is not None for value in (fields.document_number, fields.document_date, fields.total_amount, fields.vendor_key)),
-            all(value is not None for value in (fields.document_date, fields.total_amount, fields.vendor_key)),
+            all(value is not None for value in (fields.document_date, fields.total_amount)),
         )
 
         pool = get_pool()
@@ -390,6 +389,23 @@ class DocumentService:
                     total_amount=fields.total_amount,
                     vendor_key=fields.vendor_key,
                 )
+                if duplicate_document_id is not None:
+                    return DuplicateCheckResult(
+                        status=DUPLICATE_STATUS_PROBABLE,
+                        duplicate_document_id=duplicate_document_id,
+                        fields=fields,
+                    )
+
+            if all(value is not None for value in (fields.document_date, fields.total_amount)):
+                duplicate_document_id = None
+                if fields.vendor_key is None:
+                    duplicate_document_id = await self._find_relaxed_probable_duplicate_document(
+                        connection=connection,
+                        company_id=project.company_id,
+                        document_type=document.document_type,
+                        document_date=fields.document_date,
+                        total_amount=fields.total_amount,
+                    )
                 if duplicate_document_id is not None:
                     return DuplicateCheckResult(
                         status=DUPLICATE_STATUS_PROBABLE,
@@ -648,6 +664,31 @@ class DocumentService:
             document_date,
             total_amount,
             vendor_key,
+        )
+
+    async def _find_relaxed_probable_duplicate_document(
+        self,
+        connection,
+        company_id: int,
+        document_type: str,
+        document_date: datetime,
+        total_amount: Decimal,
+    ) -> int | None:
+        return await connection.fetchval(
+            """
+            SELECT d.id
+            FROM documents d
+            WHERE d.company_id = $1
+              AND d.document_type = $2
+              AND d.document_date = $3
+              AND d.total_amount = $4
+            ORDER BY d.id DESC
+            LIMIT 1
+            """,
+            company_id,
+            document_type,
+            document_date,
+            total_amount,
         )
 
 
