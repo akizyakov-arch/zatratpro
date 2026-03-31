@@ -35,36 +35,47 @@ def format_document_preview(document: DocumentSchema) -> str:
     currency_display = _format_currency(document.currency)
     lines = [title]
 
+    requisites: list[str] = []
     number = document.external_document_number or document.incoming_number
     if number:
-        lines.append(f"Номер: {number}")
+        requisites.append(f"Номер: {number}")
     if document.date:
-        lines.append(f"Дата: {document.date}")
+        requisites.append(f"Дата: {document.date}")
+    _append_section(lines, "[РЕКВИЗИТЫ]", requisites)
+
+    counterparty: list[str] = []
     if document.vendor:
-        lines.append("")
-        lines.append(f"Поставщик: {document.vendor}")
+        counterparty.append(f"Поставщик: {document.vendor}")
     if document.vendor_inn:
-        lines.append(f"ИНН: {document.vendor_inn}")
+        counterparty.append(f"ИНН: {document.vendor_inn}")
     if document.vendor_kpp:
-        lines.append(f"КПП: {document.vendor_kpp}")
+        counterparty.append(f"КПП: {document.vendor_kpp}")
+    _append_section(lines, "[КОНТРАГЕНТ]", counterparty)
 
     items = [item for item in document.items if _item_has_value(item)]
     if items:
-        lines.append("")
-        lines.append("Состав документа:")
-        for item in items:
-            lines.append(_format_item(document.document_type, item, currency_display))
+        item_lines: list[str] = []
+        for index, item in enumerate(items, start=1):
+            item_lines.append(f"{index}. {_format_item(document.document_type, item, currency_display)}")
+            if index != len(items):
+                item_lines.append("")
+        _append_section(lines, f"[ПОЗИЦИИ: {len(items)}]", item_lines)
 
+    summary_lines: list[str] = []
     if document.total is not None:
-        lines.append("")
-        lines.append(f"Итого: {_format_amount(document.total)} {currency_display}")
-
-    vat_lines = _format_vat_lines(document, currency_display)
-    if vat_lines:
-        lines.append("")
-        lines.extend(vat_lines)
+        summary_lines.append(f"Итого: {_format_amount(document.total)} {currency_display}")
+    summary_lines.extend(_format_vat_lines(document, currency_display))
+    _append_section(lines, "[ИТОГИ]", summary_lines)
 
     return "\n".join(lines).strip()
+
+
+def _append_section(lines: list[str], title: str, body: list[str]) -> None:
+    if not body:
+        return
+    lines.append("")
+    lines.append(title)
+    lines.extend(body)
 
 
 def chunk_message(text: str, limit: int = 3900) -> Iterable[str]:
