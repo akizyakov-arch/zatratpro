@@ -60,6 +60,7 @@ rclone version
 Если сервер поднимался вручную и `rclone` еще не установлен:
 
 ```bash
+apt install -y unzip
 curl https://rclone.org/install.sh | sudo bash
 rclone version
 ```

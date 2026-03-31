@@ -160,7 +160,7 @@ ensure_runtime_env() {
 install_base_packages() {
   log "Installing base packages"
   apt-get update -y
-  apt-get install -y ca-certificates curl gnupg git cron lsb-release
+  apt-get install -y ca-certificates curl gnupg git cron lsb-release unzip
 }
 
 install_docker() {
@@ -196,6 +196,7 @@ install_rclone() {
   fi
 
   log "Installing rclone"
+  apt-get install -y unzip
   curl -fsSL https://rclone.org/install.sh | bash
 }
 
