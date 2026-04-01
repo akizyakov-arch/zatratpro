@@ -1,7 +1,7 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 
-MAIN_MENU_TEXT = "Главное меню ZATRATPRO."
+MAIN_MENU_TEXT = "Главное меню FINOPS."
 
 
 MENU_BUTTONS = {
