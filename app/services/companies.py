@@ -93,30 +93,33 @@ class UserContext:
 class CompanyService:
     async def ensure_platform_user(self, telegram_user: User) -> int:
         pool = get_pool()
+        async with pool.acquire() as connection:
+            return await self._ensure_platform_user_with_connection(connection, telegram_user)
+
+    async def _ensure_platform_user_with_connection(self, connection, telegram_user: User) -> int:
         settings = get_settings()
         system_role = "owner" if telegram_user.id == settings.bot_owner_telegram_id and settings.bot_owner_telegram_id else "user"
-        async with pool.acquire() as connection:
-            return await connection.fetchval(
-                """
-                INSERT INTO users (telegram_id, username, first_name, last_name, system_role)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (telegram_id) DO UPDATE
-                SET username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name,
-                    last_name = EXCLUDED.last_name,
-                    system_role = CASE
-                        WHEN EXCLUDED.system_role = 'owner' THEN 'owner'
-                        ELSE users.system_role
-                    END,
-                    updated_at = NOW()
-                RETURNING id
-                """,
-                telegram_user.id,
-                telegram_user.username,
-                telegram_user.first_name,
-                telegram_user.last_name,
-                system_role,
-            )
+        return await connection.fetchval(
+            """
+            INSERT INTO users (telegram_id, username, first_name, last_name, system_role)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (telegram_id) DO UPDATE
+            SET username = EXCLUDED.username,
+                first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
+                system_role = CASE
+                    WHEN EXCLUDED.system_role = 'owner' THEN 'owner'
+                    ELSE users.system_role
+                END,
+                updated_at = NOW()
+            RETURNING id
+            """,
+            telegram_user.id,
+            telegram_user.username,
+            telegram_user.first_name,
+            telegram_user.last_name,
+            system_role,
+        )
 
     async def is_platform_owner(self, telegram_user_id: int) -> bool:
         settings = get_settings()
@@ -230,7 +233,6 @@ class CompanyService:
                 return await self._insert_invite(connection, company.id, role, inviter_id)
 
     async def join_company(self, telegram_user: User, code: str) -> Company:
-        await self.ensure_platform_user(telegram_user)
         normalized_code = code.strip().upper()
         if not normalized_code:
             raise CompanyAccessError("Invite-код не должен быть пустым.")
@@ -260,7 +262,7 @@ class CompanyService:
                 if invite is None:
                     raise CompanyAccessError("Invite-код недействителен или уже использован.")
 
-                user_id = await self._get_user_id_by_telegram_id(connection, telegram_user.id)
+                user_id = await self._ensure_platform_user_with_connection(connection, telegram_user)
                 active_memberships = await connection.fetch(
                     """
                     SELECT cm.company_id, cm.role

@@ -3,7 +3,34 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.services.access import AccessService
-from app.services.companies import CompanyService
+from app.services.companies import CompanyAccessError, CompanyService
+
+
+class _Acquire:
+    def __init__(self, connection) -> None:
+        self._connection = connection
+
+    async def __aenter__(self):
+        return self._connection
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _Transaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _Pool:
+    def __init__(self, connection) -> None:
+        self._connection = connection
+
+    def acquire(self):
+        return _Acquire(self._connection)
 
 
 class AccessBootstrapTests(unittest.IsolatedAsyncioTestCase):
@@ -34,6 +61,22 @@ class AccessBootstrapTests(unittest.IsolatedAsyncioTestCase):
         service = CompanyService()
         with patch('app.services.companies.get_settings', return_value=SimpleNamespace(bot_owner_telegram_id=777)):
             self.assertTrue(await service.is_platform_owner(777))
+
+    async def test_invalid_invite_does_not_persist_user(self) -> None:
+        service = CompanyService()
+        telegram_user = SimpleNamespace(id=111, username='tester', first_name='Test', last_name='User')
+        connection = SimpleNamespace(
+            execute=AsyncMock(),
+            fetchrow=AsyncMock(return_value=None),
+            fetchval=AsyncMock(),
+        )
+        connection.transaction = lambda: _Transaction()
+
+        with patch('app.services.companies.get_pool', return_value=_Pool(connection)):
+            with self.assertRaises(CompanyAccessError):
+                await service.join_company(telegram_user, 'BADCODE')
+
+        connection.fetchval.assert_not_awaited()
 
 
 if __name__ == '__main__':
