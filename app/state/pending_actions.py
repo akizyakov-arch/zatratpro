@@ -1,4 +1,10 @@
+import json
 from dataclasses import dataclass, field
+from datetime import timedelta
+
+from app.services.database import get_pool
+
+PENDING_ACTION_TTL = timedelta(minutes=15)
 
 
 @dataclass(slots=True)
@@ -7,16 +13,25 @@ class PendingAction:
     payload: dict[str, str | int] = field(default_factory=dict)
 
 
-_pending_actions: dict[int, PendingAction] = {}
+async def set_pending_action(telegram_user_id: int, action: str, payload: dict[str, str | int] | None = None) -> None:
+    async with get_pool().acquire() as connection:
+        await connection.execute('DELETE FROM pending_actions WHERE expires_at <= NOW()')
+        await connection.execute(
+            """INSERT INTO pending_actions (telegram_user_id, action, payload, expires_at)
+               VALUES ($1,$2,$3::jsonb,NOW()+$4::interval)
+               ON CONFLICT (telegram_user_id) DO UPDATE SET action=EXCLUDED.action,
+               payload=EXCLUDED.payload, expires_at=EXCLUDED.expires_at""",
+            telegram_user_id, action, json.dumps(payload or {}), PENDING_ACTION_TTL,
+        )
 
 
-def set_pending_action(telegram_user_id: int, action: str, payload: dict[str, str | int] | None = None) -> None:
-    _pending_actions[telegram_user_id] = PendingAction(action=action, payload=payload or {})
-
-
-def get_pending_action(telegram_user_id: int) -> PendingAction | None:
-    return _pending_actions.get(telegram_user_id)
-
-
-def pop_pending_action(telegram_user_id: int) -> PendingAction | None:
-    return _pending_actions.pop(telegram_user_id, None)
+async def pop_pending_action(telegram_user_id: int) -> PendingAction | None:
+    # A single DELETE RETURNING consumes an action exactly once under concurrency.
+    async with get_pool().acquire() as connection:
+        row = await connection.fetchrow(
+            'DELETE FROM pending_actions WHERE telegram_user_id=$1 RETURNING action,payload,expires_at > NOW() AS valid',
+            telegram_user_id,
+        )
+    if row is None or not row['valid']:
+        return None
+    return PendingAction(action=row['action'], payload=json.loads(row['payload']))

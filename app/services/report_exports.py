@@ -75,6 +75,12 @@ def build_manager_report_workbook(
         items_sheet.append([row.document_id, row.line_no, row.name or '', float(row.quantity or 0), float(row.price or 0), float(row.line_total or 0)])
 
     for sheet in workbook.worksheets:
+        # All cells in these exports are literal data; never export formulas from
+        # names, OCR results or other externally supplied strings.
+        for row in sheet.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.data_type = 's'
         for column_cells in sheet.columns:
             max_length = 0
             column_letter = column_cells[0].column_letter

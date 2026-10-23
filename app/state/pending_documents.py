@@ -1,7 +1,13 @@
+"""Durable document drafts; the database is the source of truth across restarts."""
 from dataclasses import dataclass, field
-from typing import Any
 from datetime import datetime, timedelta, timezone
+from secrets import token_urlsafe
 
+from pydantic import TypeAdapter
+
+from app.schemas.document import DocumentSchema
+from app.services.database import get_pool
+from app.services.documents import DuplicateCheckResult
 
 PENDING_DOCUMENT_TTL = timedelta(minutes=15)
 
@@ -10,51 +16,59 @@ PENDING_DOCUMENT_TTL = timedelta(minutes=15)
 class PendingDocument:
     ocr_text: str
     normalized_text: str
-    extracted_document: Any | None = None
-    duplicate_check: Any | None = None
+    extracted_document: DocumentSchema | None = None
+    duplicate_check: DuplicateCheckResult | None = None
     selected_project_id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    upload_id: str = field(default_factory=lambda: token_urlsafe(16))
 
 
-_pending_documents: dict[int, PendingDocument] = {}
-_active_document_flows: dict[int, datetime] = {}
+_adapter = TypeAdapter(PendingDocument)
 
 
-def begin_document_flow(telegram_user_id: int) -> None:
-    _active_document_flows[telegram_user_id] = datetime.now(timezone.utc)
+async def begin_document_flow(telegram_user_id: int) -> str | None:
+    upload_id = token_urlsafe(16)
+    async with get_pool().acquire() as connection:
+        await connection.execute('DELETE FROM pending_document_flows WHERE expires_at <= NOW()')
+        return await connection.fetchval(
+            """INSERT INTO pending_document_flows (telegram_user_id, upload_id, data, expires_at)
+               VALUES ($1, $2, NULL, NOW() + $3::interval)
+               ON CONFLICT (telegram_user_id) DO NOTHING RETURNING upload_id""",
+            telegram_user_id, upload_id, PENDING_DOCUMENT_TTL,
+        )
 
 
-def has_active_document_flow(telegram_user_id: int) -> bool:
-    _cleanup_expired_state(telegram_user_id)
-    return telegram_user_id in _active_document_flows or telegram_user_id in _pending_documents
+async def has_active_document_flow(telegram_user_id: int) -> bool:
+    async with get_pool().acquire() as connection:
+        return bool(await connection.fetchval(
+            'SELECT 1 FROM pending_document_flows WHERE telegram_user_id=$1 AND expires_at > NOW()',
+            telegram_user_id,
+        ))
 
 
-def store_pending_document(telegram_user_id: int, pending_document: PendingDocument) -> None:
-    _active_document_flows[telegram_user_id] = datetime.now(timezone.utc)
-    _pending_documents[telegram_user_id] = pending_document
+async def store_pending_document(telegram_user_id: int, pending_document: PendingDocument) -> bool:
+    async with get_pool().acquire() as connection:
+        return bool(await connection.fetchval(
+            """UPDATE pending_document_flows SET data=$3::jsonb, expires_at=NOW()+$4::interval
+               WHERE telegram_user_id=$1 AND upload_id=$2 AND expires_at > NOW()
+               RETURNING upload_id""",
+            telegram_user_id, pending_document.upload_id,
+            _adapter.dump_json(pending_document).decode(), PENDING_DOCUMENT_TTL,
+        ))
 
 
-def get_pending_document(telegram_user_id: int) -> PendingDocument | None:
-    _cleanup_expired_state(telegram_user_id)
-    return _pending_documents.get(telegram_user_id)
+async def get_pending_document(telegram_user_id: int) -> PendingDocument | None:
+    async with get_pool().acquire() as connection:
+        data = await connection.fetchval(
+            'SELECT data FROM pending_document_flows WHERE telegram_user_id=$1 AND expires_at > NOW()',
+            telegram_user_id,
+        )
+    return _adapter.validate_json(data) if data is not None else None
 
 
-def pop_pending_document(telegram_user_id: int) -> PendingDocument | None:
-    _active_document_flows.pop(telegram_user_id, None)
-    return _pending_documents.pop(telegram_user_id, None)
-
-
-def clear_document_flow(telegram_user_id: int) -> None:
-    _active_document_flows.pop(telegram_user_id, None)
-    _pending_documents.pop(telegram_user_id, None)
-
-
-def _cleanup_expired_state(telegram_user_id: int) -> None:
-    now = datetime.now(timezone.utc)
-    flow_started_at = _active_document_flows.get(telegram_user_id)
-    if flow_started_at is not None and now - flow_started_at > PENDING_DOCUMENT_TTL:
-        _active_document_flows.pop(telegram_user_id, None)
-    pending_document = _pending_documents.get(telegram_user_id)
-    if pending_document is not None and now - pending_document.created_at > PENDING_DOCUMENT_TTL:
-        _pending_documents.pop(telegram_user_id, None)
-        _active_document_flows.pop(telegram_user_id, None)
+async def clear_document_flow(telegram_user_id: int, upload_id: str | None = None) -> None:
+    async with get_pool().acquire() as connection:
+        await connection.execute(
+            'DELETE FROM pending_document_flows WHERE telegram_user_id=$1 AND ($2::text IS NULL OR upload_id=$2)',
+            telegram_user_id, upload_id,
+        )

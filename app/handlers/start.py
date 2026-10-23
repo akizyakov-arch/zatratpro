@@ -14,7 +14,7 @@ from app.services.report_formatters import (
     report_period_label,
 )
 from app.services.views import ViewService
-from app.state.pending_actions import get_pending_action, pop_pending_action, set_pending_action
+from app.state.pending_actions import pop_pending_action, set_pending_action
 from app.state.pending_documents import get_pending_document
 from app.ui.company import (
     MANAGER_EMPLOYEES_LIST_CALLBACK,
@@ -347,7 +347,7 @@ async def join_company(message: Message, invite_code: str) -> None:
 async def join_company_button(message: Message) -> None:
     if message.from_user is None:
         return
-    set_pending_action(message.from_user.id, 'join_company')
+    await set_pending_action(message.from_user.id, 'join_company')
     await message.answer(f'{_person_name(message.from_user)}, отправь invite-код следующим сообщением.', reply_markup=await _main_menu_markup(message))
 
 
@@ -649,7 +649,7 @@ async def create_company_button(message: Message) -> None:
     if context is None or context.platform_role != 'owner':
         await message.answer('Создавать компании может только owner.', reply_markup=await _main_menu_markup(message))
         return
-    set_pending_action(message.from_user.id, 'create_company')
+    await set_pending_action(message.from_user.id, 'create_company')
     await message.answer(f'{_person_name(message.from_user)}, отправь название новой компании.', reply_markup=await _main_menu_markup(message))
 
 
@@ -708,7 +708,7 @@ async def projects_archived_callback(callback: CallbackQuery) -> None:
 async def project_create_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    set_pending_action(callback.from_user.id, 'create_project')
+    await set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
     await callback.message.answer('Отправь название нового проекта.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
@@ -732,7 +732,7 @@ async def project_rename_prompt(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     project_id = int(callback.data.removeprefix(MANAGER_PROJECT_RENAME_PREFIX))
-    set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
+    await set_pending_action(callback.from_user.id, 'rename_project', {'project_id': project_id})
     await callback.answer()
     await callback.message.answer('Отправь новое название проекта.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
@@ -1272,11 +1272,10 @@ async def handle_pending_text(message: Message) -> None:
     if message.from_user is None or not message.text:
         await message.answer('Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.', reply_markup=await _main_menu_markup(message))
         return
-    pending_action = get_pending_action(message.from_user.id)
+    pending_action = await pop_pending_action(message.from_user.id)
     if pending_action is None:
         await message.answer('Используй кнопки главного меню или отправь фото документа.', reply_markup=await _main_menu_markup(message))
         return
-    pop_pending_action(message.from_user.id)
     text_value = message.text.strip()
     try:
         if pending_action.action == 'join_company':
@@ -1290,9 +1289,9 @@ async def handle_pending_text(message: Message) -> None:
         if pending_action.action == 'create_project':
             project = await project_service.create_project(message.from_user.id, text_value)
             await message.answer(f'Проект создан: {project.name}.', reply_markup=await _main_menu_markup(message))
-            if get_pending_document(message.from_user.id) is not None:
+            if (pending_document := await get_pending_document(message.from_user.id)) is not None:
                 projects = await project_service.list_active_projects(message.from_user.id)
-                await message.answer('Выбери проект для сохранения документа.', reply_markup=build_document_projects_keyboard(projects, allow_create_project=True))
+                await message.answer('Выбери проект для сохранения документа.', reply_markup=build_document_projects_keyboard(projects, allow_create_project=True, upload_id=pending_document.upload_id))
             return
         if pending_action.action == 'rename_project':
             project_id = int(pending_action.payload['project_id'])

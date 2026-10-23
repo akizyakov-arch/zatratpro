@@ -20,24 +20,23 @@ class TelegramFileService:
         photo = photos[-1]
         telegram_file = await self.bot.get_file(photo.file_id)
         original_path = TMP_DIR / f"{uuid4()}-raw.jpg"
-        await self.bot.download_file(telegram_file.file_path, destination=original_path)
-        return self._prepare_image_for_ocr(original_path)
+        try:
+            await self.bot.download_file(telegram_file.file_path, destination=original_path)
+            return self._prepare_image_for_ocr(original_path)
+        finally:
+            original_path.unlink(missing_ok=True)
 
     def _prepare_image_for_ocr(self, source_path: Path) -> Path:
         prepared_path = TMP_DIR / f"{uuid4()}.jpg"
-        with Image.open(source_path) as image:
-            image = ImageOps.exif_transpose(image)
-            if image.mode not in ("RGB", "L"):
-                image = image.convert("RGB")
-            elif image.mode == "L":
-                image = image.convert("RGB")
-            width, height = image.size
-            if width > OCR_MAX_WIDTH:
-                resized_height = int(height * (OCR_MAX_WIDTH / width))
-                image = image.resize((OCR_MAX_WIDTH, resized_height), Image.Resampling.LANCZOS)
-            image.save(prepared_path, format="JPEG", quality=OCR_JPEG_QUALITY, optimize=True)
         try:
-            source_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+            with Image.open(source_path) as image:
+                image = ImageOps.exif_transpose(image).convert("RGB")
+                width, height = image.size
+                if width > OCR_MAX_WIDTH:
+                    resized_height = int(height * (OCR_MAX_WIDTH / width))
+                    image = image.resize((OCR_MAX_WIDTH, resized_height), Image.Resampling.LANCZOS)
+                image.save(prepared_path, format="JPEG", quality=OCR_JPEG_QUALITY, optimize=True)
+        except BaseException:
+            prepared_path.unlink(missing_ok=True)
+            raise
         return prepared_path

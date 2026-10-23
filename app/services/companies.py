@@ -98,10 +98,7 @@ class CompanyService:
                 SET username = EXCLUDED.username,
                     first_name = EXCLUDED.first_name,
                     last_name = EXCLUDED.last_name,
-                    system_role = CASE
-                        WHEN EXCLUDED.system_role = 'owner' THEN 'owner'
-                        ELSE users.system_role
-                    END,
+                    system_role = EXCLUDED.system_role,
                     updated_at = NOW()
                 RETURNING id
                 """,
@@ -113,33 +110,17 @@ class CompanyService:
             )
 
     async def is_platform_owner(self, telegram_user_id: int) -> bool:
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            role = await connection.fetchval(
-                "SELECT system_role FROM users WHERE telegram_id = $1",
-                telegram_user_id,
-            )
-        return role == "owner"
+        return telegram_user_id != 0 and telegram_user_id == get_settings().bot_owner_telegram_id
 
     async def get_user_context(self, telegram_user_id: int) -> UserContext:
         pool = get_pool()
         async with pool.acquire() as connection:
-            base_row = await connection.fetchrow(
-                "SELECT system_role FROM users WHERE telegram_id = $1",
-                telegram_user_id,
-            )
             rows = await self._get_active_membership_rows(connection, telegram_user_id)
-
-        system_role = base_row["system_role"] if base_row is not None else "user"
+        system_role = "owner" if await self.is_platform_owner(telegram_user_id) else "user"
         if not rows:
             return UserContext(system_role=system_role, company=None, member_role=None)
-
         row = rows[0]
-        return UserContext(
-            system_role=system_role,
-            company=self._build_company(row),
-            member_role=row["member_role"],
-        )
+        return UserContext(system_role=system_role, company=self._build_company(row), member_role=row["member_role"])
 
     async def create_company(self, telegram_user: User, name: str) -> Company:
         owner_user_id = await self.ensure_platform_user(telegram_user)
@@ -176,6 +157,7 @@ class CompanyService:
                     SELECT id, owner_user_id, manager_user_id, status
                     FROM companies
                     WHERE id = $1
+                    FOR UPDATE
                     """,
                     company_id,
                 )
@@ -209,6 +191,7 @@ class CompanyService:
         pool = get_pool()
         async with pool.acquire() as connection:
             async with connection.transaction():
+                await self._lock_company(connection, company.id)
                 employee_count = await self._count_active_workers(connection, company.id)
                 if employee_count >= EMPLOYEE_LIMIT:
                     raise CompanyAccessError(f"В компании уже максимальное число сотрудников: {EMPLOYEE_LIMIT}.")
@@ -227,7 +210,14 @@ class CompanyService:
         pool = get_pool()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._expire_outdated_invites(connection)
+                # Lock the company before consuming its invite; this also serializes
+                # the employee-limit check against owner assignments and new invites.
+                company_id = await connection.fetchval(
+                    "SELECT company_id FROM company_invites WHERE code=$1", normalized_code,
+                )
+                if company_id is None:
+                    raise CompanyAccessError("Invite-код недействителен или уже использован.")
+                await self._lock_company(connection, company_id)
                 invite = await connection.fetchrow(
                     """
                     SELECT ci.id,
@@ -243,12 +233,15 @@ class CompanyService:
                       AND ci.status = 'active'
                       AND c.status = 'active'
                       AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
+                    FOR UPDATE OF ci
                     """,
                     normalized_code,
                 )
                 if invite is None:
                     raise CompanyAccessError("Invite-код недействителен или уже использован.")
 
+                if await self.is_platform_owner(telegram_user.id):
+                    raise CompanyAccessError("Owner не может быть участником компании.")
                 user_id = await self._get_user_id_by_telegram_id(connection, telegram_user.id)
                 active_memberships = await connection.fetch(
                     """
@@ -265,6 +258,8 @@ class CompanyService:
                     raise CompanyAccessError("У пользователя найдено несколько активных компаний. Нужно очистить состояние в БД.")
                 if active_company_ids and invite["company_id"] not in active_company_ids:
                     raise CompanyAccessError("Пользователь уже состоит в другой компании. По текущей модели доступна только одна компания.")
+                if any(row['role'] == MANAGER_ROLE for row in active_memberships) and invite['role'] != MANAGER_ROLE:
+                    raise CompanyAccessError('Роль руководителя нельзя сменить через invite сотрудника.')
 
                 if invite["role"] == MANAGER_ROLE:
                     current_manager_id = invite["manager_user_id"]
@@ -421,7 +416,7 @@ class CompanyService:
                 )
                 if target_user is None:
                     raise CompanyAccessError("Пользователь не найден.")
-                if target_user["system_role"] == "owner":
+                if await self.is_platform_owner(target_user["telegram_user_id"]):
                     raise CompanyAccessError("Owner не может быть участником компании.")
 
                 company = await connection.fetchrow(
@@ -429,6 +424,7 @@ class CompanyService:
                     SELECT id, status, manager_user_id
                     FROM companies
                     WHERE id = $1
+                    FOR UPDATE
                     """,
                     company_id,
                 )
@@ -573,21 +569,25 @@ class CompanyService:
                     )
         return self._member_from_row(membership)
 
+    async def _lock_company(self, connection, company_id: int) -> None:
+        row = await connection.fetchrow(
+            "SELECT id FROM companies WHERE id=$1 AND status='active' FOR UPDATE", company_id,
+        )
+        if row is None:
+            raise CompanyAccessError("Компания не найдена или уже архивирована.")
+
     async def _insert_invite(self, connection, company_id: int, role: str, inviter_id: int) -> str:
         for _ in range(10):
             code = _generate_invite_code()
             try:
-                await connection.execute(
-                    """
-                    INSERT INTO company_invites (company_id, role, code, status, created_by_user_id, expires_at)
-                    VALUES ($1, $2, $3, 'active', $4, NOW() + make_interval(hours => $5))
-                    """,
-                    company_id,
-                    role,
-                    code,
-                    inviter_id,
-                    INVITE_TTL_HOURS,
-                )
+                async with connection.transaction():
+                    await connection.execute(
+                        """
+                        INSERT INTO company_invites (company_id, role, code, status, created_by_user_id, expires_at)
+                        VALUES ($1, $2, $3, 'active', $4, NOW() + make_interval(hours => $5))
+                        """,
+                        company_id, role, code, inviter_id, INVITE_TTL_HOURS,
+                    )
                 return code
             except UniqueViolationError:
                 continue

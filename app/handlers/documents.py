@@ -14,13 +14,12 @@ from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 from app.services.projects import ProjectService
 from app.services.telegram_files import TelegramFileService
 from app.state.pending_actions import set_pending_action
+from app.state.locks import serialize_document_user
 from app.state.pending_documents import (
     PendingDocument,
     begin_document_flow,
     clear_document_flow,
     get_pending_document,
-    has_active_document_flow,
-    pop_pending_document,
     store_pending_document,
 )
 from app.ui.main_menu import build_main_menu_keyboard
@@ -96,17 +95,17 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
     if callback.from_user is None or callback.message is None:
         return
     if pending_document.extracted_document is None or pending_document.selected_project_id is None:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
         return
     try:
         project = await project_service.get_active_project(callback.from_user.id, pending_document.selected_project_id)
     except CompanyAccessError as exc:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
     if project is None:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer('Проект больше недоступен. Отправь документ заново.', reply_markup=menu_markup)
         return
     try:
@@ -117,27 +116,27 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
             document=pending_document.extracted_document,
             duplicate_check=pending_document.duplicate_check,
             source_type='photo',
+            upload_id=pending_document.upload_id,
         )
     except DocumentValidationError as exc:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
     except CompanyAccessError as exc:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
-    except Exception as exc:  # noqa: BLE001
-        clear_document_flow(callback.from_user.id)
-        logger.exception('Document save failed after duplicate confirmation')
-        await callback.message.answer(f'Не удалось сохранить документ: {exc}', reply_markup=menu_markup)
+    except Exception:  # A retry retains the same upload ID, so it cannot double-insert.
+        logger.exception('Document save failed')
+        await callback.message.answer('Не удалось сохранить документ. Повтори нажатие позже.', reply_markup=menu_markup)
         return
     duplicate_check = pending_document.duplicate_check
-    clear_document_flow(callback.from_user.id)
+    await clear_document_flow(callback.from_user.id, pending_document.upload_id)
     duplicate_message = {
         'exact': f"\n\nДокумент сохранен принудительно. Точный дубль уже был в записи ID {duplicate_check.duplicate_document_id}.",
         'probable': f"\n\nДокумент сохранен принудительно. Возможный дубль уже был в записи ID {duplicate_check.duplicate_document_id}.",
-        'none': '',
-        'not_checked': '',
+        'none': '\n\nПроверка на дубли выполнена: совпадений не найдено.',
+        'not_checked': '\n\nНедостаточно данных для проверки дублей.',
     }[duplicate_check.status]
     await callback.message.answer(
         f'Документ сохранен в проект "{project.name}". ID записи: {document_id}.{duplicate_message}',
@@ -168,7 +167,8 @@ async def process_photo(message: Message) -> None:
     if not message.photo or message.from_user is None:
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
-    if has_active_document_flow(message.from_user.id):
+    upload_id = await begin_document_flow(message.from_user.id)
+    if upload_id is None:
         await message.answer(
             f'{_person_name(message.from_user)}, у тебя уже есть незавершенный документ. Заверши выбор проекта по текущему документу, прежде чем отправлять новый.',
             reply_markup=menu_markup,
@@ -179,9 +179,9 @@ async def process_photo(message: Message) -> None:
     file_service = TelegramFileService(bot)
     ocr_service = OCRSpaceService()
     deepseek_service = DeepSeekService()
-    begin_document_flow(message.from_user.id)
 
     await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
+    file_path = None
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
             file_path = await file_service.download_best_photo(message.photo)
@@ -201,23 +201,27 @@ async def process_photo(message: Message) -> None:
                 async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
                     ocr_text = await ocr_service.extract_text(file_path)
     except TimeoutError:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('OCR timed out')
         await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except OCRSpaceError as exc:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('OCR failed')
         await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('Unexpected error while processing photo')
-        await message.answer(f'Не удалось обработать фото: {exc}', reply_markup=menu_markup)
+        await message.answer('Не удалось обработать фото. Попробуй ещё раз позже.', reply_markup=menu_markup)
         return
 
+    finally:
+        if file_path is not None:
+            file_path.unlink(missing_ok=True)
+
     if not ocr_text.strip():
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         await message.answer('OCR не вернул текст. Попробуй более четкое фото.', reply_markup=menu_markup)
         return
 
@@ -229,33 +233,37 @@ async def process_photo(message: Message) -> None:
         document = DocumentSchema.model_validate({**extracted_document, 'raw_text': ocr_text})
         preview_text = format_document_preview(document)
     except TimeoutError:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('DeepSeek extraction timed out')
         await message.answer('Формирование JSON заняло слишком много времени. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except DeepSeekError as exc:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('DeepSeek extraction failed')
         await message.answer(f'Не удалось собрать JSON документа: {exc}', reply_markup=menu_markup)
         return
     except DocumentValidationError as exc:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         await message.answer(str(exc), reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('Extraction failed')
-        await message.answer(f'Не удалось подготовить документ: {exc}', reply_markup=menu_markup)
+        await message.answer('Не удалось подготовить документ. Попробуй ещё раз позже.', reply_markup=menu_markup)
         return
 
-    store_pending_document(
+    stored = await store_pending_document(
         message.from_user.id,
         PendingDocument(
+            upload_id=upload_id,
             ocr_text=ocr_text,
             normalized_text=preview_text,
             extracted_document=document,
         ),
     )
+    if not stored:
+        await message.answer("Загрузка истекла или отменена. Отправь фото заново.")
+        return
     for chunk in chunk_message(preview_text):
         await message.answer(chunk, reply_markup=menu_markup)
 
@@ -263,51 +271,66 @@ async def process_photo(message: Message) -> None:
         projects = await project_service.list_active_projects(message.from_user.id)
         context = await company_service.get_user_context(message.from_user.id)
     except CompanyAccessError as exc:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         await message.answer(str(exc), reply_markup=menu_markup)
         return
 
     if not projects and not context.can_manage_company:
-        clear_document_flow(message.from_user.id)
+        await clear_document_flow(message.from_user.id, upload_id)
         await message.answer('В текущей компании нет активных проектов. Обратись к manager.', reply_markup=menu_markup)
         return
 
     await message.answer(
         f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
-        reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company),
+        reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company, upload_id=upload_id),
     )
 
 
-@router.callback_query(F.data == PROJECT_CANCEL_CALLBACK)
+@router.callback_query(F.data.startswith(PROJECT_CANCEL_CALLBACK + ":"))
+@serialize_document_user
 async def cancel_project_selection(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    clear_document_flow(callback.from_user.id)
+    pending_document = await get_pending_document(callback.from_user.id)
+    if pending_document is None or callback.data.rsplit(':', 1)[-1] != pending_document.upload_id:
+        await callback.answer('Эта загрузка уже завершена или истекла.', show_alert=True)
+        return
+    await clear_document_flow(callback.from_user.id, pending_document.upload_id)
     await callback.answer('Загрузка отменена.')
     await callback.message.answer('Подготовка документа отменена.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
 
-@router.callback_query(F.data == PROJECT_CREATE_CALLBACK)
+@router.callback_query(F.data.startswith(PROJECT_CREATE_CALLBACK + ":"))
+@serialize_document_user
 async def create_project_from_document(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    set_pending_action(callback.from_user.id, 'create_project')
+    pending_document = await get_pending_document(callback.from_user.id)
+    if pending_document is None or callback.data.rsplit(':', 1)[-1] != pending_document.upload_id:
+        await callback.answer('Эта загрузка уже завершена или истекла.', show_alert=True)
+        return
+    await set_pending_action(callback.from_user.id, 'create_project')
     await callback.answer()
     await callback.message.answer(f'{_person_name(callback.from_user)}, отправь название нового проекта.')
 
 
 @router.callback_query(F.data.startswith(PROJECT_CALLBACK_PREFIX))
+@serialize_document_user
 async def process_project_selection(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
     menu_markup = await _main_menu_markup_for_user(callback.from_user)
-    pending_document = get_pending_document(callback.from_user.id)
+    pending_document = await get_pending_document(callback.from_user.id)
     if pending_document is None:
         await callback.answer('Нет подготовленного документа. Отправь фото заново.', show_alert=True)
         return
 
     try:
-        project_id = int(callback.data.removeprefix(PROJECT_CALLBACK_PREFIX))
+        project_id_text, upload_id = callback.data.removeprefix(PROJECT_CALLBACK_PREFIX).split(":", 1)
+        if upload_id != pending_document.upload_id:
+            await callback.answer("Это кнопка от предыдущей загрузки.", show_alert=True)
+            return
+        project_id = int(project_id_text)
         project = await project_service.get_active_project(callback.from_user.id, project_id)
     except (TypeError, ValueError):
         await callback.answer('Проект недоступен. Обнови список и попробуй снова.', show_alert=True)
@@ -324,7 +347,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
     await callback.message.answer(f'{_person_name(callback.from_user)}, проверяю документ...', reply_markup=menu_markup)
     document = pending_document.extracted_document
     if document is None:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
         return
     try:
@@ -336,6 +359,9 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         )
         pending_document.duplicate_check = duplicate_check
         pending_document.selected_project_id = project.id
+        if not await store_pending_document(callback.from_user.id, pending_document):
+            await callback.message.answer("Документ истёк или отменён. Отправь фото заново.")
+            return
         if duplicate_check.status in {'exact', 'probable'}:
             duplicate_info = await document_service.get_duplicate_document_info(
                 callback.from_user.id,
@@ -343,59 +369,50 @@ async def process_project_selection(callback: CallbackQuery) -> None:
             )
             await callback.message.answer(
                 _format_duplicate_warning(duplicate_info, duplicate_check.status),
-                reply_markup=build_duplicate_confirmation_keyboard(),
+                reply_markup=build_duplicate_confirmation_keyboard(pending_document.upload_id),
             )
             return
-        document_id = await document_service.save_document(
-            telegram_user=callback.from_user,
-            project=project,
-            normalized_text=pending_document.normalized_text,
-            document=document,
-            duplicate_check=duplicate_check,
-            source_type='photo',
-        )
     except DocumentValidationError as exc:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
     except CompanyAccessError as exc:
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer(str(exc), reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
-        clear_document_flow(callback.from_user.id)
+        await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         logger.exception('Document save failed')
-        await callback.message.answer(f'Не удалось сохранить документ: {exc}', reply_markup=menu_markup)
+        await callback.message.answer('Не удалось сохранить документ. Попробуй ещё раз позже.', reply_markup=menu_markup)
         return
 
-    pop_pending_document(callback.from_user.id)
-    duplicate_message = {
-        "exact": f"\n\nНайден точный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Загрузка не заблокирована.",
-        "probable": f"\n\nНайден вероятный дубль в этой компании. ID существующей записи: {duplicate_check.duplicate_document_id}. Проверь запись вручную.",
-        "none": "\n\nПроверка на дубли выполнена: совпадений не найдено.",
-        "not_checked": "\n\nПроверка на дубли не выполнена: для вероятного дубля нужны дата, сумма и продавец. Для точного дубля дополнительно нужен номер документа.",
-    }[duplicate_check.status]
-    await callback.message.answer(
-        f"Документ сохранен в проект \"{project.name}\". ID записи: {document_id}.{duplicate_message}",
-        reply_markup=menu_markup,
-    )
+    await _save_pending_document(callback, pending_document, menu_markup)
 
 
-@router.callback_query(F.data == DOCUMENT_DUPLICATE_CANCEL_CALLBACK)
+@router.callback_query(F.data.startswith(DOCUMENT_DUPLICATE_CANCEL_CALLBACK + ":"))
+@serialize_document_user
 async def duplicate_cancel_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    clear_document_flow(callback.from_user.id)
+    pending_document = await get_pending_document(callback.from_user.id)
+    if pending_document is None or callback.data.rsplit(':', 1)[-1] != pending_document.upload_id:
+        await callback.answer('Эта загрузка уже завершена или истекла.', show_alert=True)
+        return
+    await clear_document_flow(callback.from_user.id, pending_document.upload_id)
     await callback.answer('Загрузка отменена.')
     await callback.message.answer('Документ не сохранен. Можно отправить новый файл.', reply_markup=await _main_menu_markup_for_user(callback.from_user))
 
 
-@router.callback_query(F.data == DOCUMENT_DUPLICATE_SAVE_CALLBACK)
+@router.callback_query(F.data.startswith(DOCUMENT_DUPLICATE_SAVE_CALLBACK + ":"))
+@serialize_document_user
 async def duplicate_save_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    pending_document = get_pending_document(callback.from_user.id)
-    if pending_document is None or pending_document.duplicate_check is None:
+    pending_document = await get_pending_document(callback.from_user.id)
+    if pending_document is None or callback.data.rsplit(':', 1)[-1] != pending_document.upload_id:
+        await callback.answer('Эта загрузка уже завершена или истекла.', show_alert=True)
+        return
+    if pending_document.duplicate_check is None:
         await callback.answer('Нет документа для подтверждения. Отправь фото заново.', show_alert=True)
         return
     await callback.answer()

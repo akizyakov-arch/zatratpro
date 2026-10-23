@@ -7,16 +7,16 @@ from aiogram import Bot, Dispatcher
 from app.config import get_settings
 from app.handlers.documents import router as documents_router
 from app.handlers.start import router as start_router
+from app.logging_utils import RedactingFormatter
 from app.services.database import close_db, init_db
 
 
 def configure_logging() -> None:
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level.upper(),
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        stream=sys.stdout,
-    )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(RedactingFormatter('%(asctime)s | %(levelname)s | %(name)s | %(message)s'))
+    logging.basicConfig(level=settings.log_level.upper(), handlers=[handler], force=True)
+    logging.disable(logging.NOTSET)
 
 
 async def on_startup() -> None:

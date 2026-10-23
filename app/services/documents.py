@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
-import logging
 import re
 
 from aiogram.types import User
@@ -11,8 +10,6 @@ from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyServi
 from app.services.database import get_pool
 from app.services.projects import Project
 
-
-logger = logging.getLogger(__name__)
 
 DUPLICATE_STATUS_NONE = "none"
 DUPLICATE_STATUS_EXACT = "exact"
@@ -87,6 +84,7 @@ class DocumentService:
         document: DocumentSchema,
         duplicate_check: DuplicateCheckResult | None = None,
         source_type: str = "photo",
+        upload_id: str | None = None,
     ) -> int:
         member_role = await self.company_service.ensure_member_role(telegram_user.id)
         if member_role not in ADMIN_ROLES | WORKER_ROLES:
@@ -153,13 +151,15 @@ class DocumentService:
                         ocr_provider,
                         llm_provider,
                         source_file_path,
-                        source_file_id
+                        source_file_id,
+                        upload_id
                     )
                     VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8,
                         $9, $10, $11, $12, $13, $14, $15,
-                        $16, $17, NOW(), 'ocr_space', 'deepseek', NULL, NULL
+                        $16, $17, NOW(), 'ocr_space', 'deepseek', NULL, NULL, $18
                     )
+                    ON CONFLICT (upload_id) WHERE upload_id IS NOT NULL DO NOTHING
                     RETURNING id
                     """,
                     project.company_id,
@@ -179,7 +179,17 @@ class DocumentService:
                     normalized_text,
                     duplicate_check.status,
                     duplicate_check.duplicate_document_id,
+                    upload_id,
                 )
+                if document_id is None:
+                    # Retry of this upload, not a ban on intentionally duplicated receipts.
+                    existing_id = await connection.fetchval(
+                        'SELECT id FROM documents WHERE upload_id=$1 AND company_id=$2 AND uploaded_by_user_id=$3 AND project_id=$4',
+                        upload_id, project.company_id, user_id, project.id,
+                    )
+                    if existing_id is None:
+                        raise DocumentValidationError('Идентификатор загрузки уже использован.')
+                    return existing_id
                 if items:
                     await connection.executemany(
                         """
@@ -223,27 +233,6 @@ class DocumentService:
             raise CompanyAccessError("Нельзя проверять документ в проекте другой компании.")
 
         fields = _resolve_document_fields(document, normalized_text)
-        logger.info(
-            "Duplicate check source: ext=%s incoming=%s vendor=%s inn=%s raw_snippet=%s normalized_snippet=%s",
-            document.external_document_number,
-            document.incoming_number,
-            document.vendor,
-            document.vendor_inn,
-            (document.raw_text or "")[:160],
-            (normalized_text or "")[:160],
-        )
-        logger.info(
-            "Duplicate check key: company_id=%s type=%s number=%s date=%s total=%s vendor=%s exact=%s probable=%s",
-            project.company_id,
-            document.document_type,
-            fields.document_number,
-            fields.document_date.isoformat() if fields.document_date is not None else None,
-            str(fields.total_amount) if fields.total_amount is not None else None,
-            fields.vendor_key,
-            all(value is not None for value in (fields.document_number, fields.document_date, fields.total_amount, fields.vendor_key)),
-            all(value is not None for value in (fields.document_date, fields.total_amount, fields.vendor_key)),
-        )
-
         pool = get_pool()
         async with pool.acquire() as connection:
             if all(value is not None for value in (fields.document_number, fields.document_date, fields.total_amount, fields.vendor_key)):
