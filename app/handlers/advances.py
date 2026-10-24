@@ -52,19 +52,37 @@ async def show_card(message,uid,aid):
     await message.answer(text,reply_markup=keyboard(rows))
 
 
+async def select_employee(message, uid):
+    async with get_pool().acquire() as c:
+        m=await service._member(c,uid)
+        if m['role']!='manager': raise AdvanceError('Выдавать деньги может руководитель.')
+        people=await c.fetch("SELECT u.id,u.first_name,u.last_name FROM users u JOIN company_members cm ON cm.user_id=u.id WHERE cm.company_id=$1 AND cm.role='employee' AND cm.status='active' ORDER BY u.id",m['company_id'])
+    if not people:
+        await message.answer('В компании пока нет активных сотрудников. Откройте «Сотрудники» и создайте приглашение. Сотрудник должен отправить боту /start и войти по invite-коду. Руководитель не включается в список получателей.')
+        return
+    await message.answer('Выберите сотрудника:',reply_markup=keyboard([(f"{p['first_name'] or ''} {p['last_name'] or ''}",f"cash:employee:{p['id']}") for p in people]))
+
+
+@router.message(F.text == 'Выдача')
+async def issue_entry(message):
+    try:
+        await select_employee(message, await actor(message.from_user))
+    except AdvanceError as exc:
+        await message.answer(str(exc))
+
+
 @router.message(Command('money'))
 @router.message(F.text == MENU_BUTTONS['money'])
 async def money_entry(message):
     try:
         uid = await actor(message.from_user)
         async with get_pool().acquire() as c:
-            await service._member(c, uid)
+            member = await service._member(c, uid)
         markup = ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text=MENU)],
-            [KeyboardButton(text=BALANCE_MENU)],
+            [KeyboardButton(text='Выдача' if member['role'] == 'manager' else 'Мои выдачи')],
             [KeyboardButton(text='Главное меню')],
         ], resize_keyboard=True, input_field_placeholder='Выбери действие с деньгами')
-        await message.answer('Деньги\nВыдачи на закупки, расходы, возвраты и остатки сотрудников.', reply_markup=markup)
+        await message.answer('Деньги', reply_markup=markup)
     except AdvanceError as exc:
         await message.answer(str(exc))
 
@@ -111,6 +129,7 @@ async def balances_entry(message):
 
 @router.message(Command('advances'))
 @router.message(F.text==MENU)
+@router.message(F.text=='Мои выдачи')
 async def list_advances(message):
     try:
         uid=await actor(message.from_user)
@@ -134,14 +153,7 @@ async def cash_callback(callback):
         parts=callback.data.split(':');action=parts[1]
         await callback.answer()
         if action=='issue':
-            async with get_pool().acquire() as c:
-                m=await service._member(c,uid)
-                if m['role']!='manager': raise AdvanceError('Выдавать деньги может руководитель.')
-                people=await c.fetch("SELECT u.id,u.first_name,u.last_name FROM users u JOIN company_members cm ON cm.user_id=u.id WHERE cm.company_id=$1 AND cm.role='employee' AND cm.status='active' ORDER BY u.id",m['company_id'])
-            if not people:
-                await callback.message.answer('В компании пока нет активных сотрудников. Откройте «Сотрудники» и создайте приглашение. Сотрудник должен отправить боту /start и войти по invite-коду. Руководитель не включается в список получателей.')
-                return
-            await callback.message.answer('Выберите сотрудника:',reply_markup=keyboard([(f"{p['first_name'] or ''} {p['last_name'] or ''}",f"cash:employee:{p['id']}") for p in people]))
+            await select_employee(callback.message, uid)
         elif action=='employee':
             async with get_pool().acquire() as c:
                 m=await service._member(c,uid)
@@ -181,7 +193,7 @@ async def cash_callback(callback):
 
 async def finance_input(message):
     if not message.from_user or not message.text: return False
-    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню') or message.text in MENU_BUTTONS.values(): return False
+    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню', 'Выдача', 'Мои выдачи') or message.text in MENU_BUTTONS.values(): return False
     state=await get_pending_action(message.from_user.id)
     return state is not None and state.action.startswith('advance_')
 
