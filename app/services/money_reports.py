@@ -1,6 +1,7 @@
 """Rendering is separate from the platform-independent advance ledger."""
 from app.services.advances import AdvanceService
 from app.services.database import get_pool
+from app.services.business_cards import BusinessCardService
 from app.services.json_formatter import chunk_message
 from app.services.views import _report_period_start
 
@@ -8,7 +9,11 @@ from app.services.views import _report_period_start
 async def get_money_report(telegram_id, period, **scope):
     async with get_pool().acquire() as c:
         uid=await c.fetchval('SELECT id FROM users WHERE telegram_id=$1',telegram_id)
-    return await AdvanceService().report(uid,_report_period_start(period),**scope)
+    report=await AdvanceService().report(uid,_report_period_start(period),**scope)
+    report['card_rows']=[dict(r) for r in await BusinessCardService().report(uid,report['start'],report['end'],**scope)]
+    report['card_spent']=sum((r['amount'] for r in report['card_rows'] if r['accepted']),0)
+    report['card_pending']=sum((r['amount'] for r in report['card_rows'] if not r['accepted']),0)
+    return report
 
 
 def format_money_report(report):
@@ -19,6 +24,10 @@ def format_money_report(report):
            f"Расчётный остаток на конец: {t['closing']:.2f}",f"Ожидает получения: {t['pending']:.2f}",
            f"Расходы на проверке: {t['pending_expenses']:.2f}",f"Возвраты на проверке: {t['pending_returns']:.2f}",
            'Выдачи не прибавляются к затратам по чекам. Отрицательный остаток — долг компании сотруднику.']
+    lines.append(f"Бизнес-карты: принято {report.get('card_spent',0):.2f}; на проверке {report.get('card_pending',0):.2f} RUB. В подотчётный остаток не входят.")
+    for card in report.get('card_rows',[]):
+        name=' '.join(x for x in (card['first_name'],card['last_name']) if x)
+        lines.append(f"Карта {card['card_name']} ···· {card['last4']} · {name} · {card['project_name']} · {card['amount']:.2f} · "+('принято' if card['accepted'] else 'на проверке'))
     for r in report['rows']:
         name=' '.join(x for x in (r['first_name'],r['last_name']) if x) or f"Сотрудник №{r['employee_id']}"
         lines.append(f"\n{name} · {r['project_name']}\nНачало {r['opening']:.2f}; получено {r['received']:.2f}; расходы {r['spent']:.2f}; возвраты {r['returned']:.2f}; конец {r['closing']:.2f}; ожидает {r['pending']:.2f}")

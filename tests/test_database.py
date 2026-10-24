@@ -496,3 +496,88 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Отчёт по деньгам',text)
         self.assertIn('Получено: 50.00',text)
         self.assertIn('Остаток',text.replace('остаток','Остаток'))
+
+    async def test_business_card_payment_approval_does_not_change_cash_balance(self):
+        from app.services.business_cards import BusinessCardService
+        from app.services.advances import AdvanceService,AdvanceError
+        from datetime import datetime,timezone
+        s=BusinessCardService();manager,employee=await self.finance_ids()
+        card=await s.register(manager,'Основная','0012')
+        self.assertEqual(await s.register(manager,'Основная','0012'),card)
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='card-doc')
+        eid=await s.submit(employee,card,doc)
+        self.assertEqual(await s.submit(employee,card,doc),eid)
+        with self.assertRaises(AdvanceError): await s.approve(employee,eid)
+        await s.approve(manager,eid);await s.approve(manager,eid)
+        self.assertEqual(await AdvanceService().balances(employee),[])
+        rows=await s.report(manager,datetime(2000,1,1,tzinfo=timezone.utc))
+        self.assertEqual(len(rows),1);self.assertTrue(rows[0]['accepted']);self.assertEqual(rows[0]['last4'],'0012')
+
+    async def test_card_and_cash_cannot_claim_same_document_concurrently(self):
+        from app.services.business_cards import BusinessCardService
+        from app.services.advances import AdvanceService,AdvanceError
+        cards=BusinessCardService();cash=AdvanceService();manager,employee=await self.finance_ids()
+        card=await cards.register(manager,'Company','1234')
+        aid=await cash.issue(manager,employee,self.project.id,200,'x','card-race');await cash.receive(employee,aid)
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='card-race')
+        result=await asyncio.gather(cards.submit(employee,card,doc),cash.attach(employee,aid,doc),return_exceptions=True)
+        self.assertEqual(sum(isinstance(r,AdvanceError) for r in result),1)
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval('SELECT (SELECT count(*) FROM card_expenses)+(SELECT count(*) FROM advance_expenses)'),1)
+
+    async def test_card_permissions_and_invalid_numbers(self):
+        from app.services.business_cards import BusinessCardService
+        from app.services.advances import AdvanceError
+        s=BusinessCardService();manager,employee=await self.finance_ids()
+        with self.assertRaises(AdvanceError): await s.register(employee,'Forbidden','1234')
+        for last4 in ('123','12345','1234567890123456','abcd'):
+            with self.assertRaises(AdvanceError): await s.register(manager,'Card',last4)
+        with self.assertRaises(AdvanceError): await s.register(manager,'Card 1234567890123456','1234')
+        card=await s.register(manager,'Valid','1234')
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='owner-card')
+        with self.assertRaises(AdvanceError): await s.submit(manager,card,doc)
+        outsider=await self.service.ensure_platform_user(self.user(1777))
+        with self.assertRaises(AdvanceError): await s.cards(outsider)
+
+    async def test_card_report_excel_and_personal_visibility(self):
+        from app.services.business_cards import BusinessCardService
+        from app.services.money_reports import get_money_report,format_money_report
+        from app.services.report_exports import build_manager_report_workbook
+        from datetime import datetime,timezone,timedelta
+        from openpyxl import load_workbook
+        from io import BytesIO
+        s=BusinessCardService();manager,employee=await self.finance_ids()
+        card=await s.register(manager,'=1+1','0012')
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='card-xlsx')
+        eid=await s.submit(employee,card,doc)
+        before=await get_money_report(self.manager.id,'all_time')
+        self.assertEqual(before['card_pending'],100);self.assertEqual(before['card_spent'],0)
+        await s.approve(manager,eid)
+        report=await get_money_report(self.manager.id,'all_time')
+        self.assertEqual(report['card_spent'],100);self.assertEqual(report['totals']['spent'],0)
+        self.assertIn('Бизнес-карты',format_money_report(report))
+        summary=SimpleNamespace(start_at=datetime(2000,1,1,tzinfo=timezone.utc),documents=1,total_amount=100,exact_duplicates=0,probable_duplicates=0)
+        _,payload=build_manager_report_workbook('all_time',summary,[],[],[],[],[],money_report=report)
+        workbook=load_workbook(BytesIO(payload));sheet=workbook['BusinessCards']
+        self.assertEqual(sheet.cell(2,2).value,'=1+1');self.assertEqual(sheet.cell(2,2).data_type,'s')
+        self.assertEqual(sheet.cell(2,3).value,'0012')
+        self.assertEqual(await s.report(manager,datetime.now(timezone.utc)+timedelta(days=1),datetime.now(timezone.utc)+timedelta(days=2)),[])
+
+    async def test_business_cards_telegram_registration_and_payment(self):
+        from app.handlers import business_cards as ui
+        from app.services.business_cards import BusinessCardService
+        def cb(user,data):
+            return SimpleNamespace(from_user=user,data=data,answer=AsyncMock(),message=SimpleNamespace(answer=AsyncMock()))
+        await ui.card_callback(cb(self.manager,'bcard:new'))
+        message=SimpleNamespace(from_user=self.manager,text='Основная 9876',answer=AsyncMock())
+        self.assertTrue(await ui.card_input(message))
+        await ui.create_card(message)
+        manager,employee=await self.finance_ids()
+        card=(await BusinessCardService().cards(employee))[0]['id']
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='card-ui')
+        await ui.card_callback(cb(self.employee,'bcard:documents'))
+        await ui.card_callback(cb(self.employee,f'bcard:document:{doc}'))
+        await ui.card_callback(cb(self.employee,f'bcard:submit:{doc}:{card}'))
+        await ui.cards_entry(SimpleNamespace(from_user=self.manager,answer=AsyncMock()))
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval('SELECT count(*) FROM card_expenses'),1)

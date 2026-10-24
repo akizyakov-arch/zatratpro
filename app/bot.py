@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.handlers.documents import router as documents_router
 from app.handlers.start import router as start_router
 from app.handlers.advances import router as advances_router
+from app.handlers.business_cards import router as business_cards_router
 from app.logging_utils import RedactingFormatter
 from app.services.database import close_db, init_db
 
@@ -40,6 +41,7 @@ async def main() -> None:
     dispatcher.shutdown.register(on_shutdown)
 
     dispatcher.include_router(documents_router)
+    dispatcher.include_router(business_cards_router)
     dispatcher.include_router(advances_router)
     dispatcher.include_router(start_router)
 

@@ -80,6 +80,7 @@ async def money_entry(message):
             member = await service._member(c, uid)
         markup = ReplyKeyboardMarkup(keyboard=[
             [KeyboardButton(text='Выдача' if member['role'] == 'manager' else 'Мои выдачи')],
+            [KeyboardButton(text='Бизнес-карты')],
             [KeyboardButton(text='Отчёт по деньгам')],
             [KeyboardButton(text='Главное меню')],
         ], resize_keyboard=True, input_field_placeholder='Выбери действие с деньгами')
@@ -195,7 +196,7 @@ async def cash_callback(callback):
                 card=await service.card(uid,aid)
                 if card['employee_id']!=uid: raise AdvanceError('Нет доступа.')
                 async with get_pool().acquire() as c:
-                    docs=await c.fetch('SELECT id,total_amount,vendor FROM documents WHERE company_id=$1 AND project_id=$2 AND uploaded_by_user_id=$3 AND NOT EXISTS(SELECT 1 FROM advance_expenses e WHERE e.document_id=documents.id) ORDER BY id DESC LIMIT 30',card['company_id'],card['project_id'],uid)
+                    docs=await c.fetch('SELECT id,total_amount,vendor FROM documents WHERE company_id=$1 AND project_id=$2 AND uploaded_by_user_id=$3 AND NOT EXISTS(SELECT 1 FROM advance_expenses e WHERE e.document_id=documents.id) AND NOT EXISTS(SELECT 1 FROM card_expenses e WHERE e.document_id=documents.id) ORDER BY id DESC LIMIT 30',card['company_id'],card['project_id'],uid)
                 await callback.message.answer('Выберите чек; если его нет — сначала загрузите фото документа.',reply_markup=keyboard([(f"№{d['id']} · {d['vendor'] or ''} · {d['total_amount']}",f"cash:attach:{aid}:{d['id']}") for d in docs]) if docs else None)
                 return
             await show_card(callback.message,uid,aid)
@@ -205,7 +206,7 @@ async def cash_callback(callback):
 
 async def finance_input(message):
     if not message.from_user or not message.text: return False
-    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню', 'Выдача', 'Мои выдачи', 'Отчёт по деньгам') or message.text in MENU_BUTTONS.values(): return False
+    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню', 'Выдача', 'Мои выдачи', 'Отчёт по деньгам', 'Бизнес-карты') or message.text in MENU_BUTTONS.values(): return False
     state=await get_pending_action(message.from_user.id)
     return state is not None and state.action.startswith('advance_')
 

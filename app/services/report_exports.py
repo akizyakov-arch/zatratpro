@@ -89,6 +89,14 @@ def build_manager_report_workbook(
         overview.append(['Деньги: остаток на конец RUB',float(money_report['totals']['closing'])])
         overview.append(['Деньги: ожидает получения RUB',float(money_report['totals']['pending'])])
 
+    if money_report is not None:
+        card_sheet=workbook.create_sheet('BusinessCards')
+        card_sheet.append(['Чек ID','Карта','Последние 4 цифры','Сотрудник','Проект','Сумма RUB','Статус','Принято'])
+        for r in money_report.get('card_rows',[]):
+            card_sheet.append([r['document_id'],r['card_name'],r['last4'],' '.join(x for x in (r['first_name'],r['last_name']) if x),r['project_name'],float(r['amount']),'Принято' if r['accepted'] else 'На проверке',r['approved_at'].isoformat() if r['approved_at'] else ''])
+        overview.append(['Бизнес-карты: принято RUB',float(money_report.get('card_spent',0))])
+        overview.append(['Бизнес-карты: на проверке RUB',float(money_report.get('card_pending',0))])
+
     for sheet in workbook.worksheets:
         # All cells in these exports are literal data; never export formulas from
         # names, OCR results or other externally supplied strings.

@@ -74,6 +74,8 @@ class AdvanceService:
             doc = await c.fetchrow('SELECT * FROM documents WHERE id=$1 AND company_id=$2 AND project_id=$3 AND uploaded_by_user_id=$4 FOR UPDATE', document, row['company_id'],row['project_id'],actor)
             if doc is None or doc['currency'] != 'RUB':
                 raise AdvanceError('Нужен ваш документ этого проекта в RUB.')
+            if await c.fetchval('SELECT 1 FROM card_expenses WHERE document_id=$1',document):
+                raise AdvanceError('Чек уже оплачен бизнес-картой.')
             amount = money(doc['total_amount'])
             eid = await c.fetchval('INSERT INTO advance_expenses(advance_id,document_id,amount) VALUES($1,$2,$3) ON CONFLICT(document_id) DO NOTHING RETURNING id', aid,document,amount)
             if eid is None:
