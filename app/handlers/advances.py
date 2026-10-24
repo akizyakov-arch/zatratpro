@@ -1,7 +1,7 @@
 """Telegram adapter for the purchasing-advance ledger."""
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from app.services.advances import AdvanceService, AdvanceError
 from app.services.database import get_pool
@@ -50,6 +50,29 @@ async def show_card(message,uid,aid):
             rows.append((f"Подтвердить возврат {ret['amount']}",f"cash:approve_return:{aid}:{ret['id']}"))
     rows.append(('Обновить',f'cash:card:{aid}'))
     await message.answer(text,reply_markup=keyboard(rows))
+
+
+@router.message(Command('money'))
+@router.message(F.text == MENU_BUTTONS['money'])
+async def money_entry(message):
+    try:
+        uid = await actor(message.from_user)
+        async with get_pool().acquire() as c:
+            await service._member(c, uid)
+        markup = ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text=MENU)],
+            [KeyboardButton(text=BALANCE_MENU)],
+            [KeyboardButton(text='Главное меню')],
+        ], resize_keyboard=True, input_field_placeholder='Выбери действие с деньгами')
+        await message.answer('Деньги\nВыдачи на закупки, расходы, возвраты и остатки сотрудников.', reply_markup=markup)
+    except AdvanceError as exc:
+        await message.answer(str(exc))
+
+
+@router.message(F.text == 'Главное меню')
+async def money_back(message):
+    from app.handlers.start import start_command
+    await start_command(message)
 
 
 @router.message(Command('balance'))
@@ -158,7 +181,7 @@ async def cash_callback(callback):
 
 async def finance_input(message):
     if not message.from_user or not message.text: return False
-    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU) or message.text in MENU_BUTTONS.values(): return False
+    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню') or message.text in MENU_BUTTONS.values(): return False
     state=await get_pending_action(message.from_user.id)
     return state is not None and state.action.startswith('advance_')
 

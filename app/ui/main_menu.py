@@ -18,6 +18,7 @@ MENU_BUTTONS = {
     "join_company": "Ввести invite-код",
     "help": "Помощь",
     "back": "Назад",
+    "money": "Деньги",
 }
 
 
@@ -55,7 +56,7 @@ def build_main_menu_keyboard(
         ]
 
     if has_company and menu_kind != 'platform_owner':
-        keyboard.insert(-1, [KeyboardButton(text='Деньги на закупки'), KeyboardButton(text='Деньги на руках')])
+        keyboard.insert(-1, [KeyboardButton(text=MENU_BUTTONS['money'])])
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
