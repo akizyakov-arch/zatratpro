@@ -1,40 +1,97 @@
-"""Rendering is separate from the platform-independent advance ledger."""
+"""Platform-independent financial reports and plain-text rendering."""
+from collections import defaultdict
+from datetime import datetime
+from decimal import Decimal
+
 from app.services.advances import AdvanceService
-from app.services.database import get_pool
 from app.services.business_cards import BusinessCardService
-from app.services.json_formatter import chunk_message
-from app.services.views import _report_period_start
+from app.services.database import get_pool
+
+CASH_FIELDS = (
+    'opening', 'received', 'spent', 'returned', 'closing', 'pending',
+    'pending_expenses', 'pending_returns',
+)
 
 
-async def get_money_report(telegram_id, period, **scope):
-    async with get_pool().acquire() as c:
-        uid=await c.fetchval('SELECT id FROM users WHERE telegram_id=$1',telegram_id)
-    report=await AdvanceService().report(uid,_report_period_start(period),**scope)
-    report['card_rows']=[dict(r) for r in await BusinessCardService().report(uid,report['start'],report['end'],**scope)]
-    report['card_spent']=sum((r['amount'] for r in report['card_rows'] if r['accepted']),0)
-    report['card_pending']=sum((r['amount'] for r in report['card_rows'] if not r['accepted']),0)
+async def get_money_report_for_user(
+    user_id: int,
+    start: datetime,
+    end: datetime | None = None,
+    *,
+    project_id: int | None = None,
+    employee_id: int | None = None,
+) -> dict:
+    """Both payment sources use one database snapshot and one period boundary.
+
+    The caller supplies an authenticated internal user ID. Platform identity
+    resolution and period selection belong to the interface adapter.
+    """
+    scope = {'project_id': project_id, 'employee_id': employee_id}
+    async with get_pool().acquire() as connection:
+        async with connection.transaction(isolation='repeatable_read', readonly=True):
+            report = await AdvanceService().report(
+                user_id, start, end, connection=connection, **scope,
+            )
+            report['card_rows'] = [
+                dict(row) for row in await BusinessCardService().report(
+                    user_id, report['start'], report['end'], connection=connection, **scope,
+                )
+            ]
+    report['card_spent'] = sum(
+        (row['amount'] for row in report['card_rows'] if row['accepted']), Decimal(0),
+    )
+    report['card_pending'] = sum(
+        (row['amount'] for row in report['card_rows'] if not row['accepted']), Decimal(0),
+    )
     return report
 
 
-def format_money_report(report):
-    t=report['totals']
-    lines=['Отчёт по деньгам (RUB)',f"Период UTC: {report['start']:%d.%m.%Y} — {report['end']:%d.%m.%Y}",
-           f"На начало: {t['opening']:.2f}",f"Получено: {t['received']:.2f}",
-           f"Принятые расходы: {t['spent']:.2f}",f"Возвращено: {t['returned']:.2f}",
-           f"Расчётный остаток на конец: {t['closing']:.2f}",f"Ожидает получения: {t['pending']:.2f}",
-           f"Расходы на проверке: {t['pending_expenses']:.2f}",f"Возвраты на проверке: {t['pending_returns']:.2f}",
-           'Выдачи не прибавляются к затратам по чекам. Отрицательный остаток — долг компании сотруднику.']
-    lines.append(f"Бизнес-карты: принято {report.get('card_spent',0):.2f}; на проверке {report.get('card_pending',0):.2f} RUB. В подотчётный остаток не входят.")
-    for card in report.get('card_rows',[]):
-        name=' '.join(x for x in (card['first_name'],card['last_name']) if x)
-        lines.append(f"Карта {card['card_name']} ···· {card['last4']} · {name} · {card['project_name']} · {card['amount']:.2f} · "+('принято' if card['accepted'] else 'на проверке'))
-    for r in report['rows']:
-        name=' '.join(x for x in (r['first_name'],r['last_name']) if x) or f"Сотрудник №{r['employee_id']}"
-        lines.append(f"\n{name} · {r['project_name']}\nНачало {r['opening']:.2f}; получено {r['received']:.2f}; расходы {r['spent']:.2f}; возвраты {r['returned']:.2f}; конец {r['closing']:.2f}; ожидает {r['pending']:.2f}")
+def cash_and_employee_debt(report: dict) -> tuple[Decimal, Decimal]:
+    """Net projects for each employee, but do not offset different people's debts."""
+    balances = defaultdict(Decimal)
+    for row in report['rows']:
+        balances[row['employee_id']] += row['closing']
+    cash = sum((max(amount, Decimal(0)) for amount in balances.values()), Decimal(0))
+    debt = sum((max(-amount, Decimal(0)) for amount in balances.values()), Decimal(0))
+    return cash, debt
+
+
+def employee_name(row: dict) -> str:
+    name = ' '.join(part for part in (row['first_name'], row['last_name']) if part)
+    return name or f"Сотрудник №{row.get('employee_id', row.get('submitted_by', '?'))}"
+
+
+def format_money_report(report: dict) -> str:
+    totals = report['totals']
+    cash, debt = cash_and_employee_debt(report)
+    lines = [
+        'Отчёт по деньгам (RUB)',
+        f"Период UTC: {report['start']:%d.%m.%Y} — {report['end']:%d.%m.%Y}",
+        f"На начало: {totals['opening']:.2f}",
+        f"Получено: {totals['received']:.2f}",
+        f"Принятые расходы: {totals['spent']:.2f}",
+        f"Возвращено: {totals['returned']:.2f}",
+        f"Расчётный остаток на конец: {totals['closing']:.2f}",
+        f'На руках у сотрудников: {cash:.2f}',
+        f'Компания должна сотрудникам: {debt:.2f}',
+        f"Ожидает получения: {totals['pending']:.2f}",
+        f"Расходы на проверке: {totals['pending_expenses']:.2f}",
+        f"Возвраты на проверке: {totals['pending_returns']:.2f}",
+        'Выдачи не прибавляются к затратам по чекам. Отрицательный остаток — долг компании сотруднику.',
+        f"Бизнес-карты: принято {report.get('card_spent', 0):.2f}; "
+        f"на проверке {report.get('card_pending', 0):.2f} RUB. В подотчётный остаток не входят.",
+    ]
+    for card in report.get('card_rows', []):
+        status = 'принято' if card['accepted'] else 'на проверке'
+        lines.append(
+            f"Карта {card['card_name']} ···· {card['last4']} · {employee_name(card)} · "
+            f"{card['project_name']} · {card['amount']:.2f} · {status}"
+        )
+    for row in report['rows']:
+        lines.append(
+            f"\n{employee_name(row)} · {row['project_name']}\n"
+            f"Начало {row['opening']:.2f}; получено {row['received']:.2f}; "
+            f"расходы {row['spent']:.2f}; возвраты {row['returned']:.2f}; "
+            f"конец {row['closing']:.2f}; ожидает {row['pending']:.2f}"
+        )
     return '\n'.join(lines)
-
-
-async def send_money_report(message, telegram_id, period, **scope):
-    report=await get_money_report(telegram_id,period,**scope)
-    for chunk in chunk_message(format_money_report(report)):
-        await message.answer(chunk)

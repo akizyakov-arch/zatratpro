@@ -27,58 +27,16 @@ from app.state.pending_documents import (
 from app.ui.projects import PROJECT_CALLBACK_PREFIX, DOCUMENT_DUPLICATE_SAVE_CALLBACK, PROJECT_CANCEL_CALLBACK
 
 
+from db_fixture import DatabaseFixture
+
+
 @unittest.skipUnless(os.environ.get('RUN_DATABASE_TESTS') == '1', 'Set RUN_DATABASE_TESTS=1 and PostgreSQL connection variables')
-class DatabaseTests(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.env = patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': '123456:TEST_ONLY', 'OCR_SPACE_API_KEY': '', 'DEEPSEEK_API_KEY': '', 'BOT_OWNER_TELEGRAM_ID': '1001'})
-        self.env.start()
-        get_settings.cache_clear()
-        settings = get_settings()
-        self.admin = await asyncpg.connect(host=settings.postgres_host, port=settings.postgres_port, user=settings.postgres_user, password=settings.postgres_password, database='postgres')
-        self.database = 'test_zatratpro_' + uuid4().hex[:16]
-        await self.admin.execute(f'CREATE DATABASE {self.database}')
-        self.addAsyncCleanup(self.cleanup)
-        os.environ['POSTGRES_DB'] = self.database
-        get_settings.cache_clear()
-        connection = await asyncpg.connect(host=settings.postgres_host, port=settings.postgres_port, user=settings.postgres_user, password=settings.postgres_password, database=self.database)
-        try:
-            await connection.execute((Path(__file__).resolve().parent.parent / 'db/init/001_init.sql').read_text())
-        finally:
-            await connection.close()
-        self.pool = await init_db()
-        self.service = CompanyService()
-        self.owner, self.manager, self.employee = [self.user(n) for n in (1001, 1002, 1003)]
-        self.company = await self.service.create_company(self.owner, 'Test company')
-        code = await self.service.create_initial_manager_invite(self.owner, self.company.id)
-        await self.service.join_company(self.manager, code)
-        code = await self.service.create_invite(self.manager, 'employee')
-        await self.service.join_company(self.employee, code)
-        self.project = await ProjectService().create_project(self.manager.id, 'Project')
-        self.document = DocumentSchema(document_type='cash_receipt', external_document_number='123', vendor='Vendor', date='2026-10-23', total=100, raw_text='Кассовый чек', items=[{'name': 'Item', 'quantity': 1, 'price': 100, 'line_total': 100}])
+class DatabaseTests(DatabaseFixture):
 
-    async def cleanup(self):
-        await close_db()
-        await self.admin.execute(f'DROP DATABASE {self.database} WITH (FORCE)')
-        await self.admin.close()
-        self.env.stop()
-        get_settings.cache_clear()
 
-    @staticmethod
-    def user(user_id):
-        return User(id=user_id, is_bot=False, first_name=f'Test {user_id}')
 
-    def callback(self, data):
-        return SimpleNamespace(from_user=self.employee, data=data, answer=AsyncMock(), message=SimpleNamespace(answer=AsyncMock()))
 
-    async def make_draft(self):
-        key = await begin_document_flow(self.employee.id)
-        draft = PendingDocument(ocr_text='text', normalized_text='preview', extracted_document=self.document, upload_id=key)
-        self.assertTrue(await store_pending_document(self.employee.id, draft))
-        return draft
 
-    async def document_count(self):
-        async with self.pool.acquire() as c:
-            return await c.fetchval('SELECT count(*) FROM documents')
 
     async def test_single_invite_allows_only_one_concurrent_join(self):
         code = await self.service.create_invite(self.manager, 'employee')
@@ -123,6 +81,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.service.get_user_context(self.owner.id)).menu_kind, 'employee')
         with self.assertRaises(CompanyAccessError):
             await self.service.create_company(self.owner, 'Denied')
+        self.assertFalse(await self.service.is_platform_owner(1999))
+        await self.service.ensure_platform_user(self.user(1999))
         self.assertTrue(await self.service.is_platform_owner(1999))
         await self.service.ensure_platform_user(self.owner)
         async with self.pool.acquire() as c:
@@ -295,9 +255,6 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             await service.save_document(self.employee, other, 'preview', self.document, upload_id='one-project')
         self.assertEqual(await self.document_count(), 1)
 
-    async def finance_ids(self):
-        async with self.pool.acquire() as c:
-            return tuple([await c.fetchval('SELECT id FROM users WHERE telegram_id=$1',u.id) for u in (self.manager,self.employee)])
 
     async def test_advance_full_lifecycle_counts_only_approved_movements(self):
         from app.services.advances import AdvanceService
@@ -541,7 +498,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_card_report_excel_and_personal_visibility(self):
         from app.services.business_cards import BusinessCardService
-        from app.services.money_reports import get_money_report,format_money_report
+        from app.handlers.money_reports import get_money_report
+        from app.services.money_reports import format_money_report
         from app.services.report_exports import build_manager_report_workbook
         from datetime import datetime,timezone,timedelta
         from openpyxl import load_workbook

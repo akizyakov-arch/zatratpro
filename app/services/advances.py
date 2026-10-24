@@ -1,5 +1,7 @@
 """Purchasing advances. Uses internal user IDs and Decimal, independent of Telegram."""
 import json
+from contextlib import AsyncExitStack
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from app.services.database import get_pool
@@ -19,9 +21,26 @@ def money(value) -> Decimal:
         raise AdvanceError('Сумма должна быть положительной, не более двух знаков после запятой.') from None
 
 
+def request_key(value: str) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > 200:
+        raise AdvanceError('Укажите корректный идентификатор операции.')
+    return value
+
+
 class AdvanceService:
+    async def membership(self, actor: int):
+        """Public access context for adapters; never trusts a cached platform role."""
+        async with get_pool().acquire() as connection:
+            return await self._member(connection, actor)
+
     async def _member(self, c, actor):
-        row = await c.fetchrow("SELECT cm.company_id,cm.role FROM company_members cm JOIN companies co ON co.id=cm.company_id WHERE cm.user_id=$1 AND cm.status='active' AND co.status='active'", actor)
+        row = await c.fetchrow(
+            """SELECT cm.company_id,cm.role FROM company_members cm
+               JOIN companies co ON co.id=cm.company_id
+               JOIN users u ON u.id=cm.user_id
+               WHERE cm.user_id=$1 AND cm.status='active' AND co.status='active'
+                 AND u.is_active AND cm.role IN ('manager','employee')""", actor,
+        )
         if row is None:
             raise AdvanceError('Нет доступа к активной компании.')
         return row
@@ -38,24 +57,38 @@ class AdvanceService:
 
     async def issue(self, actor, employee, project, amount, purpose, key):
         amount = money(amount)
-        if not purpose.strip() or not key:
+        key = request_key(key)
+        if not isinstance(purpose, str) or not purpose.strip():
             raise AdvanceError('Укажите назначение и идентификатор операции.')
         async with get_pool().acquire() as c, c.transaction():
             m = await self._member(c, actor)
             if m['role'] != 'manager':
                 raise AdvanceError('Выдавать деньги может руководитель.')
-            if not await c.fetchval("SELECT 1 FROM company_members WHERE user_id=$1 AND company_id=$2 AND role='employee' AND status='active'", employee, m['company_id']):
+            existing = await c.fetchrow('SELECT * FROM advances WHERE request_key=$1', key)
+            if existing is not None:
+                return self._reuse_issue(existing, m['company_id'], actor, employee, project, amount, purpose)
+            if not await c.fetchval(
+                """SELECT 1 FROM company_members cm JOIN users u ON u.id=cm.user_id
+                   WHERE cm.user_id=$1 AND cm.company_id=$2 AND cm.role='employee'
+                     AND cm.status='active' AND u.is_active""", employee, m['company_id'],
+            ):
                 raise AdvanceError('Сотрудник не найден в компании.')
             if not await c.fetchval("SELECT 1 FROM projects WHERE id=$1 AND company_id=$2 AND status='active'", project, m['company_id']):
                 raise AdvanceError('Проект недоступен.')
             aid = await c.fetchval('INSERT INTO advances(company_id,employee_id,project_id,issued_by,amount,purpose,request_key) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(request_key) DO NOTHING RETURNING id', m['company_id'], employee, project, actor, amount, purpose.strip(), key)
             if aid is None:
                 old = await c.fetchrow('SELECT * FROM advances WHERE request_key=$1', key)
-                if (old['issued_by'],old['employee_id'],old['project_id'],old['amount'],old['purpose']) != (actor,employee,project,amount,purpose.strip()):
-                    raise AdvanceError('Идентификатор операции уже использован.')
-                return old['id']
+                return self._reuse_issue(old, m['company_id'], actor, employee, project, amount, purpose)
             await self._event(c, aid, actor, 'issued', amount=amount)
             return aid
+
+    @staticmethod
+    def _reuse_issue(existing, company, actor, employee, project, amount, purpose):
+        actual = (existing['company_id'], existing['issued_by'], existing['employee_id'],
+                  existing['project_id'], existing['amount'], existing['purpose'])
+        if actual != (company, actor, employee, project, amount, purpose.strip()):
+            raise AdvanceError('Идентификатор операции уже использован.')
+        return existing['id']
 
     async def receive(self, actor, aid):
         async with get_pool().acquire() as c, c.transaction():
@@ -63,7 +96,7 @@ class AdvanceService:
             if row['employee_id'] != actor:
                 raise AdvanceError('Получение подтверждает сотрудник.')
             if row['received_at'] is None:
-                await c.execute('UPDATE advances SET received_at=NOW() WHERE id=$1', aid)
+                await c.execute('UPDATE advances SET received_at=clock_timestamp() WHERE id=$1', aid)
                 await self._event(c, aid, actor, 'received')
 
     async def attach(self, actor, aid, document):
@@ -93,7 +126,7 @@ class AdvanceService:
             if row is None:
                 raise AdvanceError('Расход не найден.')
             if row['approved_at'] is None:
-                await c.execute('UPDATE advance_expenses SET approved_at=NOW(),approved_by=$2 WHERE id=$1',eid,actor)
+                await c.execute('UPDATE advance_expenses SET approved_at=clock_timestamp(),approved_by=$2 WHERE id=$1',eid,actor)
                 await self._event(c,aid,actor,'expense_approved',expense_id=eid,amount=row['amount'])
 
     async def _balance(self,c,aid):
@@ -101,6 +134,7 @@ class AdvanceService:
 
     async def request_return(self,actor,aid,amount,key):
         amount=money(amount)
+        key=request_key(key)
         async with get_pool().acquire() as c,c.transaction():
             row=await self._access(c,actor,aid)
             if row['employee_id'] != actor or row['received_at'] is None:
@@ -123,7 +157,7 @@ class AdvanceService:
             if row['approved_at'] is None:
                 if row['amount'] > await self._balance(c,aid):
                     raise AdvanceError('Возврат превышает остаток.')
-                await c.execute('UPDATE advance_returns SET approved_at=NOW(),approved_by=$2 WHERE id=$1',rid,actor)
+                await c.execute('UPDATE advance_returns SET approved_at=clock_timestamp(),approved_by=$2 WHERE id=$1',rid,actor)
                 await self._event(c,aid,actor,'return_approved',return_id=rid,amount=row['amount'])
 
     async def list(self,actor):
@@ -165,13 +199,13 @@ class AdvanceService:
                 ORDER BY u.first_name NULLS LAST,t.employee_id
             ''', member['company_id'], member['role']=='manager', actor)
 
-    async def report(self, actor, start, end=None, *, project_id=None, employee_id=None):
+    async def report(self, actor, start, end=None, *, project_id=None, employee_id=None, connection=None):
         """Cash movements use receipt/approval dates, not the date of a receipt scan."""
-        from datetime import datetime, timezone
         end = end or datetime.now(timezone.utc)
         if start.tzinfo is None or end.tzinfo is None or start >= end:
             raise AdvanceError('Некорректный период отчёта.')
-        async with get_pool().acquire() as c:
+        async with AsyncExitStack() as stack:
+            c = connection if connection is not None else await stack.enter_async_context(get_pool().acquire())
             member = await self._member(c, actor)
             if member['role'] != 'manager' and employee_id not in (None, actor):
                 raise AdvanceError('Нет доступа к отчёту сотрудника.')

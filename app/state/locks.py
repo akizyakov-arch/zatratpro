@@ -1,11 +1,11 @@
-"""Serialize callbacks for a user's draft without retaining idle locks forever."""
+"""Serialize a user's events within one bot process; database constraints protect money."""
 import asyncio
 from functools import wraps
 
 _locks: dict[int, tuple[asyncio.Lock, int]] = {}
 
 
-def serialize_document_user(handler):
+def serialize_user(handler):
     @wraps(handler)
     async def wrapped(callback, *args, **kwargs):
         if callback.from_user is None:
@@ -23,3 +23,7 @@ def serialize_document_user(handler):
             else:
                 _locks[user_id] = lock, users - 1
     return wrapped
+
+
+# Compatibility for the existing document adapter.
+serialize_document_user = serialize_user

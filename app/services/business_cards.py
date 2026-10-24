@@ -1,5 +1,6 @@
 """Business-card payments reimburse no employee cash; one document, one source."""
 import re
+from contextlib import AsyncExitStack
 from datetime import datetime,timezone
 
 from app.services.advances import AdvanceService,AdvanceError,money
@@ -57,12 +58,13 @@ class BusinessCardService:
             if member['role']!='manager': raise AdvanceError('Расходы принимает руководитель.')
             row=await c.fetchrow('SELECT e.id FROM card_expenses e JOIN business_cards b ON b.id=e.card_id WHERE e.id=$1 AND b.company_id=$2 FOR UPDATE OF e',eid,member['company_id'])
             if row is None: raise AdvanceError('Расход недоступен.')
-            await c.execute('UPDATE card_expenses SET approved_by=$2,approved_at=NOW() WHERE id=$1 AND approved_at IS NULL',eid,actor)
+            await c.execute('UPDATE card_expenses SET approved_by=$2,approved_at=clock_timestamp() WHERE id=$1 AND approved_at IS NULL',eid,actor)
 
-    async def report(self,actor,start,end=None,*,project_id=None,employee_id=None):
+    async def report(self,actor,start,end=None,*,project_id=None,employee_id=None,connection=None):
         end=end or datetime.now(timezone.utc)
         if start.tzinfo is None or end.tzinfo is None or start>=end: raise AdvanceError('Некорректный период.')
-        async with get_pool().acquire() as c:
+        async with AsyncExitStack() as stack:
+            c = connection if connection is not None else await stack.enter_async_context(get_pool().acquire())
             m=await self.access._member(c,actor)
             if m['role']!='manager' and employee_id not in (None,actor): raise AdvanceError('Нет доступа.')
             return await c.fetch('''SELECT e.*,b.name AS card_name,b.last4,d.project_id,p.name AS project_name,

@@ -1,35 +1,26 @@
 """Telegram adapter for the purchasing-advance ledger."""
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 from app.services.advances import AdvanceService, AdvanceError
-from app.services.database import get_pool
+from app.services.finance_directory import FinanceDirectory
+from app.handlers.telegram_identity import actor
+from app.ui.money import keyboard, send_details
 from app.ui.main_menu import MENU_BUTTONS
+from app.state.locks import serialize_user
 from app.state.pending_actions import get_pending_action, pop_pending_action, set_pending_action
 
 router = Router()
 service = AdvanceService()
+directory = FinanceDirectory()
 MENU = 'Деньги на закупки'
 BALANCE_MENU = 'Деньги на руках'
 
 
-def keyboard(rows):
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=data)] for text,data in rows])
-
-
-async def actor(user):
-    async with get_pool().acquire() as c:
-        uid = await c.fetchval('SELECT id FROM users WHERE telegram_id=$1',user.id)
-    if uid is None:
-        raise AdvanceError('Сначала отправь /start и войди в компанию.')
-    return uid
-
-
 async def show_card(message,uid,aid):
     card = await service.card(uid,aid)
-    async with get_pool().acquire() as c:
-        member=await service._member(c,uid)
+    member = await directory.membership(uid)
     manager=member['role']=='manager'
     rows=[]
     received='получено' if card['received_at'] else 'ожидает подтверждения получения'
@@ -49,14 +40,11 @@ async def show_card(message,uid,aid):
         if manager and not ret['approved_at']:
             rows.append((f"Подтвердить возврат {ret['amount']}",f"cash:approve_return:{aid}:{ret['id']}"))
     rows.append(('Обновить',f'cash:card:{aid}'))
-    await message.answer(text,reply_markup=keyboard(rows))
+    await send_details(message, text, rows)
 
 
 async def select_employee(message, uid):
-    async with get_pool().acquire() as c:
-        m=await service._member(c,uid)
-        if m['role']!='manager': raise AdvanceError('Выдавать деньги может руководитель.')
-        people=await c.fetch("SELECT u.id,u.first_name,u.last_name FROM users u JOIN company_members cm ON cm.user_id=u.id WHERE cm.company_id=$1 AND cm.role='employee' AND cm.status='active' ORDER BY u.id",m['company_id'])
+    people = await directory.employees(uid)
     if not people:
         await message.answer('В компании пока нет активных сотрудников. Откройте «Сотрудники» и создайте приглашение. Сотрудник должен отправить боту /start и войти по invite-коду. Руководитель не включается в список получателей.')
         return
@@ -76,8 +64,7 @@ async def issue_entry(message):
 async def money_entry(message):
     try:
         uid = await actor(message.from_user)
-        async with get_pool().acquire() as c:
-            member = await service._member(c, uid)
+        member = await directory.membership(uid)
         markup = ReplyKeyboardMarkup(keyboard=[
             [KeyboardButton(text='Выдача' if member['role'] == 'manager' else 'Мои выдачи')],
             [KeyboardButton(text='Бизнес-карты')],
@@ -143,8 +130,7 @@ async def list_advances(message):
     try:
         uid=await actor(message.from_user)
         records=await service.list(uid)
-        async with get_pool().acquire() as c:
-            member=await service._member(c,uid)
+        member = await directory.membership(uid)
         rows=[(f"№{r['id']} · {r['employee_name']} · {r['project_name']} · {r['amount']} RUB",f"cash:card:{r['id']}") for r in records]
         if member['role']=='manager':
             rows.insert(0,('Выдать деньги', 'cash:issue'))
@@ -154,6 +140,7 @@ async def list_advances(message):
 
 
 @router.callback_query(F.data.startswith('cash:'))
+@serialize_user
 async def cash_callback(callback):
     if callback.message is None:
         return
@@ -168,16 +155,15 @@ async def cash_callback(callback):
         if action=='issue':
             await select_employee(callback.message, uid)
         elif action=='employee':
-            async with get_pool().acquire() as c:
-                m=await service._member(c,uid)
-                if m['role']!='manager': raise AdvanceError('Нет доступа.')
-                projects=await c.fetch("SELECT id,name FROM projects WHERE company_id=$1 AND status='active' ORDER BY id",m['company_id'])
+            employee = int(parts[2])
+            projects = await directory.projects_for_employee(uid, employee)
             if not projects:
                 await callback.message.answer('В компании нет активных проектов. Сначала создайте проект в разделе «Проекты».')
                 return
             await callback.message.answer('Выберите проект:',reply_markup=keyboard([(p['name'],f"cash:project:{parts[2]}:{p['id']}") for p in projects]))
         elif action=='project':
-            # The service revalidates membership and project when actually issuing.
+            employee, project = int(parts[2]), int(parts[3])
+            await directory.validate_issue(uid, employee, project)
             await set_pending_action(callback.from_user.id,'advance_issue',{'employee':int(parts[2]),'project':int(parts[3]),'key':callback.id})
             await callback.message.answer('Отправьте сумму и назначение одним сообщением. Например: 15000 Краска и кисти. /cancel — отмена.')
         else:
@@ -195,8 +181,7 @@ async def cash_callback(callback):
             elif action=='documents':
                 card=await service.card(uid,aid)
                 if card['employee_id']!=uid: raise AdvanceError('Нет доступа.')
-                async with get_pool().acquire() as c:
-                    docs=await c.fetch('SELECT id,total_amount,vendor FROM documents WHERE company_id=$1 AND project_id=$2 AND uploaded_by_user_id=$3 AND NOT EXISTS(SELECT 1 FROM advance_expenses e WHERE e.document_id=documents.id) AND NOT EXISTS(SELECT 1 FROM card_expenses e WHERE e.document_id=documents.id) ORDER BY id DESC LIMIT 30',card['company_id'],card['project_id'],uid)
+                docs = await directory.advance_documents(uid, aid)
                 await callback.message.answer('Выберите чек; если его нет — сначала загрузите фото документа.',reply_markup=keyboard([(f"№{d['id']} · {d['vendor'] or ''} · {d['total_amount']}",f"cash:attach:{aid}:{d['id']}") for d in docs]) if docs else None)
                 return
             await show_card(callback.message,uid,aid)
@@ -208,30 +193,36 @@ async def finance_input(message):
     if not message.from_user or not message.text: return False
     if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню', 'Выдача', 'Мои выдачи', 'Отчёт по деньгам', 'Бизнес-карты') or message.text in MENU_BUTTONS.values(): return False
     state=await get_pending_action(message.from_user.id)
-    return state is not None and state.action.startswith('advance_')
+    return {'pending_action': state} if state is not None and state.action.startswith('advance_') else False
 
 
 @router.message(Command('cancel'))
+@serialize_user
 async def cancel(message):
     await pop_pending_action(message.from_user.id)
     await message.answer('Ввод отменён.')
 
 
 @router.message(F.text,finance_input)
-async def amount_input(message):
-    state=await get_pending_action(message.from_user.id)
-    if state is None: return
+@serialize_user
+async def amount_input(message, pending_action=None):
+    state=pending_action or await get_pending_action(message.from_user.id)
+    if state is None or state.action not in ('advance_issue','advance_return'): return
+    current = await get_pending_action(message.from_user.id)
+    if current is None or current.revision != state.revision:
+        await message.answer('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
+        return
     try:
         uid=await actor(message.from_user)
         if state.action=='advance_issue':
             amount,purpose=message.text.strip().split(maxsplit=1)
             aid=await service.issue(uid,state.payload['employee'],state.payload['project'],amount,purpose,state.payload['key'])
-            await pop_pending_action(message.from_user.id)
+            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
             await message.answer('Выдача зарегистрирована. Сотрудник подтвердит получение в разделе «Деньги на закупки».')
         else:
             aid=state.payload['advance']
             await service.request_return(uid,aid,message.text.strip(),state.payload['key'])
-            await pop_pending_action(message.from_user.id)
+            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
         await show_card(message,uid,aid)
     except (AdvanceError,ValueError) as exc:
         await message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Укажите сумму и назначение. /cancel — отмена.')
