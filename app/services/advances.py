@@ -133,3 +133,32 @@ class AdvanceService:
         async with get_pool().acquire() as c,c.transaction():
             row=await self._access(c,actor,aid)
             return dict(row,balance=await self._balance(c,aid),expenses=await c.fetch('SELECT * FROM advance_expenses WHERE advance_id=$1 ORDER BY id',aid),returns=await c.fetch('SELECT * FROM advance_returns WHERE advance_id=$1 ORDER BY id',aid))
+
+    async def balances(self, actor):
+        """Company-wide or personal RUB balance; unreceived advances are separate."""
+        async with get_pool().acquire() as c:
+            member = await self._member(c, actor)
+            return await c.fetch('''
+                WITH expenses AS (
+                    SELECT advance_id, SUM(amount) AS amount FROM advance_expenses
+                    WHERE approved_at IS NOT NULL GROUP BY advance_id
+                ), returns AS (
+                    SELECT advance_id, SUM(amount) AS amount FROM advance_returns
+                    WHERE approved_at IS NOT NULL GROUP BY advance_id
+                ), totals AS (
+                    SELECT a.employee_id,
+                        SUM(CASE WHEN a.received_at IS NOT NULL THEN a.amount ELSE 0 END) AS received,
+                        SUM(CASE WHEN a.received_at IS NULL THEN a.amount ELSE 0 END) AS pending,
+                        SUM(COALESCE(e.amount,0)) AS spent,
+                        SUM(COALESCE(r.amount,0)) AS returned
+                    FROM advances a
+                    LEFT JOIN expenses e ON e.advance_id=a.id
+                    LEFT JOIN returns r ON r.advance_id=a.id
+                    WHERE a.company_id=$1 AND ($2::boolean OR a.employee_id=$3)
+                    GROUP BY a.employee_id
+                )
+                SELECT t.*,u.first_name,u.last_name,
+                    t.received-t.spent-t.returned AS balance
+                FROM totals t JOIN users u ON u.id=t.employee_id
+                ORDER BY u.first_name NULLS LAST,t.employee_id
+            ''', member['company_id'], member['role']=='manager', actor)

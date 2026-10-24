@@ -55,7 +55,7 @@ def build_main_menu_keyboard(
         ]
 
     if has_company and menu_kind != 'platform_owner':
-        keyboard.insert(-1, [KeyboardButton(text='Деньги на закупки')])
+        keyboard.insert(-1, [KeyboardButton(text='Деньги на закупки'), KeyboardButton(text='Деньги на руках')])
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,

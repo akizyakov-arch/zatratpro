@@ -11,6 +11,7 @@ from app.state.pending_actions import get_pending_action, pop_pending_action, se
 router = Router()
 service = AdvanceService()
 MENU = 'Деньги на закупки'
+BALANCE_MENU = 'Деньги на руках'
 
 
 def keyboard(rows):
@@ -49,6 +50,40 @@ async def show_card(message,uid,aid):
             rows.append((f"Подтвердить возврат {ret['amount']}",f"cash:approve_return:{aid}:{ret['id']}"))
     rows.append(('Обновить',f'cash:card:{aid}'))
     await message.answer(text,reply_markup=keyboard(rows))
+
+
+@router.message(Command('balance'))
+@router.message(F.text == BALANCE_MENU)
+async def balances_entry(message):
+    try:
+        uid = await actor(message.from_user)
+        records = await service.balances(uid)
+        if not records:
+            await message.answer('Деньги на руках: 0.00 RUB. Выдач пока нет.')
+            return
+        from app.services.json_formatter import chunk_message
+        lines = ['Деньги на руках', 'Получено − принятые расходы − подтверждённые возвраты.', '']
+        total = 0
+        for row in records:
+            name = ' '.join(part for part in (row['first_name'], row['last_name']) if part) or f"Сотрудник №{row['employee_id']}"
+            lines.extend([
+                name,
+                f"Получено: {row['received']:.2f} RUB",
+                f"Принятые расходы: {row['spent']:.2f} RUB",
+                f"Возвращено: {row['returned']:.2f} RUB",
+                f"На руках: {max(row['balance'], 0):.2f} RUB",
+            ])
+            if row['balance'] < 0:
+                lines.append(f"Компания должна сотруднику: {-row['balance']:.2f} RUB")
+            if row['pending']:
+                lines.append(f"Ожидает подтверждения получения: {row['pending']:.2f} RUB")
+            lines.append('')
+            total += row['balance']
+        lines.append(f'Общий расчётный остаток: {total:.2f} RUB')
+        for chunk in chunk_message('\n'.join(lines)):
+            await message.answer(chunk)
+    except AdvanceError as exc:
+        await message.answer(str(exc))
 
 
 @router.message(Command('advances'))
@@ -123,7 +158,7 @@ async def cash_callback(callback):
 
 async def finance_input(message):
     if not message.from_user or not message.text: return False
-    if message.text.startswith('/') or message.text==MENU or message.text in MENU_BUTTONS.values(): return False
+    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU) or message.text in MENU_BUTTONS.values(): return False
     state=await get_pending_action(message.from_user.id)
     return state is not None and state.action.startswith('advance_')
 

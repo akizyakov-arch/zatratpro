@@ -395,3 +395,39 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await ui.cash_callback(callback)
         self.assertIn('нет активных сотрудников',callback.message.answer.call_args.args[0])
         self.assertNotIn('reply_markup',callback.message.answer.call_args.kwargs)
+
+    async def test_money_on_hand_excludes_unreceived_and_unapproved_operations(self):
+        from app.services.advances import AdvanceService
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        aid=await s.issue(manager,employee,self.project.id,200,'x','received')
+        await s.issue(manager,employee,self.project.id,300,'x','pending')
+        row=(await s.balances(employee))[0]
+        self.assertEqual(row['balance'],0);self.assertEqual(row['pending'],500)
+        await s.receive(employee,aid)
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='balance-doc')
+        eid=await s.attach(employee,aid,doc)
+        rid=await s.request_return(employee,aid,25,'return-balance')
+        self.assertEqual((await s.balances(employee))[0]['balance'],200)
+        await s.approve_expense(manager,aid,eid);await s.approve_return(manager,aid,rid)
+        row=(await s.balances(employee))[0]
+        self.assertEqual(row['balance'],75);self.assertEqual(row['pending'],300)
+        self.assertEqual((await s.balances(manager))[0]['balance'],75)
+
+    async def test_money_on_hand_is_personal_and_sums_across_projects(self):
+        from app.services.advances import AdvanceService
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        project=await ProjectService().create_project(self.manager.id,'Second project')
+        for key,pid,amount in [('one',self.project.id,50),('two',project.id,70)]:
+            aid=await s.issue(manager,employee,pid,amount,'x',key);await s.receive(employee,aid)
+        self.assertEqual((await s.balances(employee))[0]['balance'],120)
+        outsider=await self.service.ensure_platform_user(self.user(1998))
+        await self.service.assign_user_to_company_by_owner(self.owner.id,outsider,self.company.id,'employee')
+        self.assertEqual(await s.balances(outsider),[])
+
+    async def test_balance_menu_does_not_consume_amount_input(self):
+        from app.handlers import advances as ui
+        await set_pending_action(self.employee.id,'advance_return',{'advance':1,'key':'x'})
+        message=SimpleNamespace(from_user=self.employee,text=ui.BALANCE_MENU,answer=AsyncMock())
+        self.assertFalse(await ui.finance_input(message))
+        await ui.balances_entry(message)
+        self.assertIn('0.00 RUB',message.answer.call_args.args[0])
