@@ -386,3 +386,12 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             pid=await c.fetchval('INSERT INTO projects(company_id,name,created_by_user_id) SELECT $1,$2,id FROM users WHERE telegram_id=$3 RETURNING id',other.id,'Foreign',self.owner.id)
         with self.assertRaises(AdvanceError):
             await AdvanceService().issue(manager,employee,pid,100,'x','foreign')
+
+    async def test_issue_explains_empty_employee_list(self):
+        from app.handlers import advances as ui
+        async with self.pool.acquire() as c:
+            await c.execute("UPDATE company_members SET status='removed' WHERE role='employee'")
+        callback=SimpleNamespace(id='empty',from_user=self.manager,data='cash:issue',answer=AsyncMock(),message=SimpleNamespace(answer=AsyncMock()))
+        await ui.cash_callback(callback)
+        self.assertIn('нет активных сотрудников',callback.message.answer.call_args.args[0])
+        self.assertNotIn('reply_markup',callback.message.answer.call_args.kwargs)

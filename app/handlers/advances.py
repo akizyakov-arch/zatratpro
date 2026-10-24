@@ -80,12 +80,18 @@ async def cash_callback(callback):
                 m=await service._member(c,uid)
                 if m['role']!='manager': raise AdvanceError('Выдавать деньги может руководитель.')
                 people=await c.fetch("SELECT u.id,u.first_name,u.last_name FROM users u JOIN company_members cm ON cm.user_id=u.id WHERE cm.company_id=$1 AND cm.role='employee' AND cm.status='active' ORDER BY u.id",m['company_id'])
+            if not people:
+                await callback.message.answer('В компании пока нет активных сотрудников. Откройте «Сотрудники» и создайте приглашение. Сотрудник должен отправить боту /start и войти по invite-коду. Руководитель не включается в список получателей.')
+                return
             await callback.message.answer('Выберите сотрудника:',reply_markup=keyboard([(f"{p['first_name'] or ''} {p['last_name'] or ''}",f"cash:employee:{p['id']}") for p in people]))
         elif action=='employee':
             async with get_pool().acquire() as c:
                 m=await service._member(c,uid)
                 if m['role']!='manager': raise AdvanceError('Нет доступа.')
                 projects=await c.fetch("SELECT id,name FROM projects WHERE company_id=$1 AND status='active' ORDER BY id",m['company_id'])
+            if not projects:
+                await callback.message.answer('В компании нет активных проектов. Сначала создайте проект в разделе «Проекты».')
+                return
             await callback.message.answer('Выберите проект:',reply_markup=keyboard([(p['name'],f"cash:project:{parts[2]}:{p['id']}") for p in projects]))
         elif action=='project':
             # The service revalidates membership and project when actually issuing.
