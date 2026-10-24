@@ -35,3 +35,9 @@ async def pop_pending_action(telegram_user_id: int) -> PendingAction | None:
     if row is None or not row['valid']:
         return None
     return PendingAction(action=row['action'], payload=json.loads(row['payload']))
+
+
+async def get_pending_action(telegram_user_id: int) -> PendingAction | None:
+    async with get_pool().acquire() as connection:
+        row = await connection.fetchrow('SELECT action,payload FROM pending_actions WHERE telegram_user_id=$1 AND expires_at>NOW()', telegram_user_id)
+    return PendingAction(row['action'], json.loads(row['payload'])) if row else None

@@ -235,7 +235,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.pool = await init_db()
         self.assertEqual(await self.document_count(), 1)
         async with self.pool.acquire() as c:
-            self.assertEqual(await c.fetchval('SELECT count(*) FROM schema_migrations'), 1)
+            self.assertEqual(await c.fetchval('SELECT count(*) FROM schema_migrations'), len(list((Path(__file__).resolve().parent.parent / 'db/migrations').glob('*.sql'))))
 
     async def test_photo_cleanup_after_success_and_ocr_failure(self):
         from app.services.ocr_space import OCRSpaceError
@@ -294,3 +294,95 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DocumentValidationError):
             await service.save_document(self.employee, other, 'preview', self.document, upload_id='one-project')
         self.assertEqual(await self.document_count(), 1)
+
+    async def finance_ids(self):
+        async with self.pool.acquire() as c:
+            return tuple([await c.fetchval('SELECT id FROM users WHERE telegram_id=$1',u.id) for u in (self.manager,self.employee)])
+
+    async def test_advance_full_lifecycle_counts_only_approved_movements(self):
+        from app.services.advances import AdvanceService
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        aid=await s.issue(manager,employee,self.project.id,'150','Materials','issue-1')
+        self.assertEqual(await s.issue(manager,employee,self.project.id,'150','Materials','issue-1'),aid)
+        await s.receive(employee,aid);await s.receive(employee,aid)
+        document=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='finance-check')
+        eid=await s.attach(employee,aid,document)
+        self.assertEqual((await s.card(employee,aid))['balance'],150)
+        await s.approve_expense(manager,aid,eid);await s.approve_expense(manager,aid,eid)
+        self.assertEqual((await s.card(employee,aid))['balance'],50)
+        rid=await s.request_return(employee,aid,50,'return-1')
+        self.assertEqual((await s.card(employee,aid))['balance'],50)
+        await s.approve_return(manager,aid,rid);await s.approve_return(manager,aid,rid)
+        self.assertEqual((await s.card(employee,aid))['balance'],0)
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval('SELECT count(*) FROM advance_events WHERE advance_id=$1',aid),6)
+
+    async def test_advance_permissions_and_unreceived_expense(self):
+        from app.services.advances import AdvanceService,AdvanceError
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        with self.assertRaises(AdvanceError): await s.issue(employee,employee,self.project.id,100,'x','denied')
+        aid=await s.issue(manager,employee,self.project.id,100,'x','valid')
+        with self.assertRaises(AdvanceError): await s.receive(manager,aid)
+        with self.assertRaises(AdvanceError): await s.attach(employee,aid,123)
+        with self.assertRaises(AdvanceError): await s.approve_return(employee,aid,1)
+        outsider=await self.service.ensure_platform_user(self.user(1888))
+        with self.assertRaises(AdvanceError): await s.card(outsider,aid)
+
+    async def test_advance_double_approval_and_return_limit(self):
+        from app.services.advances import AdvanceService,AdvanceError
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        aid=await s.issue(manager,employee,self.project.id,100,'x','valid')
+        await s.receive(employee,aid)
+        one=await s.request_return(employee,aid,80,'one')
+        two=await s.request_return(employee,aid,80,'two')
+        results=await asyncio.gather(s.approve_return(manager,aid,one),s.approve_return(manager,aid,two),return_exceptions=True)
+        self.assertEqual(sum(isinstance(r,AdvanceError) for r in results),1)
+        self.assertEqual((await s.card(employee,aid))['balance'],20)
+
+    async def test_expense_cannot_cover_two_advances_and_overspend_is_visible(self):
+        from app.services.advances import AdvanceService,AdvanceError
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        one=await s.issue(manager,employee,self.project.id,50,'x','one')
+        two=await s.issue(manager,employee,self.project.id,50,'x','two')
+        await s.receive(employee,one);await s.receive(employee,two)
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='check')
+        eid=await s.attach(employee,one,doc)
+        self.assertEqual(await s.attach(employee,one,doc),eid)
+        with self.assertRaises(AdvanceError): await s.attach(employee,two,doc)
+        await s.approve_expense(manager,one,eid)
+        self.assertEqual((await s.card(employee,one))['balance'],-50)
+
+    async def test_advance_rejects_invalid_money_and_conflicting_retry(self):
+        from app.services.advances import AdvanceService,AdvanceError,money
+        for value in ('NaN','Infinity','-1','0','0.001','1000000000000','bad'):
+            with self.assertRaises(AdvanceError): money(value)
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        await s.issue(manager,employee,self.project.id,'10,50','x','key')
+        with self.assertRaises(AdvanceError): await s.issue(manager,employee,self.project.id,11,'x','key')
+
+    async def test_finance_telegram_flow_selects_employee_project_and_amount(self):
+        from app.handlers import advances as ui
+        manager,employee=await self.finance_ids()
+        def cb(user,data):
+            return SimpleNamespace(id='unique-ui-request',from_user=user,data=data,answer=AsyncMock(),message=SimpleNamespace(answer=AsyncMock()))
+        await ui.cash_callback(cb(self.manager,'cash:issue'))
+        await ui.cash_callback(cb(self.manager,f'cash:employee:{employee}'))
+        await ui.cash_callback(cb(self.manager,f'cash:project:{employee}:{self.project.id}'))
+        message=SimpleNamespace(from_user=self.manager,text='500 Закупка краски',answer=AsyncMock())
+        self.assertTrue(await ui.finance_input(message))
+        await ui.amount_input(message)
+        aid=(await ui.service.list(manager))[0]['id']
+        await ui.cash_callback(cb(self.employee,f'cash:receive:{aid}'))
+        self.assertIsNotNone((await ui.service.card(employee,aid))['received_at'])
+        await ui.list_advances(SimpleNamespace(from_user=self.employee,answer=AsyncMock()))
+        message.text='Проекты'
+        self.assertFalse(await ui.finance_input(message))
+
+    async def test_advance_cannot_issue_against_foreign_company_project(self):
+        from app.services.advances import AdvanceService,AdvanceError
+        manager,employee=await self.finance_ids()
+        other=await self.service.create_company(self.owner,'Other company')
+        async with self.pool.acquire() as c:
+            pid=await c.fetchval('INSERT INTO projects(company_id,name,created_by_user_id) SELECT $1,$2,id FROM users WHERE telegram_id=$3 RETURNING id',other.id,'Foreign',self.owner.id)
+        with self.assertRaises(AdvanceError):
+            await AdvanceService().issue(manager,employee,pid,100,'x','foreign')
