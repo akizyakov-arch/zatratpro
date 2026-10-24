@@ -34,6 +34,7 @@ REPORT_PERIOD_YEAR = "year"
 REPORT_PERIOD_ALL = "all_time"
 
 REPORT_PERIOD_LABELS = {
+    REPORT_PERIOD_ALL: "Всё время",
     REPORT_PERIOD_WEEK: "Неделя",
     REPORT_PERIOD_MONTH: "Месяц",
     REPORT_PERIOD_QUARTER: "Квартал",
@@ -45,6 +46,7 @@ REPORT_PERIOD_LABELS = {
 def build_reports_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="По деньгам", callback_data="cash:report")],
             [InlineKeyboardButton(text="По проектам", callback_data=MANAGER_REPORTS_PROJECTS_CALLBACK)],
             [InlineKeyboardButton(text="По сотрудникам", callback_data=MANAGER_REPORTS_EMPLOYEES_CALLBACK)],
             [InlineKeyboardButton(text="Дубли документов", callback_data=MANAGER_REPORTS_DUPLICATES_CALLBACK)],

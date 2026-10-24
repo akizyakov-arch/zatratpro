@@ -80,6 +80,7 @@ async def money_entry(message):
             member = await service._member(c, uid)
         markup = ReplyKeyboardMarkup(keyboard=[
             [KeyboardButton(text='Выдача' if member['role'] == 'manager' else 'Мои выдачи')],
+            [KeyboardButton(text='Отчёт по деньгам')],
             [KeyboardButton(text='Главное меню')],
         ], resize_keyboard=True, input_field_placeholder='Выбери действие с деньгами')
         await message.answer('Деньги', reply_markup=markup)
@@ -91,6 +92,13 @@ async def money_entry(message):
 async def money_back(message):
     from app.handlers.start import start_command
     await start_command(message)
+
+
+@router.message(Command('money_report'))
+@router.message(F.text == 'Отчёт по деньгам')
+async def money_report_entry(message):
+    from app.ui.reports import build_report_period_keyboard
+    await message.answer('Период отчёта по деньгам:', reply_markup=build_report_period_keyboard('money'))
 
 
 @router.message(Command('balance'))
@@ -152,6 +160,10 @@ async def cash_callback(callback):
         uid=await actor(callback.from_user)
         parts=callback.data.split(':');action=parts[1]
         await callback.answer()
+        if action=='report':
+            from app.ui.reports import build_report_period_keyboard
+            await callback.message.answer('Период отчёта по деньгам:', reply_markup=build_report_period_keyboard('money'))
+            return
         if action=='issue':
             await select_employee(callback.message, uid)
         elif action=='employee':
@@ -193,7 +205,7 @@ async def cash_callback(callback):
 
 async def finance_input(message):
     if not message.from_user or not message.text: return False
-    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню', 'Выдача', 'Мои выдачи') or message.text in MENU_BUTTONS.values(): return False
+    if message.text.startswith('/') or message.text in (MENU, BALANCE_MENU, 'Главное меню', 'Выдача', 'Мои выдачи', 'Отчёт по деньгам') or message.text in MENU_BUTTONS.values(): return False
     state=await get_pending_action(message.from_user.id)
     return state is not None and state.action.startswith('advance_')
 

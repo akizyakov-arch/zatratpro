@@ -14,6 +14,8 @@ from app.services.report_formatters import (
     report_period_label,
 )
 from app.services.views import ViewService
+from app.services.money_reports import get_money_report, send_money_report
+from app.services.advances import AdvanceError
 from app.state.pending_actions import pop_pending_action, set_pending_action
 from app.state.pending_documents import get_pending_document
 from app.ui.company import (
@@ -917,6 +919,7 @@ async def report_kind_callback(callback: CallbackQuery) -> None:
             reply_markup=build_project_report_keyboard(REPORT_PERIOD_ALL, rows),
             parse_mode='HTML',
         )
+        await send_money_report(callback.message, callback.from_user.id, REPORT_PERIOD_ALL)
         return
     if report_kind == REPORT_KIND_DUPLICATES:
         rows = await view_service.list_duplicate_report_rows(callback.from_user.id, REPORT_PERIOD_ALL)
@@ -955,11 +958,16 @@ async def report_period_callback(callback: CallbackQuery) -> None:
         await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
         return
     try:
+        if report_kind == 'money':
+            await callback.answer()
+            await send_money_report(callback.message, callback.from_user.id, period)
+            return
         if report_kind == REPORT_KIND_PROJECTS:
             summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
             rows = await view_service.list_report_projects(callback.from_user.id, period)
             await callback.answer()
             await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
+            await send_money_report(callback.message, callback.from_user.id, period)
             return
         if report_kind == REPORT_KIND_DUPLICATES:
             rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
@@ -974,11 +982,12 @@ async def report_period_callback(callback: CallbackQuery) -> None:
             duplicates = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
             documents = await view_service.list_report_documents_for_company(callback.from_user.id, period)
             items = await view_service.list_report_items_for_company(callback.from_user.id, period)
-            filename, payload_bytes = build_manager_report_workbook(period, summary, projects, employees, duplicates, documents, items)
+            money_report = await get_money_report(callback.from_user.id, period)
+            filename, payload_bytes = build_manager_report_workbook(period, summary, projects, employees, duplicates, documents, items, money_report=money_report)
             await callback.answer()
             await callback.message.answer_document(BufferedInputFile(payload_bytes, filename=filename), caption=f'Выгрузка отчетов за период: {report_period_label(period)}')
             return
-    except CompanyAccessError as exc:
+    except (CompanyAccessError, AdvanceError) as exc:
         await callback.answer(str(exc), show_alert=True)
         return
 
@@ -1002,6 +1011,8 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
         reply_markup=build_report_documents_keyboard(REPORT_KIND_PROJECTS, period, project.id, documents),
         parse_mode='HTML',
     )
+
+    await send_money_report(callback.message, callback.from_user.id, period, project_id=project.id)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX))
@@ -1043,6 +1054,8 @@ async def report_employee_period_callback(callback: CallbackQuery) -> None:
         reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
         parse_mode='HTML',
     )
+
+    await send_money_report(callback.message, callback.from_user.id, period, employee_id=member.user_id)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX))

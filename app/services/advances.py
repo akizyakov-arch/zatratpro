@@ -162,3 +162,50 @@ class AdvanceService:
                 FROM totals t JOIN users u ON u.id=t.employee_id
                 ORDER BY u.first_name NULLS LAST,t.employee_id
             ''', member['company_id'], member['role']=='manager', actor)
+
+    async def report(self, actor, start, end=None, *, project_id=None, employee_id=None):
+        """Cash movements use receipt/approval dates, not the date of a receipt scan."""
+        from datetime import datetime, timezone
+        end = end or datetime.now(timezone.utc)
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise AdvanceError('Некорректный период отчёта.')
+        async with get_pool().acquire() as c:
+            member = await self._member(c, actor)
+            if member['role'] != 'manager' and employee_id not in (None, actor):
+                raise AdvanceError('Нет доступа к отчёту сотрудника.')
+            rows = await c.fetch('''
+                WITH selected AS (
+                    SELECT * FROM advances WHERE company_id=$1 AND created_at<$3
+                      AND ($4::bigint IS NULL OR project_id=$4)
+                      AND ($5::bigint IS NULL OR employee_id=$5)
+                      AND ($6::boolean OR employee_id=$7)
+                ), movements AS (
+                    SELECT id AS advance_id,'received' AS kind,amount,received_at AS at
+                    FROM selected WHERE received_at IS NOT NULL
+                    UNION ALL SELECT e.advance_id,'spent',e.amount,e.approved_at
+                    FROM advance_expenses e JOIN selected a ON a.id=e.advance_id WHERE e.approved_at IS NOT NULL
+                    UNION ALL SELECT r.advance_id,'returned',r.amount,r.approved_at
+                    FROM advance_returns r JOIN selected a ON a.id=r.advance_id WHERE r.approved_at IS NOT NULL
+                ), sums AS (
+                    SELECT advance_id,
+                      COALESCE(SUM(CASE WHEN kind='received' THEN amount ELSE -amount END) FILTER(WHERE at<$2),0) AS opening,
+                      COALESCE(SUM(amount) FILTER(WHERE kind='received' AND at>=$2 AND at<$3),0) AS received,
+                      COALESCE(SUM(amount) FILTER(WHERE kind='spent' AND at>=$2 AND at<$3),0) AS spent,
+                      COALESCE(SUM(amount) FILTER(WHERE kind='returned' AND at>=$2 AND at<$3),0) AS returned
+                    FROM movements GROUP BY advance_id
+                )
+                SELECT a.employee_id,a.project_id,u.first_name,u.last_name,p.name AS project_name,
+                  SUM(COALESCE(s.opening,0)) AS opening,SUM(COALESCE(s.received,0)) AS received,
+                  SUM(COALESCE(s.spent,0)) AS spent,SUM(COALESCE(s.returned,0)) AS returned,
+                  SUM(COALESCE(s.opening,0)+COALESCE(s.received,0)-COALESCE(s.spent,0)-COALESCE(s.returned,0)) AS closing,
+                  SUM(CASE WHEN a.received_at IS NULL OR a.received_at>=$3 THEN a.amount ELSE 0 END) AS pending,
+                  SUM(COALESCE((SELECT SUM(e.amount) FROM advance_expenses e WHERE e.advance_id=a.id AND e.created_at<$3 AND (e.approved_at IS NULL OR e.approved_at>=$3)),0)) AS pending_expenses,
+                  SUM(COALESCE((SELECT SUM(r.amount) FROM advance_returns r WHERE r.advance_id=a.id AND r.created_at<$3 AND (r.approved_at IS NULL OR r.approved_at>=$3)),0)) AS pending_returns
+                FROM selected a LEFT JOIN sums s ON s.advance_id=a.id
+                JOIN users u ON u.id=a.employee_id JOIN projects p ON p.id=a.project_id
+                GROUP BY a.employee_id,a.project_id,u.first_name,u.last_name,p.name
+                ORDER BY u.first_name NULLS LAST,a.employee_id,a.project_id
+            ''',member['company_id'],start,end,project_id,employee_id,member['role']=='manager',actor)
+        fields=('opening','received','spent','returned','closing','pending','pending_expenses','pending_returns')
+        return {'start':start,'end':end,'rows':[dict(row) for row in rows],
+                'totals':{key:sum((row[key] for row in rows),Decimal(0)) for key in fields}}

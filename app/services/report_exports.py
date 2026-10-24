@@ -15,6 +15,7 @@ def build_manager_report_workbook(
     duplicates,
     documents,
     items,
+    money_report=None,
 ) -> tuple[str, bytes]:
     workbook = Workbook()
 
@@ -73,6 +74,20 @@ def build_manager_report_workbook(
     items_sheet.append(['ID документа', 'Строка', 'Наименование', 'Количество', 'Цена', 'Сумма'])
     for row in items:
         items_sheet.append([row.document_id, row.line_no, row.name or '', float(row.quantity or 0), float(row.price or 0), float(row.line_total or 0)])
+
+    if money_report is not None:
+        money = workbook.create_sheet('Money')
+        money.append(['Сотрудник ID','Сотрудник','Проект ID','Проект','На начало RUB','Получено RUB','Принятые расходы RUB','Возвраты RUB','На конец RUB','Ожидает получения RUB','Расходы на проверке RUB','Возвраты на проверке RUB'])
+        for row in money_report['rows']:
+            name=' '.join(x for x in (row['first_name'],row['last_name']) if x)
+            money.append([row['employee_id'],name,row['project_id'],row['project_name']]+[float(row[k]) for k in ('opening','received','spent','returned','closing','pending','pending_expenses','pending_returns')])
+        money.append(['ИТОГО','','','']+[float(money_report['totals'][k]) for k in ('opening','received','spent','returned','closing','pending','pending_expenses','pending_returns')])
+        overview.append(['Деньги: остаток на начало RUB',float(money_report['totals']['opening'])])
+        overview.append(['Деньги: получено RUB',float(money_report['totals']['received'])])
+        overview.append(['Деньги: принято расходов RUB',float(money_report['totals']['spent'])])
+        overview.append(['Деньги: возвраты RUB',float(money_report['totals']['returned'])])
+        overview.append(['Деньги: остаток на конец RUB',float(money_report['totals']['closing'])])
+        overview.append(['Деньги: ожидает получения RUB',float(money_report['totals']['pending'])])
 
     for sheet in workbook.worksheets:
         # All cells in these exports are literal data; never export formulas from

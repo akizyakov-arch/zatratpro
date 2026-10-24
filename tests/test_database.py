@@ -431,3 +431,68 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await ui.finance_input(message))
         await ui.balances_entry(message)
         self.assertIn('0.00 RUB',message.answer.call_args.args[0])
+
+    async def test_money_report_opening_and_approval_dates_and_pending(self):
+        from datetime import datetime,timedelta,timezone
+        from app.services.advances import AdvanceService
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        aid=await s.issue(manager,employee,self.project.id,200,'x','report')
+        await s.receive(employee,aid)
+        await s.issue(manager,employee,self.project.id,300,'x','pending-report')
+        doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='report-doc')
+        eid=await s.attach(employee,aid,doc)
+        rid=await s.request_return(employee,aid,25,'report-return')
+        now=datetime.now(timezone.utc);start=now-timedelta(days=1)
+        async with self.pool.acquire() as c:
+            await c.execute('UPDATE advances SET created_at=$2,received_at=$2 WHERE id=$1',aid,now-timedelta(days=2))
+        before=await s.report(manager,start)
+        self.assertEqual(before['totals']['opening'],200)
+        self.assertEqual(before['totals']['received'],0)
+        self.assertEqual(before['totals']['closing'],200)
+        self.assertEqual(before['totals']['pending'],300)
+        self.assertEqual(before['totals']['pending_expenses'],100)
+        self.assertEqual(before['totals']['pending_returns'],25)
+        await s.approve_expense(manager,aid,eid);await s.approve_return(manager,aid,rid)
+        after=await s.report(manager,start)
+        self.assertEqual(after['totals']['spent'],100)
+        self.assertEqual(after['totals']['returned'],25)
+        self.assertEqual(after['totals']['closing'],75)
+        historical=await s.report(manager,start,now)
+        self.assertEqual(historical['totals']['closing'],200)
+        self.assertEqual(after['totals']['pending_expenses'],0)
+        self.assertEqual(after['totals']['pending_returns'],0)
+
+    async def test_money_report_scope_and_excel(self):
+        from datetime import datetime,timezone
+        from app.services.advances import AdvanceService,AdvanceError
+        from app.services.report_exports import build_manager_report_workbook
+        from openpyxl import load_workbook
+        from io import BytesIO
+        s=AdvanceService();manager,employee=await self.finance_ids()
+        aid=await s.issue(manager,employee,self.project.id,150,'x','report')
+        await s.receive(employee,aid)
+        start=datetime(2000,1,1,tzinfo=timezone.utc)
+        report=await s.report(manager,start,project_id=self.project.id)
+        self.assertEqual(report['totals']['closing'],150)
+        self.assertEqual((await s.report(manager,start,project_id=-1))['rows'],[])
+        with self.assertRaises(AdvanceError): await s.report(employee,start,employee_id=manager)
+        summary=SimpleNamespace(start_at=start,documents=0,total_amount=0,exact_duplicates=0,probable_duplicates=0)
+        _,data=build_manager_report_workbook('all_time',summary,[],[],[],[],[],money_report=report)
+        wb=load_workbook(BytesIO(data))
+        self.assertIn('Money',wb.sheetnames)
+        self.assertEqual(wb['Money'].cell(2,9).value,150)
+        self.assertEqual(wb['Money'].max_row,3)
+
+    async def test_money_report_callback_outputs_financial_summary(self):
+        from app.handlers.start import report_period_callback
+        from app.ui.reports import MANAGER_REPORTS_PERIOD_PREFIX
+        from app.services.advances import AdvanceService
+        manager,employee=await self.finance_ids()
+        aid=await AdvanceService().issue(manager,employee,self.project.id,50,'x','ui-report')
+        await AdvanceService().receive(employee,aid)
+        callback=SimpleNamespace(from_user=self.manager,data=MANAGER_REPORTS_PERIOD_PREFIX+'money:all_time',answer=AsyncMock(),message=SimpleNamespace(answer=AsyncMock()))
+        await report_period_callback(callback)
+        text=callback.message.answer.call_args.args[0]
+        self.assertIn('Отчёт по деньгам',text)
+        self.assertIn('Получено: 50.00',text)
+        self.assertIn('Остаток',text.replace('остаток','Остаток'))
