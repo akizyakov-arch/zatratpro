@@ -1,3 +1,5 @@
+import asyncio
+
 import asyncpg
 from asyncpg import Pool
 
@@ -5,24 +7,36 @@ from app.config import BASE_DIR, get_settings
 
 
 _pool: Pool | None = None
+_lifecycle_lock: asyncio.Lock | None = None
+_lifecycle_loop = None
+
+
+def _lock() -> asyncio.Lock:
+    global _lifecycle_lock, _lifecycle_loop
+    loop = asyncio.get_running_loop()
+    if _lifecycle_lock is None or _lifecycle_loop is not loop:
+        _lifecycle_lock = asyncio.Lock()
+        _lifecycle_loop = loop
+    return _lifecycle_lock
 
 
 async def init_db() -> Pool:
     global _pool
-    if _pool is None:
-        settings = get_settings()
-        pool = await asyncpg.create_pool(
-            host=settings.postgres_host, port=settings.postgres_port,
-            database=settings.postgres_db, user=settings.postgres_user,
-            password=settings.postgres_password, min_size=1, max_size=5,
-        )
-        try:
-            await _migrate(pool)
-        except BaseException:
-            await pool.close()
-            raise
-        _pool = pool
-    return _pool
+    async with _lock():
+        if _pool is None:
+            settings = get_settings()
+            pool = await asyncpg.create_pool(
+                host=settings.postgres_host, port=settings.postgres_port,
+                database=settings.postgres_db, user=settings.postgres_user,
+                password=settings.postgres_password, min_size=1, max_size=5,
+            )
+            try:
+                await _migrate(pool)
+            except BaseException:
+                await pool.close()
+                raise
+            _pool = pool
+        return _pool
 
 
 async def _migrate(pool: Pool) -> None:
@@ -47,9 +61,10 @@ async def _migrate(pool: Pool) -> None:
 
 async def close_db() -> None:
     global _pool
-    if _pool is not None:
-        await _pool.close()
-        _pool = None
+    async with _lock():
+        if _pool is not None:
+            await _pool.close()
+            _pool = None
 
 
 def get_pool() -> Pool:

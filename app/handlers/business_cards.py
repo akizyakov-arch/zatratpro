@@ -3,15 +3,18 @@ from datetime import datetime,timezone
 from aiogram import Router,F
 from aiogram.filters import Command
 
-from app.handlers.advances import actor,keyboard
+from app.handlers.telegram_identity import actor
+from app.ui.money import keyboard, send_details
+from app.services.finance_directory import FinanceDirectory
 from app.services.advances import AdvanceError
 from app.services.business_cards import BusinessCardService
-from app.services.database import get_pool
 from app.state.pending_actions import get_pending_action,pop_pending_action,set_pending_action
 from app.ui.main_menu import MENU_BUTTONS
+from app.state.locks import serialize_user
 
 router=Router()
 service=BusinessCardService()
+directory=FinanceDirectory()
 MENU='Бизнес-карты'
 
 
@@ -21,8 +24,7 @@ async def cards_entry(message):
     try:
         uid=await actor(message.from_user)
         cards=await service.cards(uid)
-        async with get_pool().acquire() as c:
-            member=await service.access._member(c,uid)
+        member = await directory.membership(uid)
         lines=['Бизнес-карты компании']+[f"{r['name']} ···· {r['last4']}" for r in cards]
         rows=[('Указать оплату чека картой','bcard:documents')]
         if member['role']=='manager': rows.insert(0,('Добавить карту','bcard:new'))
@@ -31,11 +33,12 @@ async def cards_entry(message):
         if member['role']=='manager':
             rows.extend([(f"Принять №{e['document_id']} · {e['amount']} · {e['project_name']}",f"bcard:approve:{e['id']}") for e in pending[:30]])
         lines.append(f'Расходов на проверке: {len(pending)}. Карточные покупки не уменьшают подотчётный остаток.')
-        await message.answer('\n'.join(lines),reply_markup=keyboard(rows))
+        await send_details(message, '\n'.join(lines), rows)
     except AdvanceError as exc: await message.answer(str(exc))
 
 
 @router.callback_query(F.data.startswith('bcard:'))
+@serialize_user
 async def card_callback(callback):
     if callback.message is None: return
     try:
@@ -43,8 +46,7 @@ async def card_callback(callback):
         parts=callback.data.split(':');action=parts[1]
         await callback.answer()
         if action=='new':
-            async with get_pool().acquire() as c:
-                member=await service.access._member(c,uid)
+            member = await directory.membership(uid)
             if member['role']!='manager': raise AdvanceError('Карты добавляет руководитель.')
             await set_pending_action(callback.from_user.id,'card_create')
             await callback.message.answer('Введите название и последние 4 цифры, например: Основная 1234. Полный номер, срок и CVV не отправляйте. /cancel — отмена.')
@@ -73,15 +75,23 @@ async def card_callback(callback):
 async def card_input(message):
     if not message.from_user or not message.text or message.text.startswith('/') or message.text in MENU_BUTTONS.values() or message.text in (MENU,'Главное меню','Выдача','Мои выдачи','Отчёт по деньгам'): return False
     state=await get_pending_action(message.from_user.id)
-    return state is not None and state.action=='card_create'
+    return {'pending_action': state} if state is not None and state.action=='card_create' else False
 
 
 @router.message(F.text,card_input)
-async def create_card(message):
+@serialize_user
+async def create_card(message, pending_action=None):
+    state = pending_action or await get_pending_action(message.from_user.id)
+    if state is None or state.action != 'card_create':
+        return
+    current = await get_pending_action(message.from_user.id)
+    if current is None or current.revision != state.revision:
+        await message.answer('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
+        return
     try:
         name,last4=message.text.strip().rsplit(maxsplit=1)
         await service.register(await actor(message.from_user),name,last4)
-        await pop_pending_action(message.from_user.id)
+        await pop_pending_action(message.from_user.id, expected_revision=state.revision)
         await message.answer('Карта добавлена. Храним только название и последние 4 цифры.')
     except (AdvanceError,ValueError) as exc:
         await message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Формат: Основная 1234. /cancel — отмена.')

@@ -14,7 +14,7 @@ from app.services.report_formatters import (
     report_period_label,
 )
 from app.services.views import ViewService
-from app.services.money_reports import get_money_report, send_money_report
+from app.handlers.money_reports import get_money_report, send_money_report
 from app.services.advances import AdvanceError
 from app.state.pending_actions import pop_pending_action, set_pending_action
 from app.state.pending_documents import get_pending_document

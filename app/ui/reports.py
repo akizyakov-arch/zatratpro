@@ -26,21 +26,10 @@ REPORT_KIND_EMPLOYEES = "employees"
 REPORT_KIND_DUPLICATES = "duplicates"
 REPORT_KIND_EXPORT = "export"
 
-REPORT_PERIOD_WEEK = "week"
-REPORT_PERIOD_MONTH = "month"
-REPORT_PERIOD_QUARTER = "quarter"
-REPORT_PERIOD_HALF_YEAR = "half_year"
-REPORT_PERIOD_YEAR = "year"
-REPORT_PERIOD_ALL = "all_time"
-
-REPORT_PERIOD_LABELS = {
-    REPORT_PERIOD_ALL: "Всё время",
-    REPORT_PERIOD_WEEK: "Неделя",
-    REPORT_PERIOD_MONTH: "Месяц",
-    REPORT_PERIOD_QUARTER: "Квартал",
-    REPORT_PERIOD_HALF_YEAR: "Полугодие",
-    REPORT_PERIOD_YEAR: "Год",
-}
+from app.services.report_periods import (
+    REPORT_PERIOD_WEEK, REPORT_PERIOD_MONTH, REPORT_PERIOD_QUARTER,
+    REPORT_PERIOD_HALF_YEAR, REPORT_PERIOD_YEAR, REPORT_PERIOD_ALL, REPORT_PERIOD_LABELS,
+)
 
 
 def build_reports_menu_keyboard() -> InlineKeyboardMarkup:

@@ -90,10 +90,23 @@ class CompanyService:
         settings = get_settings()
         system_role = "owner" if telegram_user.id == settings.bot_owner_telegram_id and settings.bot_owner_telegram_id else "user"
         async with pool.acquire() as connection, connection.transaction():
-            linked_id = await connection.fetchval("SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1",str(telegram_user.id))
-            if linked_id is not None:
-                await connection.execute('UPDATE users SET telegram_id=COALESCE(telegram_id,$2),username=$3,first_name=$4,last_name=$5,system_role=$6,updated_at=NOW() WHERE id=$1',linked_id,telegram_user.id,telegram_user.username,telegram_user.first_name,telegram_user.last_name,system_role)
-                return linked_id
+            linked = await connection.fetchrow(
+                """SELECT account.user_id,u.telegram_id,u.is_active FROM external_accounts account
+                   JOIN users u ON u.id=account.user_id
+                   WHERE account.platform='telegram' AND account.external_id=$1
+                   FOR NO KEY UPDATE OF u""", str(telegram_user.id),
+            )
+            if linked is not None:
+                if not linked['is_active']:
+                    raise CompanyAccessError('Учётная запись отключена.')
+                if linked['telegram_id'] not in (None, telegram_user.id):
+                    raise CompanyAccessError('Обнаружена несовместимая привязка аккаунта. Нужна проверка владельцем.')
+                await connection.execute(
+                    'UPDATE users SET telegram_id=COALESCE(telegram_id,$2),username=$3,first_name=$4,last_name=$5,system_role=$6,updated_at=NOW() WHERE id=$1',
+                    linked['user_id'], telegram_user.id, telegram_user.username,
+                    telegram_user.first_name, telegram_user.last_name, system_role,
+                )
+                return linked['user_id']
             user_id = await connection.fetchval(
                 """
                 INSERT INTO users (telegram_id, username, first_name, last_name, system_role)
@@ -104,22 +117,35 @@ class CompanyService:
                     last_name = EXCLUDED.last_name,
                     system_role = EXCLUDED.system_role,
                     updated_at = NOW()
+                WHERE users.is_active
                 RETURNING id
                 """,
-                telegram_user.id,
-                telegram_user.username,
-                telegram_user.first_name,
-                telegram_user.last_name,
-                system_role,
+                telegram_user.id, telegram_user.username, telegram_user.first_name,
+                telegram_user.last_name, system_role,
             )
-            await connection.execute("INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'telegram',$2) ON CONFLICT DO NOTHING",user_id,str(telegram_user.id))
-            linked_id = await connection.fetchval("SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1",str(telegram_user.id))
+            if user_id is None:
+                raise CompanyAccessError('Учётная запись отключена.')
+            await connection.execute(
+                "INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'telegram',$2) ON CONFLICT DO NOTHING",
+                user_id, str(telegram_user.id),
+            )
+            linked_id = await connection.fetchval(
+                "SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1",
+                str(telegram_user.id),
+            )
             if linked_id != user_id:
                 raise CompanyAccessError('Аккаунт уже привязан к другому пользователю.')
             return user_id
 
     async def is_platform_owner(self, telegram_user_id: int) -> bool:
-        return telegram_user_id != 0 and telegram_user_id == get_settings().bot_owner_telegram_id
+        if not telegram_user_id or telegram_user_id != get_settings().bot_owner_telegram_id:
+            return False
+        async with get_pool().acquire() as connection:
+            return bool(await connection.fetchval(
+                """SELECT 1 FROM external_accounts account JOIN users u ON u.id=account.user_id
+                   WHERE account.platform='telegram' AND account.external_id=$1 AND u.is_active
+                     AND u.telegram_id=$2""", str(telegram_user_id), telegram_user_id,
+            ))
 
     async def get_user_context(self, telegram_user_id: int) -> UserContext:
         pool = get_pool()
@@ -654,7 +680,7 @@ class CompanyService:
                 ON cm.user_id = u.id AND cm.status = 'active'
             JOIN companies AS c
                 ON c.id = cm.company_id AND c.status = 'active'
-            WHERE u.telegram_id = $1
+            WHERE u.telegram_id = $1 AND u.is_active
             ORDER BY cm.joined_at DESC, cm.id DESC
             """,
             telegram_user_id,

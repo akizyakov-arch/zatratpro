@@ -1,10 +1,11 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.documents import DocumentService
 from app.services.database import get_pool
+from app.services.report_periods import report_period_start
 
 
 @dataclass(slots=True)
@@ -1362,25 +1363,10 @@ class ViewService:
 
 
 def _report_period_start(period: str) -> datetime:
-    now = datetime.now(timezone.utc)
-    if period == 'all_time':
-        start_date = date(2000, 1, 1)
-    elif period == 'week':
-        start_date = (now - timedelta(days=now.weekday())).date()
-    elif period == 'month':
-        start_date = date(now.year, now.month, 1)
-    elif period == 'quarter':
-        quarter_month = ((now.month - 1) // 3) * 3 + 1
-        start_date = date(now.year, quarter_month, 1)
-    elif period == 'half_year':
-        half_year_month = 1 if now.month <= 6 else 7
-        start_date = date(now.year, half_year_month, 1)
-    elif period == 'year':
-        start_date = date(now.year, 1, 1)
-    else:
-        raise CompanyAccessError('Неизвестный период отчета.')
-    return datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
-
+    try:
+        return report_period_start(period)
+    except ValueError as exc:
+        raise CompanyAccessError(str(exc)) from exc
 
 
 def _display_name(first_name: str | None, last_name: str | None, username: str | None) -> str | None:
