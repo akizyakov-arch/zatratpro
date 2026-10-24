@@ -89,8 +89,12 @@ class CompanyService:
         pool = get_pool()
         settings = get_settings()
         system_role = "owner" if telegram_user.id == settings.bot_owner_telegram_id and settings.bot_owner_telegram_id else "user"
-        async with pool.acquire() as connection:
-            return await connection.fetchval(
+        async with pool.acquire() as connection, connection.transaction():
+            linked_id = await connection.fetchval("SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1",str(telegram_user.id))
+            if linked_id is not None:
+                await connection.execute('UPDATE users SET telegram_id=COALESCE(telegram_id,$2),username=$3,first_name=$4,last_name=$5,system_role=$6,updated_at=NOW() WHERE id=$1',linked_id,telegram_user.id,telegram_user.username,telegram_user.first_name,telegram_user.last_name,system_role)
+                return linked_id
+            user_id = await connection.fetchval(
                 """
                 INSERT INTO users (telegram_id, username, first_name, last_name, system_role)
                 VALUES ($1, $2, $3, $4, $5)
@@ -108,6 +112,11 @@ class CompanyService:
                 telegram_user.last_name,
                 system_role,
             )
+            await connection.execute("INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'telegram',$2) ON CONFLICT DO NOTHING",user_id,str(telegram_user.id))
+            linked_id = await connection.fetchval("SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1",str(telegram_user.id))
+            if linked_id != user_id:
+                raise CompanyAccessError('Аккаунт уже привязан к другому пользователю.')
+            return user_id
 
     async def is_platform_owner(self, telegram_user_id: int) -> bool:
         return telegram_user_id != 0 and telegram_user_id == get_settings().bot_owner_telegram_id

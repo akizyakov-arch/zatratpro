@@ -9,6 +9,8 @@ from app.handlers.documents import router as documents_router
 from app.handlers.start import router as start_router
 from app.handlers.advances import router as advances_router
 from app.handlers.business_cards import router as business_cards_router
+from app.handlers.profile import router as profile_router
+from app.handlers.link_notifications import start_notifications,stop_notifications
 from app.logging_utils import RedactingFormatter
 from app.services.database import close_db, init_db
 
@@ -21,12 +23,14 @@ def configure_logging() -> None:
     logging.disable(logging.NOTSET)
 
 
-async def on_startup() -> None:
+async def on_startup(bot: Bot) -> None:
     await init_db()
     logging.getLogger(__name__).info("Database pool initialized")
+    start_notifications(bot)
 
 
 async def on_shutdown() -> None:
+    await stop_notifications()
     await close_db()
     logging.getLogger(__name__).info("Database pool closed")
 
@@ -41,6 +45,7 @@ async def main() -> None:
     dispatcher.shutdown.register(on_shutdown)
 
     dispatcher.include_router(documents_router)
+    dispatcher.include_router(profile_router)
     dispatcher.include_router(business_cards_router)
     dispatcher.include_router(advances_router)
     dispatcher.include_router(start_router)

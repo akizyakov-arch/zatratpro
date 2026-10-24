@@ -19,6 +19,7 @@ MENU_BUTTONS = {
     "help": "Помощь",
     "back": "Назад",
     "money": "Деньги",
+    "profile": "Мой профиль",
 }
 
 
@@ -57,6 +58,8 @@ def build_main_menu_keyboard(
 
     if has_company and menu_kind != 'platform_owner':
         keyboard.insert(-1, [KeyboardButton(text=MENU_BUTTONS['money'])])
+
+    keyboard.append([KeyboardButton(text=MENU_BUTTONS['profile'])])
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,

@@ -581,3 +581,109 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await ui.cards_entry(SimpleNamespace(from_user=self.manager,answer=AsyncMock()))
         async with self.pool.acquire() as c:
             self.assertEqual(await c.fetchval('SELECT count(*) FROM card_expenses'),1)
+
+    async def test_account_link_requires_original_confirmation_and_preserves_membership(self):
+        from app.services.account_links import AccountLinkService
+        s=AccountLinkService()
+        request=await s.issue('telegram',str(self.employee.id),'max')
+        rid=await s.claim('max','max-123',request['code'])
+        self.assertIsNone(await s.resolve('max','max-123'))
+        pending=await s.pending('telegram',str(self.employee.id))
+        self.assertEqual(pending[0]['id'],rid)
+        uid=await s.confirm('telegram',str(self.employee.id),rid)
+        self.assertEqual(await s.resolve('max','max-123'),uid)
+        self.assertEqual(await s.confirm('telegram',str(self.employee.id),rid),uid)
+        self.assertEqual((await self.service.get_user_context(self.employee.id)).member_role,'employee')
+        async with self.pool.acquire() as c:
+            row=await c.fetchrow('SELECT code_hash FROM account_link_requests WHERE id=$1',rid)
+            self.assertNotEqual(row['code_hash'],request['code'])
+
+    async def test_account_link_expiration_replay_and_other_user_confirmation_denied(self):
+        from app.services.account_links import AccountLinkService,AccountLinkError
+        s=AccountLinkService();request=await s.issue('telegram',str(self.employee.id),'max')
+        rid=await s.claim('max','max-123',request['code'])
+        with self.assertRaises(AccountLinkError): await s.claim('max','max-456',request['code'])
+        with self.assertRaises(AccountLinkError): await s.confirm('telegram',str(self.manager.id),rid)
+        async with self.pool.acquire() as c:
+            await c.execute("UPDATE account_link_requests SET expires_at=NOW()-interval '1 second' WHERE id=$1",rid)
+        with self.assertRaises(AccountLinkError): await s.confirm('telegram',str(self.employee.id),rid)
+        self.assertIsNone(await s.resolve('max','max-123'))
+
+    async def test_account_link_invalid_attempts_are_counted_and_throttled(self):
+        from app.services.account_links import AccountLinkService,AccountLinkError
+        s=AccountLinkService()
+        for _ in range(5):
+            with self.assertRaises(AccountLinkError): await s.claim('max','guessing-user','wrong')
+        request=await s.issue('telegram',str(self.employee.id),'max')
+        with self.assertRaisesRegex(AccountLinkError,'Лимит'):
+            await s.claim('max','guessing-user',request['code'])
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval("SELECT count(*) FROM account_link_attempts WHERE external_id='guessing-user'"),5)
+
+    async def test_account_link_does_not_merge_existing_accounts_and_new_code_revokes_old(self):
+        from app.services.account_links import AccountLinkService,AccountLinkError
+        s=AccountLinkService()
+        first=await s.issue('telegram',str(self.employee.id),'max')
+        second=await s.issue('telegram',str(self.employee.id),'max')
+        with self.assertRaises(AccountLinkError): await s.claim('max','one',first['code'])
+        rid=await s.claim('max','one',second['code'])
+        await s.confirm('telegram',str(self.employee.id),rid)
+        manager_request=await s.issue('telegram',str(self.manager.id),'max')
+        with self.assertRaises(AccountLinkError): await s.claim('max','one',manager_request['code'])
+        with self.assertRaises(AccountLinkError): await s.issue('telegram',str(self.employee.id),'max')
+
+    async def test_concurrent_claim_of_code_has_only_one_winner(self):
+        from app.services.account_links import AccountLinkService,AccountLinkError
+        s=AccountLinkService();request=await s.issue('telegram',str(self.employee.id),'max')
+        results=await asyncio.gather(s.claim('max','one',request['code']),s.claim('max','two',request['code']),return_exceptions=True)
+        self.assertEqual(sum(isinstance(x,AccountLinkError) for x in results),1)
+        self.assertIsNone(await s.resolve('max','one'));self.assertIsNone(await s.resolve('max','two'))
+
+    async def test_link_notification_is_sent_once_to_original_account(self):
+        from app.services.account_links import AccountLinkService
+        from app.handlers.link_notifications import deliver_once
+        s=AccountLinkService();request=await s.issue('telegram',str(self.employee.id),'max')
+        await s.claim('max','candidate',request['code'])
+        bot=SimpleNamespace(send_message=AsyncMock())
+        await deliver_once(bot);await deliver_once(bot)
+        self.assertEqual(bot.send_message.await_count,1)
+        self.assertEqual(bot.send_message.call_args.kwargs['chat_id'],self.employee.id)
+        self.assertIsNone(await s.resolve('max','candidate'))
+
+    async def test_cancel_link_and_inactive_user_cannot_complete(self):
+        from app.services.account_links import AccountLinkService,AccountLinkError
+        s=AccountLinkService();request=await s.issue('telegram',str(self.employee.id),'max')
+        await s.cancel('telegram',str(self.employee.id),request['id'])
+        with self.assertRaises(AccountLinkError): await s.claim('max','candidate',request['code'])
+        request=await s.issue('telegram',str(self.employee.id),'max')
+        await s.claim('max','candidate',request['code'])
+        async with self.pool.acquire() as c:
+            await c.execute('UPDATE users SET is_active=FALSE WHERE telegram_id=$1',self.employee.id)
+        with self.assertRaises(AccountLinkError): await s.confirm('telegram',str(self.employee.id),request['id'])
+
+    async def test_linking_telegram_to_existing_identity_does_not_create_duplicate_user(self):
+        from app.services.account_links import AccountLinkService
+        from app.handlers.profile import claim_link
+        from aiogram.filters import CommandObject
+        s=AccountLinkService()
+        async with self.pool.acquire() as c:
+            uid=await c.fetchval("INSERT INTO users(first_name) VALUES('Existing MAX user') RETURNING id")
+            await c.execute("INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'max','existing-max')",uid)
+            count=await c.fetchval('SELECT count(*) FROM users')
+        request=await s.issue('max','existing-max','telegram')
+        new_user=self.user(1987654)
+        message=SimpleNamespace(from_user=new_user,chat=SimpleNamespace(type='private'),answer=AsyncMock())
+        await claim_link(message,CommandObject(prefix='/',command='link',args=request['code']))
+        self.assertIsNone(await s.resolve('telegram',str(new_user.id)))
+        await s.confirm('max','existing-max',request['id'])
+        self.assertEqual(await self.service.ensure_platform_user(new_user),uid)
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval('SELECT count(*) FROM users'),count)
+
+    async def test_profile_rejects_group_chat_without_disclosing_code(self):
+        from app.handlers.profile import profile_entry
+        message=SimpleNamespace(from_user=self.employee,chat=SimpleNamespace(type='group'),answer=AsyncMock())
+        await profile_entry(message)
+        self.assertIn('личном чате',message.answer.call_args.args[0])
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval('SELECT count(*) FROM account_link_requests'),0)
