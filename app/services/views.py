@@ -496,31 +496,12 @@ class ViewService:
         )
 
     async def rename_project(self, telegram_user_id: int, project_id: int, name: str) -> None:
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        role = await self.company_service.ensure_member_role(telegram_user_id)
-        if role != "manager":
-            raise CompanyAccessError("Действие доступно только manager.")
-        project_name = name.strip()
-        if not project_name:
-            raise CompanyAccessError("Название проекта не должно быть пустым.")
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                UPDATE projects
-                SET name = $3,
-                    updated_at = NOW()
-                WHERE company_id = $1
-                  AND id = $2
-                  AND status = 'active'
-                RETURNING id
-                """,
-                company.id,
-                project_id,
-                project_name,
-            )
-        if row is None:
-            raise CompanyAccessError("Активный проект не найден.")
+        from app.services.workspace import WorkspaceError, WorkspaceService
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            await WorkspaceService().rename_project(actor, project_id, name)
+        except WorkspaceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
 
     async def list_project_documents(self, telegram_user_id: int, project_id: int) -> list[DocumentRow]:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)
@@ -1215,64 +1196,21 @@ class ViewService:
         return [ReportItemDetail(**dict(row)) for row in rows]
 
     async def archive_company(self, telegram_user_id: int, company_id: int) -> None:
-        context = await self.company_service.get_user_context(telegram_user_id)
-        if context.platform_role != "owner":
-            raise CompanyAccessError("Действие доступно только owner.")
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                row = await connection.fetchrow(
-                    """
-                    UPDATE companies
-                    SET status = 'archived',
-                        archived_at = NOW(),
-                        updated_at = NOW(),
-                        manager_user_id = NULL
-                    WHERE id = $1
-                      AND status = 'active'
-                    RETURNING id
-                    """,
-                    company_id,
-                )
-                if row is None:
-                    raise CompanyAccessError("Компания не найдена или уже архивирована.")
-                await connection.execute(
-                    """
-                    UPDATE company_members
-                    SET status = 'removed',
-                        removed_at = NOW()
-                    WHERE company_id = $1
-                      AND status = 'active'
-                    """,
-                    company_id,
-                )
-                await connection.execute(
-                    """
-                    UPDATE company_invites
-                    SET status = 'revoked'
-                    WHERE company_id = $1
-                      AND status = 'active'
-                    """,
-                    company_id,
-                )
+        from app.services.workspace import WorkspaceError, WorkspaceService
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            await WorkspaceService().archive_company(actor, company_id)
+        except WorkspaceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
 
     async def revoke_manager_invite(self, telegram_user_id: int, company_id: int) -> bool:
-        context = await self.company_service.get_user_context(telegram_user_id)
-        if context.platform_role != "owner":
-            raise CompanyAccessError("Действие доступно только owner.")
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            result = await connection.execute(
-                """
-                UPDATE company_invites
-                SET status = 'revoked'
-                WHERE company_id = $1
-                  AND role = 'manager'
-                  AND status = 'active'
-                """,
-                company_id,
-            )
-        return not result.endswith("0")
+        from app.services.workspace import WorkspaceError, WorkspaceService
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            result = await WorkspaceService().revoke_invite(actor, company_id)
+        except WorkspaceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
+        return result['revoked']
 
     async def _list_members(self, company_id: int) -> list[MemberCard]:
         pool = get_pool()

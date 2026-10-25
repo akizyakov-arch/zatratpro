@@ -18,6 +18,20 @@ services:
       timeout: 5s
       retries: 5
 
+  zatratpro-web:
+    build: .
+    command: ["python", "-m", "app.web"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WEB_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      zatratpro-db:
+        condition: service_healthy
+
   zatratpro-bot:
     build: .
     container_name: zatratpro-bot

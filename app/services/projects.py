@@ -66,38 +66,13 @@ class ProjectService:
         return Project(id=row["id"], company_id=row["company_id"], name=row["name"], status=row["status"])
 
     async def create_project(self, telegram_user_id: int, name: str) -> Project:
-        member_role = await self.company_service.ensure_member_role(telegram_user_id)
-        if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError("Создавать проекты может только руководитель компании.")
-
-        project_name = name.strip()
-        if not project_name:
-            raise CompanyAccessError("Название проекта не должно быть пустым.")
-
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            created_by_user_id = await connection.fetchval(
-                "SELECT id FROM users WHERE telegram_id = $1",
-                telegram_user_id,
-            )
-            if created_by_user_id is None:
-                raise CompanyAccessError("Пользователь не найден в системе.")
-            try:
-                row = await connection.fetchrow(
-                    """
-                    INSERT INTO projects (company_id, name, status, created_by_user_id)
-                    VALUES ($1, $2, 'active', $3)
-                    RETURNING id, company_id, name, status
-                    """,
-                    company.id,
-                    project_name,
-                    created_by_user_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                raise CompanyAccessError(f"Не удалось создать проект: {exc}") from exc
-
-        return Project(id=row["id"], company_id=row["company_id"], name=row["name"], status=row["status"])
+        from app.services.workspace import WorkspaceError, WorkspaceService
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            row = await WorkspaceService().create_project(actor, name)
+        except WorkspaceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
+        return Project(id=row['id'], company_id=row['company_id'], name=row['name'], status=row['status'])
 
     async def archive_project(self, telegram_user_id: int, project_id: int) -> Project:
         return await self._set_status(
@@ -119,38 +94,12 @@ class ProjectService:
             access_message="Деархивировать проекты может только руководитель компании.",
         )
 
-    async def _set_status(
-        self,
-        telegram_user_id: int,
-        project_id: int,
-        target_status: str,
-        current_status: str,
-        not_found_message: str,
-        access_message: str,
-    ) -> Project:
-        member_role = await self.company_service.ensure_member_role(telegram_user_id)
-        if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError(access_message)
-
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                UPDATE projects
-                SET status = $3,
-                    archived_at = CASE WHEN $3 = 'archived' THEN NOW() ELSE NULL END,
-                    updated_at = NOW()
-                WHERE id = $1
-                  AND company_id = $2
-                  AND status = $4
-                RETURNING id, company_id, name, status
-                """,
-                project_id,
-                company.id,
-                target_status,
-                current_status,
-            )
-        if row is None:
-            raise CompanyAccessError(not_found_message)
-        return Project(id=row["id"], company_id=row["company_id"], name=row["name"], status=row["status"])
+    async def _set_status(self, telegram_user_id: int, project_id: int, target_status: str, current_status: str, not_found_message: str, access_message: str) -> Project:
+        from app.services.workspace import WorkspaceError, WorkspaceService
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            service = WorkspaceService()
+            row = await (service.archive_project(actor, project_id) if target_status == 'archived' else service.restore_project(actor, project_id))
+        except WorkspaceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
+        return Project(id=row['id'], company_id=row['company_id'], name=row['name'], status=row['status'])

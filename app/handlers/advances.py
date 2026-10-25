@@ -23,22 +23,35 @@ async def show_card(message,uid,aid):
     member = await directory.membership(uid)
     manager=member['role']=='manager'
     rows=[]
-    received='получено' if card['received_at'] else 'ожидает подтверждения получения'
+    canceled = card['canceled_at'] is not None
+    received='отменена' if canceled else ('получено' if card['received_at'] else 'ожидает подтверждения получения')
     text=f"Выдача №{aid}: {card['amount']} RUB\n{card['purpose']}\nСтатус: {received}\nОстаток: {card['balance']} RUB"
     if card['balance']<0:
         text+='\nПерерасход: компания должна сотруднику.'
-    if not manager and card['received_at'] is None:
+    if canceled:
+        text += f"\nПричина отмены: {card['cancel_reason']}"
+    if manager and not canceled and card['received_at'] is None:
+        rows.append(('Отменить выдачу', f'cash:cancel_issue:{aid}'))
+    if not manager and not canceled and card['received_at'] is None:
         rows.append(('Подтвердить получение',f'cash:receive:{aid}'))
-    if not manager and card['received_at']:
+    if not manager and not canceled and card['received_at']:
         rows.extend([('Приложить чек',f'cash:documents:{aid}'),('Вернуть остаток',f'cash:return:{aid}')])
     for expense in card['expenses']:
-        text+=f"\nЧек №{expense['document_id']}: {expense['amount']} — "+('принят' if expense['approved_at'] else 'на проверке')
-        if manager and not expense['approved_at']:
+        state = 'отклонён' if expense['rejected_at'] else ('принят' if expense['approved_at'] else 'на проверке')
+        text+=f"\nЧек №{expense['document_id']}: {expense['amount']} — {state}"
+        if expense['rejected_at']:
+            text += f". Причина: {expense['rejection_reason']}"
+        if manager and not expense['approved_at'] and not expense['rejected_at']:
             rows.append((f"Принять чек №{expense['document_id']}",f"cash:expense:{aid}:{expense['id']}"))
+            rows.append((f"Отклонить чек №{expense['document_id']}",f"cash:reject_expense:{aid}:{expense['id']}"))
     for ret in card['returns']:
-        text+=f"\nВозврат №{ret['id']}: {ret['amount']} — "+('принят' if ret['approved_at'] else 'на проверке')
-        if manager and not ret['approved_at']:
+        state = 'отклонён' if ret['rejected_at'] else ('принят' if ret['approved_at'] else 'на проверке')
+        text+=f"\nВозврат №{ret['id']}: {ret['amount']} — {state}"
+        if ret['rejected_at']:
+            text += f". Причина: {ret['rejection_reason']}"
+        if manager and not ret['approved_at'] and not ret['rejected_at']:
             rows.append((f"Подтвердить возврат {ret['amount']}",f"cash:approve_return:{aid}:{ret['id']}"))
+            rows.append((f"Отклонить возврат {ret['amount']}",f"cash:reject_return:{aid}:{ret['id']}"))
     rows.append(('Обновить',f'cash:card:{aid}'))
     await send_details(message, text, rows)
 
@@ -168,6 +181,17 @@ async def cash_callback(callback):
             await callback.message.answer('Отправьте сумму и назначение одним сообщением. Например: 15000 Краска и кисти. /cancel — отмена.')
         else:
             aid=int(parts[2])
+            if action in ('cancel_issue', 'reject_expense', 'reject_return'):
+                member = await directory.membership(uid)
+                if member['role'] != 'manager':
+                    raise AdvanceError('Решение принимает руководитель.')
+                await service.card(uid, aid)
+                payload = {'advance': aid}
+                if action != 'cancel_issue':
+                    payload['operation'] = int(parts[3])
+                await set_pending_action(callback.from_user.id, 'advance_' + action, payload)
+                await callback.message.answer('Укажите причину отмены или отклонения (до 1000 символов). /cancel — отмена ввода.')
+                return
             if action=='receive': await service.receive(uid,aid)
             elif action=='expense': await service.approve_expense(uid,aid,int(parts[3]))
             elif action=='approve_return': await service.approve_return(uid,aid,int(parts[3]))
@@ -207,7 +231,7 @@ async def cancel(message):
 @serialize_user
 async def amount_input(message, pending_action=None):
     state=pending_action or await get_pending_action(message.from_user.id)
-    if state is None or state.action not in ('advance_issue','advance_return'): return
+    if state is None or state.action not in ('advance_issue','advance_return','advance_cancel_issue','advance_reject_expense','advance_reject_return'): return
     current = await get_pending_action(message.from_user.id)
     if current is None or current.revision != state.revision:
         await message.answer('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
@@ -219,10 +243,20 @@ async def amount_input(message, pending_action=None):
             aid=await service.issue(uid,state.payload['employee'],state.payload['project'],amount,purpose,state.payload['key'])
             await pop_pending_action(message.from_user.id, expected_revision=state.revision)
             await message.answer('Выдача зарегистрирована. Сотрудник подтвердит получение в разделе «Деньги на закупки».')
-        else:
+        elif state.action == 'advance_return':
             aid=state.payload['advance']
             await service.request_return(uid,aid,message.text.strip(),state.payload['key'])
             await pop_pending_action(message.from_user.id, expected_revision=state.revision)
+        else:
+            aid = state.payload['advance']
+            if state.action == 'advance_cancel_issue':
+                await service.cancel(uid, aid, message.text)
+            elif state.action == 'advance_reject_expense':
+                await service.reject_expense(uid, aid, state.payload['operation'], message.text)
+            else:
+                await service.reject_return(uid, aid, state.payload['operation'], message.text)
+            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
+            await message.answer('Решение сохранено. Причина доступна в карточке выдачи сотруднику.')
         await show_card(message,uid,aid)
     except (AdvanceError,ValueError) as exc:
         await message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Укажите сумму и назначение. /cancel — отмена.')

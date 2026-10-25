@@ -32,7 +32,11 @@ async def cards_entry(message):
         pending=[e for e in expenses if not e['accepted']]
         if member['role']=='manager':
             rows.extend([(f"Принять №{e['document_id']} · {e['amount']} · {e['project_name']}",f"bcard:approve:{e['id']}") for e in pending[:30]])
+            rows.extend([(f"Отклонить №{e['document_id']}",f"bcard:reject:{e['id']}") for e in pending[:30]])
         lines.append(f'Расходов на проверке: {len(pending)}. Карточные покупки не уменьшают подотчётный остаток.')
+        rejected = await service.ledger(uid, status='rejected', per_page=10)
+        for expense in rejected['items']:
+            lines.append(f"Чек №{expense['document_id']} отклонён: {expense['rejection_reason']}")
         await send_details(message, '\n'.join(lines), rows)
     except AdvanceError as exc: await message.answer(str(exc))
 
@@ -68,6 +72,11 @@ async def card_callback(callback):
         elif action=='approve':
             await service.approve(uid,int(parts[2]))
             await callback.message.answer('Карточный расход принят.')
+        elif action=='reject':
+            member = await directory.membership(uid)
+            if member['role'] != 'manager': raise AdvanceError('Расходы проверяет руководитель.')
+            await set_pending_action(callback.from_user.id,'card_reject',{'expense':int(parts[2])})
+            await callback.message.answer('Укажите причину отклонения (до 1000 символов). /cancel — отмена ввода.')
     except (AdvanceError,ValueError,IndexError) as exc:
         await callback.message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Откройте раздел заново.')
 
@@ -75,20 +84,25 @@ async def card_callback(callback):
 async def card_input(message):
     if not message.from_user or not message.text or message.text.startswith('/') or message.text in MENU_BUTTONS.values() or message.text in (MENU,'Главное меню','Выдача','Мои выдачи','Отчёт по деньгам'): return False
     state=await get_pending_action(message.from_user.id)
-    return {'pending_action': state} if state is not None and state.action=='card_create' else False
+    return {'pending_action': state} if state is not None and state.action in ('card_create','card_reject') else False
 
 
 @router.message(F.text,card_input)
 @serialize_user
 async def create_card(message, pending_action=None):
     state = pending_action or await get_pending_action(message.from_user.id)
-    if state is None or state.action != 'card_create':
+    if state is None or state.action not in ('card_create','card_reject'):
         return
     current = await get_pending_action(message.from_user.id)
     if current is None or current.revision != state.revision:
         await message.answer('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
         return
     try:
+        if state.action == 'card_reject':
+            await service.reject(await actor(message.from_user), state.payload['expense'], message.text)
+            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
+            await message.answer('Расход отклонён. Причина доступна сотруднику в разделе «Бизнес-карты»; чек можно привязать заново.')
+            return
         name,last4=message.text.strip().rsplit(maxsplit=1)
         await service.register(await actor(message.from_user),name,last4)
         await pop_pending_action(message.from_user.id, expected_revision=state.revision)
