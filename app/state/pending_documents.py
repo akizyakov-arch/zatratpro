@@ -16,6 +16,7 @@ PENDING_DOCUMENT_TTL = timedelta(minutes=15)
 class PendingDocument:
     ocr_text: str
     normalized_text: str
+    source_type: str = "photo"
     extracted_document: DocumentSchema | None = None
     duplicate_check: DuplicateCheckResult | None = None
     selected_project_id: int | None = None
