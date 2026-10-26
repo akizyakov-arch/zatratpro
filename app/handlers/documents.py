@@ -11,6 +11,7 @@ from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService, DocumentValidationError
 from app.services.json_formatter import chunk_message, format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
+from app.services.pdf_files import PDFError, extract_pdf
 from app.services.projects import ProjectService
 from app.services.telegram_files import TelegramFileService
 from app.state.pending_actions import set_pending_action
@@ -96,7 +97,7 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
         return
     if pending_document.extracted_document is None or pending_document.selected_project_id is None:
         await clear_document_flow(callback.from_user.id, pending_document.upload_id)
-        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
+        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь документ заново.', reply_markup=menu_markup)
         return
     try:
         project = await project_service.get_active_project(callback.from_user.id, pending_document.selected_project_id)
@@ -115,7 +116,7 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
             normalized_text=pending_document.normalized_text,
             document=pending_document.extracted_document,
             duplicate_check=pending_document.duplicate_check,
-            source_type='photo',
+            source_type=pending_document.source_type,
             upload_id=pending_document.upload_id,
         )
     except DocumentValidationError as exc:
@@ -159,12 +160,22 @@ async def _ensure_company_access(message: Message) -> bool:
     return True
 
 
+@router.message(F.document)
+async def process_pdf(message: Message) -> None:
+    document = message.document
+    if document.mime_type != 'application/pdf' and not (document.file_name or '').lower().endswith('.pdf'):
+        await message.answer('Отправь PDF или фото документа. Для PDF: до 10 МБ и 10 страниц; в подписи укажи страницы одного документа, например 1-3 или «все».')
+        return
+    await process_photo(message)
+
+
 @router.message(F.photo)
 async def process_photo(message: Message) -> None:
     menu_markup = await _main_menu_markup(message)
     if not await _ensure_company_access(message):
         return
-    if not message.photo or message.from_user is None:
+    is_pdf = bool(getattr(message, 'document', None))
+    if (not message.photo and not is_pdf) or message.from_user is None:
         await message.answer('Фото не найдено в сообщении.', reply_markup=menu_markup)
         return
     upload_id = await begin_document_flow(message.from_user.id)
@@ -180,30 +191,38 @@ async def process_photo(message: Message) -> None:
     ocr_service = OCRSpaceService()
     deepseek_service = DeepSeekService()
 
-    await message.answer(f'{_person_name(message.from_user)}, фото получено. Начинаю распознавание.', reply_markup=menu_markup)
+    await message.answer(f'{_person_name(message.from_user)}, документ получен. Начинаю распознавание.', reply_markup=menu_markup)
     file_path = None
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
-            file_path = await file_service.download_best_photo(message.photo)
-            try:
-                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(file_path)
-            except TimeoutError:
-                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
-                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
-                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(file_path)
-            except OCRSpaceError as exc:
-                if 'E101' not in str(exc):
-                    raise
-                await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
-                await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
-                async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
-                    ocr_text = await ocr_service.extract_text(file_path)
+            if is_pdf:
+                async with asyncio.timeout(600):
+                    ocr_text = await extract_pdf(message, ocr_service)
+            else:
+                file_path = await file_service.download_best_photo(message.photo)
+                try:
+                    async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                        ocr_text = await ocr_service.extract_text(file_path)
+                except TimeoutError:
+                    await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
+                    await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
+                    async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                        ocr_text = await ocr_service.extract_text(file_path)
+                except OCRSpaceError as exc:
+                    if 'E101' not in str(exc):
+                        raise
+                    await message.answer('OCR занял слишком много времени, пробую еще раз.', reply_markup=menu_markup)
+                    await asyncio.sleep(OCR_RETRY_DELAY_SECONDS)
+                    async with asyncio.timeout(OCR_TIMEOUT_SECONDS):
+                        ocr_text = await ocr_service.extract_text(file_path)
     except TimeoutError:
         await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('OCR timed out')
         await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
+        return
+    except PDFError as exc:
+        await clear_document_flow(message.from_user.id, upload_id)
+        await message.answer(str(exc), reply_markup=menu_markup)
         return
     except OCRSpaceError as exc:
         await clear_document_flow(message.from_user.id, upload_id)
@@ -213,7 +232,7 @@ async def process_photo(message: Message) -> None:
     except Exception as exc:  # noqa: BLE001
         await clear_document_flow(message.from_user.id, upload_id)
         logger.exception('Unexpected error while processing photo')
-        await message.answer('Не удалось обработать фото. Попробуй ещё раз позже.', reply_markup=menu_markup)
+        await message.answer('Не удалось обработать документ. Попробуй ещё раз позже.', reply_markup=menu_markup)
         return
 
     finally:
@@ -259,10 +278,11 @@ async def process_photo(message: Message) -> None:
             ocr_text=ocr_text,
             normalized_text=preview_text,
             extracted_document=document,
+            source_type="pdf" if is_pdf else "photo",
         ),
     )
     if not stored:
-        await message.answer("Загрузка истекла или отменена. Отправь фото заново.")
+        await message.answer("Загрузка истекла или отменена. Отправь документ заново.")
         return
     for chunk in chunk_message(preview_text):
         await message.answer(chunk, reply_markup=menu_markup)
@@ -322,7 +342,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
     menu_markup = await _main_menu_markup_for_user(callback.from_user)
     pending_document = await get_pending_document(callback.from_user.id)
     if pending_document is None:
-        await callback.answer('Нет подготовленного документа. Отправь фото заново.', show_alert=True)
+        await callback.answer('Нет подготовленного документа. Отправь документ заново.', show_alert=True)
         return
 
     try:
@@ -348,7 +368,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
     document = pending_document.extracted_document
     if document is None:
         await clear_document_flow(callback.from_user.id, pending_document.upload_id)
-        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь фото заново.', reply_markup=menu_markup)
+        await callback.message.answer('Не удалось восстановить подготовленный документ. Отправь документ заново.', reply_markup=menu_markup)
         return
     try:
         duplicate_check = await document_service.find_company_duplicate_document(
@@ -360,7 +380,7 @@ async def process_project_selection(callback: CallbackQuery) -> None:
         pending_document.duplicate_check = duplicate_check
         pending_document.selected_project_id = project.id
         if not await store_pending_document(callback.from_user.id, pending_document):
-            await callback.message.answer("Документ истёк или отменён. Отправь фото заново.")
+            await callback.message.answer("Документ истёк или отменён. Отправь документ заново.")
             return
         if duplicate_check.status in {'exact', 'probable'}:
             duplicate_info = await document_service.get_duplicate_document_info(
@@ -413,7 +433,7 @@ async def duplicate_save_callback(callback: CallbackQuery) -> None:
         await callback.answer('Эта загрузка уже завершена или истекла.', show_alert=True)
         return
     if pending_document.duplicate_check is None:
-        await callback.answer('Нет документа для подтверждения. Отправь фото заново.', show_alert=True)
+        await callback.answer('Нет документа для подтверждения. Отправь документ заново.', show_alert=True)
         return
     await callback.answer()
     await _save_pending_document(callback, pending_document, await _main_menu_markup_for_user(callback.from_user))

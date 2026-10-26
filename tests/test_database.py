@@ -214,6 +214,28 @@ class DatabaseTests(DatabaseFixture):
                 self.assertEqual(await has_active_document_flow(self.employee.id), not failure)
                 await clear_document_flow(self.employee.id)
 
+    async def test_pdf_preview_project_save_and_failure_cleanup(self):
+        from app.services.pdf_files import PDFError
+        @asynccontextmanager
+        async def no_typing(**kwargs):
+            yield
+        message = SimpleNamespace(from_user=self.employee, photo=None,
+            document=SimpleNamespace(mime_type='application/pdf', file_name='receipt.pdf'),
+            caption='все', chat=SimpleNamespace(id=1), bot=object(), answer=AsyncMock())
+        with patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers, 'extract_pdf', AsyncMock(return_value='Кассовый чек')), patch.object(handlers.DeepSeekService, 'extract_document', AsyncMock(return_value=self.document.model_dump())):
+            await handlers.process_pdf(message)
+        draft = await get_pending_document(self.employee.id)
+        self.assertEqual(draft.source_type, 'pdf')
+        self.assertEqual(await self.document_count(), 0)
+        cb = self.callback(f'{PROJECT_CALLBACK_PREFIX}{self.project.id}:{draft.upload_id}')
+        await handlers.process_project_selection(cb)
+        self.assertEqual(await self.document_count(), 1)
+        self.assertEqual(await self.pool.fetchval('SELECT source_type FROM documents'), 'pdf')
+        with patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers, 'extract_pdf', AsyncMock(side_effect=PDFError('bad PDF'))):
+            await handlers.process_pdf(message)
+        self.assertFalse(await has_active_document_flow(self.employee.id))
+        self.assertEqual(await self.document_count(), 1)
+
     async def test_save_failure_keeps_draft_for_idempotent_retry(self):
         draft = await self.make_draft()
         cb = self.callback(f'{PROJECT_CALLBACK_PREFIX}{self.project.id}:{draft.upload_id}')

@@ -358,7 +358,7 @@ async def join_company_button(message: Message) -> None:
 async def upload_document_entry(message: Message) -> None:
     if not await _require_company_access(message):
         return
-    await message.answer(f'{_person_name(message.from_user)}, отправь фото документа. После preview я предложу проекты кнопками.', reply_markup=await _main_menu_markup(message))
+    await message.answer(f'{_person_name(message.from_user)}, отправь фото или PDF документа (до 10 МБ, 10 страниц). Для PDF укажи в подписи страницы одного документа: 1-3 или «все». После распознавания я предложу проекты кнопками.', reply_markup=await _main_menu_markup(message))
 
 
 @router.message(F.text == MENU_BUTTONS['companies'])
@@ -1284,11 +1284,11 @@ async def help_topic_callback(callback: CallbackQuery) -> None:
 @router.message(F.text)
 async def handle_pending_text(message: Message) -> None:
     if message.from_user is None or not message.text:
-        await message.answer('Поддерживаются кнопки главного меню, /start, /help, /join и фото документов.', reply_markup=await _main_menu_markup(message))
+        await message.answer('Поддерживаются кнопки главного меню, /start, /help, /join и фото/PDF документов.', reply_markup=await _main_menu_markup(message))
         return
     pending_action = await pop_pending_action(message.from_user.id)
     if pending_action is None:
-        await message.answer('Используй кнопки главного меню или отправь фото документа.', reply_markup=await _main_menu_markup(message))
+        await message.answer('Используй кнопки главного меню или отправь фото/PDF документа.', reply_markup=await _main_menu_markup(message))
         return
     text_value = message.text.strip()
     try:
