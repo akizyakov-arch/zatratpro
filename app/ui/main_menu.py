@@ -19,6 +19,7 @@ MENU_BUTTONS = {
     "help": "Помощь",
     "back": "Назад",
     "money": "Деньги",
+    "settings": "Настройки",
     "profile": "Мой профиль",
 }
 
@@ -65,7 +66,7 @@ def build_main_menu_keyboard(
         url = mini_app_url()
         if url:
             keyboard.insert(0, [KeyboardButton(text='Панель руководителя')])
-    keyboard.append([KeyboardButton(text=MENU_BUTTONS['profile'])])
+    keyboard.append([KeyboardButton(text=MENU_BUTTONS['profile']), KeyboardButton(text=MENU_BUTTONS['settings'])])
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,

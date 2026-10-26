@@ -208,7 +208,7 @@ class DatabaseTests(DatabaseFixture):
                 path = Path(folder) / 'prepared.jpg'
                 path.write_bytes(b'fake prepared image')
                 message = SimpleNamespace(from_user=self.employee, photo=[SimpleNamespace(file_id='x')], chat=SimpleNamespace(id=1), bot=object(), answer=AsyncMock())
-                with patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers.TelegramFileService, 'download_best_photo', AsyncMock(return_value=path)), patch.object(handlers.OCRSpaceService, 'extract_text', AsyncMock(side_effect=OCRSpaceError('failed')) if failure else AsyncMock(return_value='Кассовый чек')), patch.object(handlers.DeepSeekService, 'extract_document', AsyncMock(return_value=self.document.model_dump())):
+                with patch.object(handlers, 'get_provider_name', AsyncMock(return_value='ocr_space')), patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers.TelegramFileService, 'download_best_photo', AsyncMock(return_value=path)), patch.object(handlers.OCRSpaceService, 'extract_text', AsyncMock(side_effect=OCRSpaceError('failed')) if failure else AsyncMock(return_value='Кассовый чек')), patch.object(handlers.DeepSeekService, 'extract_document', AsyncMock(return_value=self.document.model_dump())):
                     await handlers.process_photo(message)
                 self.assertFalse(path.exists())
                 self.assertEqual(await has_active_document_flow(self.employee.id), not failure)
@@ -222,7 +222,7 @@ class DatabaseTests(DatabaseFixture):
         message = SimpleNamespace(from_user=self.employee, photo=None,
             document=SimpleNamespace(mime_type='application/pdf', file_name='receipt.pdf'),
             caption='все', chat=SimpleNamespace(id=1), bot=object(), answer=AsyncMock())
-        with patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers, 'extract_pdf', AsyncMock(return_value='Кассовый чек')), patch.object(handlers.DeepSeekService, 'extract_document', AsyncMock(return_value=self.document.model_dump())):
+        with patch.object(handlers, 'get_provider_name', AsyncMock(return_value='ocr_space')), patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers, 'extract_pdf', AsyncMock(return_value='Кассовый чек')), patch.object(handlers.DeepSeekService, 'extract_document', AsyncMock(return_value=self.document.model_dump())):
             await handlers.process_pdf(message)
         draft = await get_pending_document(self.employee.id)
         self.assertEqual(draft.source_type, 'pdf')
@@ -231,7 +231,7 @@ class DatabaseTests(DatabaseFixture):
         await handlers.process_project_selection(cb)
         self.assertEqual(await self.document_count(), 1)
         self.assertEqual(await self.pool.fetchval('SELECT source_type FROM documents'), 'pdf')
-        with patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers, 'extract_pdf', AsyncMock(side_effect=PDFError('bad PDF'))):
+        with patch.object(handlers, 'get_provider_name', AsyncMock(return_value='ocr_space')), patch.object(handlers.ChatActionSender, 'typing', no_typing), patch.object(handlers, 'extract_pdf', AsyncMock(side_effect=PDFError('bad PDF'))):
             await handlers.process_pdf(message)
         self.assertFalse(await has_active_document_flow(self.employee.id))
         self.assertEqual(await self.document_count(), 1)
