@@ -4,6 +4,7 @@ import re
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.member_directory import MemberDirectory
+from app.services.membership import MembershipError
 from app.services.money_reports import format_money_report, get_money_report_for_user
 from app.services.report_periods import report_period_start
 
@@ -63,8 +64,8 @@ class MaxHandler:
         sender, text = event
         try:
             return sender, await self._command(sender, text)
-        except (AccountLinkError, AdvanceError, ValueError) as exc:
-            return sender, str(exc) if isinstance(exc, (AccountLinkError, AdvanceError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
+        except (AccountLinkError, AdvanceError, MembershipError, ValueError) as exc:
+            return sender, str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
 
     async def _command(self, sender, text):
         parts = text.split(maxsplit=1)
@@ -73,7 +74,7 @@ class MaxHandler:
             if not arg:
                 return LINK_HELP
             await self.links.claim('max', str(sender), arg)
-            return 'Заявка создана. Подтвердите этот MAX-аккаунт в исходном Telegram-профиле. До подтверждения доступ не выдан.'
+            return 'Заявка создана или уже принята ранее. Если ещё не подтвердили этот MAX-аккаунт, откройте исходный Telegram-профиль. До подтверждения доступ не выдан. После подтверждения: /profile.'
         actor = await self.links.resolve('max', str(sender))
         if actor is None:
             return LINK_HELP

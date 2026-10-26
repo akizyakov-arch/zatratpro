@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from app.services.database import get_pool
+from app.services.membership import MembershipError, require_member
 
 
 class AdvanceError(ValueError):
@@ -40,16 +41,10 @@ class AdvanceService:
             return await self._member(connection, actor)
 
     async def _member(self, c, actor):
-        row = await c.fetchrow(
-            """SELECT cm.company_id,cm.role FROM company_members cm
-               JOIN companies co ON co.id=cm.company_id
-               JOIN users u ON u.id=cm.user_id
-               WHERE cm.user_id=$1 AND cm.status='active' AND co.status='active'
-                 AND u.is_active AND cm.role IN ('manager','employee')""", actor,
-        )
-        if row is None:
-            raise AdvanceError('Нет доступа к активной компании.')
-        return row
+        try:
+            return await require_member(c, actor)
+        except MembershipError as exc:
+            raise AdvanceError(str(exc)) from None
 
     async def _access(self, c, actor, aid, manager=False):
         member = await self._lock_member(c, actor)

@@ -131,12 +131,28 @@ class AccountLinkService:
 
     async def claim(self, target_platform, target_external_id, code):
         identity(target_platform, target_external_id)
+        # Only the same authenticated candidate may repeat a completed claim.
+        # Check before rate accounting so transport retries cannot exhaust it.
+        # No access is granted here; source confirmation remains mandatory.
+        try:
+            code_hash = digest(code)
+        except AccountLinkError:
+            await self._record_attempt(target_platform, target_external_id)
+            raise
+        async with get_pool().acquire() as connection:
+            repeated = await connection.fetchval(
+                """SELECT id FROM account_link_requests
+                   WHERE code_hash=$1 AND target_platform=$2 AND target_external_id=$3
+                     AND status IN ('claimed','confirmed') AND expires_at>clock_timestamp()""",
+                code_hash, target_platform, target_external_id,
+            )
+            if repeated is not None:
+                return repeated
         await self._record_attempt(target_platform, target_external_id)
-        code_hash = digest(code)
         async with get_pool().acquire() as connection, connection.transaction():
             row = await connection.fetchrow(
                 '''SELECT * FROM account_link_requests
-                   WHERE code_hash=$1 AND target_platform=$2 AND status='issued' FOR UPDATE''',
+                   WHERE code_hash=$1 AND target_platform=$2 AND status IN ('issued','claimed','confirmed') FOR UPDATE''',
                 code_hash, target_platform,
             )
             # Recheck the wall clock AFTER acquiring the row lock. NOW() freezes at
@@ -144,6 +160,10 @@ class AccountLinkService:
             if row is None or not await connection.fetchval(
                 'SELECT expires_at>clock_timestamp() FROM account_link_requests WHERE id=$1', row['id'],
             ):
+                raise AccountLinkError('Код недействителен, истёк или уже использован.')
+            if row['status'] != 'issued':
+                if row['target_external_id'] == target_external_id:
+                    return row['id']
                 raise AccountLinkError('Код недействителен, истёк или уже использован.')
             if await connection.fetchval(
                 'SELECT 1 FROM external_accounts WHERE platform=$1 AND external_id=$2',

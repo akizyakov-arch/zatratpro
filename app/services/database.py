@@ -3,7 +3,7 @@ import asyncio
 import asyncpg
 from asyncpg import Pool
 
-from app.config import BASE_DIR, get_settings
+from app.config import BASE_DIR, get_database_settings
 
 
 _pool: Pool | None = None
@@ -24,7 +24,7 @@ async def init_db() -> Pool:
     global _pool
     async with _lock():
         if _pool is None:
-            settings = get_settings()
+            settings = get_database_settings()
             pool = await asyncpg.create_pool(
                 host=settings.postgres_host, port=settings.postgres_port,
                 database=settings.postgres_db, user=settings.postgres_user,
@@ -49,12 +49,6 @@ async def _migrate(pool: Pool) -> None:
                 if not await connection.fetchval('SELECT 1 FROM schema_migrations WHERE name=$1', path.name):
                     await connection.execute(path.read_text())
                     await connection.execute('INSERT INTO schema_migrations VALUES ($1)', path.name)
-            # Configuration, rather than a stale cached role, owns this privilege.
-            await connection.execute(
-                "UPDATE users SET system_role=CASE WHEN telegram_id=$1 AND $1<>0 THEN 'owner' ELSE 'user' END "
-                "WHERE system_role IS DISTINCT FROM CASE WHEN telegram_id=$1 AND $1<>0 THEN 'owner' ELSE 'user' END",
-                get_settings().bot_owner_telegram_id,
-            )
             await connection.execute('DELETE FROM pending_document_flows WHERE expires_at <= NOW()')
             await connection.execute('DELETE FROM pending_actions WHERE expires_at <= NOW()')
 
