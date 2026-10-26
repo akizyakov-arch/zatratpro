@@ -1,0 +1,57 @@
+# Use together with docker-compose.yml on the deployment server.
+services:
+  zatratpro-web:
+    environment:
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 8080
+      WEB_ORIGIN: https://${WEB_DOMAIN:?Set WEB_DOMAIN to the panel hostname}
+      WEB_ALLOWED_HOSTS: ${WEB_DOMAIN:?Set WEB_DOMAIN to the panel hostname}
+      WEB_COOKIE_SECURE: "true"
+      WEB_TRUSTED_PROXIES: ${FIINOPS_PROXY_IP:-172.29.248.2}
+    networks:
+      default:
+      web-edge:
+        ipv4_address: ${FIINOPS_WEB_IP:-172.29.248.3}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8080/healthz',headers={'Host':os.environ['WEB_ALLOWED_HOSTS']}); urllib.request.urlopen(r,timeout=3).close()"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      WEB_DOMAIN: ${WEB_DOMAIN:?Set WEB_DOMAIN to the panel hostname}
+      # Only Docker-local backend traffic skips the outbound Internet proxy.
+      # Existing exclusions and proxy settings for external HTTPS are retained.
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1},zatratpro-web
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1},zatratpro-web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      zatratpro-web:
+        condition: service_healthy
+    networks:
+      web-edge:
+        ipv4_address: ${FIINOPS_PROXY_IP:-172.29.248.2}
+
+networks:
+  web-edge:
+    ipam:
+      config:
+        - subnet: ${FIINOPS_PROXY_SUBNET:-172.29.248.0/24}
+
+volumes:
+  caddy_data:
+  caddy_config:

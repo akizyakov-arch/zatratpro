@@ -1,4 +1,10 @@
 .env
+.env.*
+!.env.example
+!.env.production.example
+backups/
+artifacts/
+demo-build/
 .venv/
 __pycache__/
 *.py[cod]

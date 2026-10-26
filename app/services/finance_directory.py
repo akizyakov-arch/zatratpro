@@ -52,7 +52,7 @@ class FinanceDirectory:
             return await c.fetch(
                 """SELECT id,total_amount,vendor FROM documents
                    WHERE company_id=$1 AND project_id=$2 AND uploaded_by_user_id=$3
-                     AND NOT EXISTS(SELECT 1 FROM advance_expenses e WHERE e.document_id=documents.id)
-                     AND NOT EXISTS(SELECT 1 FROM card_expenses e WHERE e.document_id=documents.id)
+                     AND NOT EXISTS(SELECT 1 FROM advance_expenses e WHERE e.document_id=documents.id AND e.rejected_at IS NULL)
+                     AND NOT EXISTS(SELECT 1 FROM card_expenses e WHERE e.document_id=documents.id AND e.rejected_at IS NULL)
                    ORDER BY id DESC LIMIT 30""", advance['company_id'], advance['project_id'], actor,
             )

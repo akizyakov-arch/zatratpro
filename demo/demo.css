@@ -1,0 +1,50 @@
+.demo-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #fff2cb;
+  color: #382c12;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+  border-bottom: 1px solid #e4ce8e;
+}
+.demo-bar label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.demo-bar select,
+.demo-bar button {
+  padding: 6px 10px;
+  border: 1px solid #c5ad70;
+  border-radius: 7px;
+  background: white;
+  color: #382c12;
+  font: inherit;
+  cursor: pointer;
+}
+.demo-bar p {
+  margin: 0;
+}
+.demo-bar:focus-within {
+  outline: none;
+}
+body .sidebar {
+  top: var(--demo-height, 62px);
+  height: calc(100dvh - var(--demo-height, 62px));
+}
+@media (max-width: 650px) {
+  .demo-bar {
+    padding: 8px 12px;
+  }
+  .demo-bar p {
+    flex-basis: 100%;
+  }
+}

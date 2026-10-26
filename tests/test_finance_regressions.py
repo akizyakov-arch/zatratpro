@@ -68,7 +68,12 @@ class FinanceRegressionTests(DatabaseFixture):
         service = AdvanceService()
         aid = await service.issue(manager, employee, self.project.id, 100, 'Materials', 'archived-retry')
         async with self.pool.acquire() as connection:
+            # Simulate a legacy archived project. New archival is prohibited
+            # while settlements remain open, but retries must still work for
+            # records created before that guard was introduced.
+            await connection.execute('ALTER TABLE projects DISABLE TRIGGER workspace_projects_settlement')
             await connection.execute("UPDATE projects SET status='archived' WHERE id=$1", self.project.id)
+            await connection.execute('ALTER TABLE projects ENABLE TRIGGER workspace_projects_settlement')
         self.assertEqual(
             await service.issue(manager, employee, self.project.id, 100, 'Materials', 'archived-retry'), aid,
         )

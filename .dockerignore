@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+.venv
+.venvs
+__pycache__
+**/__pycache__
+*.pyc
+*.log
+*.dump
+backups
+artifacts
+tests
+docs
+tmp/*
+!tmp/.gitkeep

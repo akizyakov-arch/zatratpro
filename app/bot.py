@@ -10,6 +10,7 @@ from app.handlers.start import router as start_router
 from app.handlers.advances import router as advances_router
 from app.handlers.business_cards import router as business_cards_router
 from app.handlers.profile import router as profile_router
+from app.handlers.web_login import router as web_login_router
 from app.handlers.link_notifications import start_notifications,stop_notifications
 from app.logging_utils import RedactingFormatter
 from app.services.database import close_db, init_db
@@ -44,6 +45,7 @@ async def main() -> None:
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
 
+    dispatcher.include_router(web_login_router)
     dispatcher.include_router(documents_router)
     dispatcher.include_router(profile_router)
     dispatcher.include_router(business_cards_router)
