@@ -192,6 +192,7 @@ async def process_photo(message: Message) -> None:
     provider = await get_provider_name(message.from_user.id)
     ocr_service = create_recognizer(provider)
     deepseek_service = DeepSeekService()
+    logger.info('recognition_start upload=%s source=%s provider=%s', upload_id, 'pdf' if is_pdf else 'photo', provider)
 
     await message.answer(f'{_person_name(message.from_user)}, документ получен. Распознавание: {PROVIDERS[provider]}.', reply_markup=menu_markup)
     file_path = None
@@ -223,12 +224,13 @@ async def process_photo(message: Message) -> None:
         await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except PDFError as exc:
+        logger.warning('pdf_rejected upload=%s error_type=%s', upload_id, type(exc).__name__)
         await clear_document_flow(message.from_user.id, upload_id)
         await message.answer(str(exc), reply_markup=menu_markup)
         return
     except OCRSpaceError as exc:
         await clear_document_flow(message.from_user.id, upload_id)
-        logger.exception('OCR failed')
+        logger.exception('Recognition failed upload=%s provider=%s', upload_id, provider)
         await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001

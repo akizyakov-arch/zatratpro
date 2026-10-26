@@ -35,6 +35,42 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
                     await DeepSeekVisionService().extract_text(path)
                 self.assertNotIn('test-key',str(error.exception))
 
+    async def test_incomplete_response_retries_once_with_larger_budget(self):
+        import httpx
+        from PIL import Image
+        settings = SimpleNamespace(deepseek_base_url='https://api.deepseek.com', deepseek_api_key='private-api-key', deepseek_vision_model='deepseek-flash')
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.side_effect = [httpx.Response(200, json={'choices':[{'finish_reason':finish,'message':{'content':text}}]}, request=httpx.Request('POST',settings.deepseek_base_url)) for finish,text in [('length','partial'),('stop','complete')]]
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'image.jpg'
+            Image.new('RGB',(10,10),'white').save(path)
+            with patch('app.services.recognition.get_settings',return_value=settings), patch('app.services.recognition.httpx.AsyncClient',return_value=client):
+                self.assertEqual(await DeepSeekVisionService().extract_text(path),'complete')
+        self.assertEqual(client.post.await_count,2)
+        self.assertEqual([call.kwargs['json']['max_tokens'] for call in client.post.call_args_list],[8192,16384])
+
+    async def test_rejection_logs_only_safe_metadata_and_returns_reference(self):
+        import httpx
+        from PIL import Image
+        settings = SimpleNamespace(deepseek_base_url='https://api.deepseek.com', deepseek_api_key='private-api-key', deepseek_vision_model='deepseek-flash')
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = httpx.Response(200, json={'usage':{'completion_tokens':8192}, 'choices':[{'finish_reason':'length','message':{'content':'PRIVATE DOCUMENT'}}]}, request=httpx.Request('POST',settings.deepseek_base_url))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'image.jpg'
+            Image.new('RGB',(10,10),'white').save(path)
+            with patch('app.services.recognition.get_settings',return_value=settings), patch('app.services.recognition.httpx.AsyncClient',return_value=client), self.assertLogs('app.services.recognition', level='INFO') as logs:
+                with self.assertRaises(OCRSpaceError) as error:
+                    await DeepSeekVisionService().extract_text(path)
+            output = ' '.join(logs.output)
+            self.assertIn('finish=length',output)
+            self.assertIn('reason=truncated',output)
+            self.assertIn('completion_tokens=8192',output)
+            self.assertNotIn('PRIVATE DOCUMENT',output)
+            self.assertNotIn('private-api-key',output)
+            self.assertIn('Код ошибки:',str(error.exception))
+
     async def test_large_image_contains_four_bounded_detail_views(self):
         from PIL import Image
         from app.services.recognition import image_blocks
