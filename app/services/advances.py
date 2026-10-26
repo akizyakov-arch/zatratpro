@@ -69,12 +69,14 @@ class AdvanceService:
     async def _event(self, c, aid, actor, kind, **details):
         await c.execute('INSERT INTO advance_events(advance_id,actor_id,kind,details) VALUES($1,$2,$3,$4::jsonb)', aid, actor, kind, json.dumps(details, default=str))
 
-    async def issue(self, actor, employee, project, amount, purpose, key):
+    async def issue(self, actor, employee, project, amount, purpose, key, *, connection=None):
         amount = money(amount)
         key = request_key(key)
         if not isinstance(purpose, str) or not purpose.strip():
             raise AdvanceError('Укажите назначение и идентификатор операции.')
-        async with get_pool().acquire() as c, c.transaction():
+        async with AsyncExitStack() as stack:
+            c = connection if connection is not None else await stack.enter_async_context(get_pool().acquire())
+            await stack.enter_async_context(c.transaction())
             m = await self._lock_member(c, actor)
             if m['role'] != 'manager':
                 raise AdvanceError('Выдавать деньги может руководитель.')

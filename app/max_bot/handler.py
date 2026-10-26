@@ -1,6 +1,7 @@
 """Platform-authenticated MAX events become canonical-user service calls."""
 import re
 
+from app.max_bot.issue import IssueMenu
 from app.max_bot.menu import HOME, MAIN, PERIODS, MenuText, command_text, money_menu
 
 from app.services.account_links import AccountLinkError, AccountLinkService
@@ -59,6 +60,7 @@ class MaxHandler:
         self.links = AccountLinkService()
         self.advances = AdvanceService()
         self.directory = MemberDirectory()
+        self.issue_menu = IssueMenu()
 
     async def handle(self, update):
         event = event_message(update)
@@ -67,7 +69,15 @@ class MaxHandler:
         sender, text = event
         text = command_text(text)
         try:
-            result = await self._command(sender, text)
+            result = None
+            if not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel'):
+                actor = await self.links.resolve('max', str(sender))
+                if actor is not None:
+                    body = update.get('message', {}).get('body', {})
+                    event_id = body.get('mid') if isinstance(body, dict) else None
+                    result = await self.issue_menu.handle(actor, text, event_id)
+            if result is None:
+                result = await self._command(sender, text)
             if not isinstance(result, MenuText) and result != LINK_HELP and not text.lower().startswith('/link'):
                 result = MenuText(result, [HOME])
             return sender, result
@@ -100,7 +110,13 @@ class MaxHandler:
             return 'Открытые проекты:\n' + ('\n'.join(f"№{p['id']} · {p['name']}" for p in projects) or 'Проектов пока нет.')
         if command in ('/money', '/money_page'):
             page = int(arg) if command == '/money_page' and re.fullmatch('[1-6]', arg) else 1
-            return money_menu(await self.advances.list(actor), page)
+            result = money_menu(await self.advances.list(actor), page)
+            member = await self.advances.membership(actor)
+            if member['role'] == 'manager':
+                result.buttons.insert(0, ['Выдать деньги'])
+                if await self.issue_menu.flow.current(actor):
+                    result.buttons.insert(1, ['Продолжить выдачу'])
+            return result
         if command == '/balance':
             rows = await self.advances.balances(actor)
             lines = ['Деньги: получено − принятые расходы − подтверждённые возвраты.']
