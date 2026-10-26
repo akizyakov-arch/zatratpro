@@ -434,6 +434,34 @@
         card_spent: m.card_spent,
         card_pending: m.card_pending,
         money: m,
+        open_projects: projects
+          .filter((project) => project.status === "active")
+          .map((project) => {
+            const pr = report(
+              new URLSearchParams({
+                ...Object.fromEntries(p),
+                project_id: project.id,
+              }),
+            );
+            const pm = pr.money;
+            return {
+              project_id: project.id,
+              project_name: project.name,
+              document_count: pr.summary.document_count,
+              document_total: pr.summary.total_amount,
+              totals_by_currency: pr.summary.totals_by_currency,
+              ...pm.totals,
+              cash: pm.cash_on_hand,
+              debt: pm.employee_debt,
+              card_spent: pm.card_spent,
+              card_pending: pm.card_pending,
+              review_total: amount(
+                cents(pm.totals.pending_expenses) +
+                  cents(pm.totals.pending_returns) +
+                  cents(pm.card_pending),
+              ),
+            };
+          }),
         project_count: projects.filter((p) => p.status === "active").length,
         employee_count: employees.filter((e) => e.status === "active").length,
       };

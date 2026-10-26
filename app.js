@@ -1017,6 +1017,115 @@
         .filter((k) => params[k])
         .map((k) => [k, params[k]]),
     );
+  function openProjectsOverview(projects, params) {
+    if (!Array.isArray(projects)) return null;
+    return h(
+      "section",
+      {
+        class: "project-overview",
+        "aria-labelledby": "project-overview-title",
+      },
+      h(
+        "h2",
+        { id: "project-overview-title", class: "section-label" },
+        "По открытым проектам",
+      ),
+      h(
+        "p",
+        { class: "section-footnote" },
+        "Все неархивные проекты, включая проекты без операций. Суммы — за выбранный период, остатки — на его конец.",
+      ),
+      projects.length
+        ? h(
+            "div",
+            { class: "project-overview-grid" },
+            projects.map((p) => {
+              const filters = query({
+                ...dateParams(params),
+                project_id: p.project_id,
+              });
+              return h(
+                "article",
+                { class: "panel project-overview-card" },
+                h(
+                  "div",
+                  { class: "project-overview-heading" },
+                  h(
+                    "h3",
+                    {},
+                    h(
+                      "a",
+                      { href: `#/projects/${p.project_id}` },
+                      p.project_name,
+                    ),
+                  ),
+                  h(
+                    "span",
+                    { class: "muted" },
+                    `Документов: ${p.document_count}`,
+                  ),
+                ),
+                h(
+                  "div",
+                  { class: "panel-body" },
+                  detail([
+                    [
+                      "Затраты по документам · RUB",
+                      money(p.document_total),
+                      "amount",
+                    ],
+                    ["Получено сотрудниками", money(p.received)],
+                    ["У сотрудников", money(p.cash)],
+                    ["Компания должна сотрудникам", money(p.debt)],
+                    ["Принято расходов по выдачам", money(p.spent)],
+                    ["Возвращено", money(p.returned)],
+                    ["Ожидает получения", money(p.pending)],
+                    ["На проверке", money(p.review_total)],
+                    ["Бизнес-карты · принято", money(p.card_spent)],
+                  ]),
+                  h(
+                    "details",
+                    { class: "project-review-breakdown" },
+                    h("summary", {}, "Расшифровка остатков и проверки"),
+                    detail([
+                      ["Остаток на начало", money(p.opening)],
+                      ["Расчётный остаток на конец", money(p.closing)],
+                      [
+                        "Расходы по выдачам на проверке",
+                        money(p.pending_expenses),
+                      ],
+                      ["Возвраты на проверке", money(p.pending_returns)],
+                      ["Бизнес-карты на проверке", money(p.card_pending)],
+                    ]),
+                  ),
+                  h(
+                    "div",
+                    { class: "inline-actions mt-24" },
+                    link(
+                      "Документы",
+                      `#/documents?${filters}`,
+                      "small",
+                      "file",
+                    ),
+                    link("Выдачи", `#/money?${filters}`, "small", "wallet"),
+                    link("Отчёт", `#/reports?${filters}`, "small", "chart"),
+                  ),
+                ),
+              );
+            }),
+          )
+        : empty(
+            "Открытых проектов пока нет",
+            "Создайте проект или восстановите его из архива.",
+            link("Перейти к проектам", "#/projects", "", "folder"),
+          ),
+      h(
+        "p",
+        { class: "section-footnote" },
+        "Общие итоги выше включают и архивные проекты. Здесь остатки показаны по каждому проекту; общий остаток сотрудника учитывает все его проекты.",
+      ),
+    );
+  }
   async function overview(main, params) {
     const data = await api("/api/overview?" + query(params));
     const m = data.money || data;
@@ -1069,6 +1178,7 @@
           "#/money/reviews",
         ),
       ),
+      openProjectsOverview(data.open_projects, params),
       h(
         "div",
         { class: "summary-strip" },
