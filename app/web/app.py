@@ -25,7 +25,7 @@ from app.services.web_finance_directory import WebFinanceDirectory
 from app.services.web_reports import WebReportService
 from app.services.workspace import WorkspaceError, WorkspaceService
 from app.web.auth import current_user, require_csrf, router as auth_router
-from app.web.config import get_web_settings
+from app.web.config import get_web_settings, mini_app_url
 
 logger = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / 'static'
@@ -174,12 +174,21 @@ def create_app():
     async def security_headers(request, call_next):
         response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
+        mini = request.url.path in ('/mini', '/mini/')
+        if not mini:
+            response.headers['X-Frame-Options'] = 'DENY'
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
             "connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         )
+        if mini:
+            response.headers['Content-Security-Policy'] = (
+                "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; "
+                "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+                "frame-ancestors https://web.telegram.org https://telegram.org; base-uri 'none'; form-action 'self'"
+            )
+            response.headers['Referrer-Policy'] = 'no-referrer'
         if request.url.path.startswith('/api/'):
             response.headers['Cache-Control'] = 'no-store'
         return response
@@ -415,6 +424,13 @@ def create_app():
         return ok(await workspace.stats(user['id']))
 
     app.mount('/assets', StaticFiles(directory=STATIC, check_dir=False), name='assets')
+
+    @app.get('/mini')
+    @app.get('/mini/', include_in_schema=False)
+    async def mini_index():
+        if not mini_app_url():
+            raise HTTPException(503, 'Мини-приложение пока не настроено.')
+        return FileResponse(STATIC / 'mini.html', headers={'Cache-Control': 'no-store'})
 
     @app.get('/')
     async def index():

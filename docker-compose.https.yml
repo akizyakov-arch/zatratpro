@@ -1,5 +1,9 @@
 # Use together with docker-compose.yml on the deployment server.
 services:
+  zatratpro-bot:
+    environment:
+      WEB_ORIGIN: https://${WEB_DOMAIN:?Set WEB_DOMAIN to the panel hostname}
+
   zatratpro-web:
     environment:
       WEB_HOST: 0.0.0.0

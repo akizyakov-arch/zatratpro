@@ -32,6 +32,13 @@ def check(values):
         errors.append('BOT_OWNER_TELEGRAM_ID: укажите Telegram ID владельца системы.')
     if not re.fullmatch(r'[A-Za-z0-9_]{5,32}', values.get('WEB_BOT_USERNAME', 'prozatrat_bot') or ''):
         errors.append('WEB_BOT_USERNAME: укажите имя бота без @.')
+    mini_enabled = str(values.get('WEB_MINI_APP_ENABLED', 'false')).lower()
+    if mini_enabled not in ('true', 'false', '1', '0', 'yes', 'no', 'on', 'off', 'y', 'n', 't', 'f'):
+        errors.append('WEB_MINI_APP_ENABLED: укажите true или false.')
+    elif mini_enabled in ('true', '1', 'yes', 'on', 'y', 't'):
+        bot_id = str(values.get('WEB_TELEGRAM_BOT_ID', '0'))
+        if not re.fullmatch(r'[0-9]{1,19}', bot_id) or not 0 < int(bot_id) < 2**63:
+            errors.append('WEB_TELEGRAM_BOT_ID: нужен числовой ID бота из getMe, не ID владельца и не имя бота.')
     if values.get('POSTGRES_HOST', 'zatratpro-db') != 'zatratpro-db':
         errors.append('POSTGRES_HOST: для этого Compose должен быть zatratpro-db; внешний PostgreSQL требует отдельной конфигурации.')
     if str(values.get('POSTGRES_PORT', '5432')) != '5432':

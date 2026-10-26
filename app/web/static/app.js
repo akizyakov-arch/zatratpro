@@ -2,6 +2,7 @@
 (() => {
   const app = document.getElementById("app");
   const dialog = document.getElementById("dialog");
+  const mini = window.FiinopsMini;
   const state = {
     user: null,
     csrf: "",
@@ -184,9 +185,9 @@
   async function api(path, options = {}) {
     const userAtRequest = state.user;
     const opts = {
-      credentials: "same-origin",
+      credentials: mini ? "omit" : "same-origin",
       ...options,
-      headers: { Accept: "application/json", ...(options.headers || {}) },
+      headers: { Accept: "application/json", ...(options.headers || {}), ...(mini?.headers() || {}) },
     };
     if (opts.body && typeof opts.body !== "string") {
       opts.body = JSON.stringify(opts.body);
@@ -984,7 +985,8 @@
     const userAtRequest = state.user;
     try {
       const res = await fetch("/api/reports/export?" + query(params), {
-        credentials: "same-origin",
+        headers: mini?.headers() || {},
+        credentials: mini ? "omit" : "same-origin",
       });
       if (!res.ok) {
         const d = await res.json();
@@ -3273,6 +3275,15 @@
     }
   }
   function login(message = "") {
+    if (mini) {
+      mini.clear();
+      app.setAttribute("aria-busy", "false");
+      app.replaceChildren(h("section", {class: "mini-gate"}, brand(),
+        h("h1", {}, "Панель руководителя"),
+        h("p", {}, message || "Вы вышли. Закройте приложение и откройте его заново из бота."),
+        button("Закрыть", () => mini.close(), "primary")));
+      return;
+    }
     if (state.poll) {
       clearInterval(state.poll);
       state.poll = null;
@@ -3483,7 +3494,7 @@
   }
   async function boot() {
     try {
-      const me = await api("/api/auth/me");
+      const me = mini ? await mini.authorize() : await api("/api/auth/me");
       state.user = me.user;
       state.csrf = me.csrf_token;
       state.refs = null;
