@@ -191,6 +191,76 @@ class WebReportTests(DatabaseFixture):
         self.assertEqual(result['cash'], full['money']['cash_on_hand'])
         self.assertEqual(result['money']['totals'], full['money']['totals'])
 
+    async def test_overview_open_projects_include_empty_and_keep_all_finance_sources_separate(self):
+        manager, employee = await self.finance_ids()
+        second = await self.pool.fetchval("INSERT INTO projects(company_id,name,created_by_user_id) VALUES($1,'Second',$2) RETURNING id", self.company.id, manager)
+        empty = await self.pool.fetchval("INSERT INTO projects(company_id,name,created_by_user_id) VALUES($1,'Empty',$2) RETURNING id", self.company.id, manager)
+        archived = await self.pool.fetchval("INSERT INTO projects(company_id,name,created_by_user_id,status) VALUES($1,'Archived',$2,'archived') RETURNING id", self.company.id, manager)
+        await self.add_documents(amount='500', project=archived)
+        accepted = (await self.add_documents(amount='30'))[0]
+        pending = (await self.add_documents(amount='20'))[0]
+        await self.add_documents(currency='USD', amount='7')
+        card_pending_doc = (await self.add_documents(amount='9'))[0]
+        card_accepted_doc = (await self.add_documents(amount='11', project=second))[0]
+        old = (await self.add_documents(amount='99'))[0]
+        start, end = self.period()
+        await self.pool.execute('UPDATE documents SET created_at=$2 WHERE id=$1', old, start - timedelta(seconds=1))
+        foreign_company = await self.service.create_company(self.owner, 'Foreign')
+        foreign_project = await self.pool.fetchval("INSERT INTO projects(company_id,name,created_by_user_id) VALUES($1,'Foreign',$2) RETURNING id", foreign_company.id, manager)
+        aid = await AdvanceService().issue(manager, employee, self.project.id, '100', 'One', 'overview-project-one')
+        await AdvanceService().receive(employee, aid)
+        eid = await AdvanceService().attach(employee, aid, accepted)
+        await AdvanceService().approve_expense(manager, aid, eid)
+        await AdvanceService().attach(employee, aid, pending)
+        await AdvanceService().request_return(employee, aid, '5', 'overview-project-return')
+        await AdvanceService().issue(manager, employee, second, '50', 'Two', 'overview-project-two')
+        card = await BusinessCardService().register(manager, 'Projects', '4821')
+        await BusinessCardService().submit(employee, card, card_pending_doc)
+        ceid = await BusinessCardService().submit(employee, card, card_accepted_doc)
+        await BusinessCardService().approve(manager, ceid)
+        result = await WebReportService().overview(manager, start, end)
+        rows = {row['project_id']: row for row in result['open_projects']}
+        self.assertEqual(set(rows), {self.project.id, second, empty})
+        self.assertNotIn(foreign_project, rows)
+        self.assertEqual(result['project_count'], 3)
+        self.assertEqual(result['document_total'], Decimal('570'))
+        first = rows[self.project.id]
+        self.assertEqual(first['document_count'], 4)
+        self.assertEqual(first['document_total'], Decimal('59'))
+        self.assertEqual(first['totals_by_currency'], {'RUB': Decimal('59'), 'USD': Decimal('7')})
+        self.assertEqual((first['received'], first['spent'], first['cash'], first['debt']), (Decimal('100'), Decimal('30'), Decimal('70'), 0))
+        self.assertEqual((first['pending_expenses'], first['pending_returns'], first['card_pending'], first['review_total']), (Decimal('20'), Decimal('5'), Decimal('9'), Decimal('34')))
+        self.assertEqual(rows[second]['pending'], Decimal('50'))
+        self.assertEqual(rows[second]['card_spent'], Decimal('11'))
+        self.assertEqual(rows[second]['cash'], 0)
+        for key in ('document_count', 'document_total', 'received', 'cash', 'debt', 'review_total', 'card_spent', 'pending'):
+            self.assertEqual(rows[empty][key], 0, key)
+
+    async def test_project_cash_and_debt_do_not_offset_people_or_other_projects(self):
+        manager, employee = await self.finance_ids()
+        colleague = self.user(1004)
+        code = await self.service.create_invite(self.manager, 'employee')
+        await self.service.join_company(colleague, code)
+        colleague_id = await self.pool.fetchval('SELECT id FROM users WHERE telegram_id=$1', colleague.id)
+        second = await self.pool.fetchval("INSERT INTO projects(company_id,name,created_by_user_id) VALUES($1,'Second',$2) RETURNING id", self.company.id, manager)
+        a = await AdvanceService().issue(manager, employee, self.project.id, '100', 'One', 'project-debt')
+        await AdvanceService().receive(employee, a)
+        doc = (await self.add_documents(amount='150'))[0]
+        e = await AdvanceService().attach(employee, a, doc)
+        await AdvanceService().approve_expense(manager, a, e)
+        b = await AdvanceService().issue(manager, employee, second, '50', 'Two', 'project-cash')
+        await AdvanceService().receive(employee, b)
+        c = await AdvanceService().issue(manager, colleague_id, self.project.id, '30', 'Colleague', 'project-colleague')
+        await AdvanceService().receive(colleague_id, c)
+        result = await WebReportService().overview(manager, *self.period())
+        rows = {row['project_id']: row for row in result['open_projects']}
+        self.assertEqual(rows[self.project.id]['cash'], Decimal('30'))
+        self.assertEqual(rows[self.project.id]['debt'], Decimal('50'))
+        self.assertEqual(rows[second]['cash'], Decimal('50'))
+        self.assertEqual(rows[second]['debt'], 0)
+        self.assertEqual(result['cash'], Decimal('30'))
+        self.assertEqual(result['debt'], 0)
+
     async def test_duplicate_delete_waits_on_company_before_locking_document(self):
         manager, employee = await self.finance_ids()
         document = (await self.add_documents())[0]

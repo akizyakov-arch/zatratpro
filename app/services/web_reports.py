@@ -14,7 +14,7 @@ from openpyxl import load_workbook
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.business_cards import BusinessCardService
 from app.services.database import get_pool
-from app.services.money_reports import cash_and_employee_debt
+from app.services.money_reports import CASH_FIELDS, cash_and_employee_debt
 from app.services.report_exports import build_manager_report_workbook, _append_row, _ILLEGAL_XML
 
 
@@ -220,16 +220,44 @@ class WebReportService:
                 GROUP BY currency
             """, company, start, end)
             money = await self._money(c, actor, start, end)
-            project_count = await c.fetchval("SELECT count(*) FROM projects WHERE company_id=$1 AND status='active'", company)
+            projects = await c.fetch("SELECT id,name FROM projects WHERE company_id=$1 AND status='active' ORDER BY lower(name),id", company)
+            project_documents = await c.fetch('''SELECT d.project_id,d.currency,count(*) AS document_count,
+                COALESCE(sum(d.total_amount),0) AS total_amount
+                FROM documents d JOIN projects p ON p.id=d.project_id AND p.company_id=d.company_id
+                WHERE d.company_id=$1 AND p.status='active' AND d.created_at>=$2 AND d.created_at<$3
+                GROUP BY d.project_id,d.currency''', company, start, end)
             employee_count = await c.fetchval("SELECT count(*) FROM company_members WHERE company_id=$1 AND role='employee' AND status='active'", company)
             generated_at = await c.fetchval('SELECT clock_timestamp()')
+        open_projects = []
+        cash_by_project, cards_by_project, docs_by_project = defaultdict(list), defaultdict(list), defaultdict(list)
+        for row in money['rows']:
+            cash_by_project[row['project_id']].append(row)
+        for row in money['card_rows']:
+            cards_by_project[row['project_id']].append(row)
+        for row in project_documents:
+            docs_by_project[row['project_id']].append(row)
+        for project in projects:
+            cash_rows = cash_by_project[project['id']]
+            card_rows = cards_by_project[project['id']]
+            docs = docs_by_project[project['id']]
+            row = {'project_id': project['id'], 'project_name': project['name'],
+                   'document_count': sum(d['document_count'] for d in docs),
+                   'document_total': sum((d['total_amount'] for d in docs if d['currency'] == 'RUB'), Decimal(0)),
+                   'totals_by_currency': {d['currency']: d['total_amount'] for d in docs},
+                   **{key: sum((r[key] for r in cash_rows), Decimal(0)) for key in CASH_FIELDS}}
+            row['cash'], row['debt'] = cash_and_employee_debt({'rows': cash_rows})
+            row['card_spent'] = sum((r['amount'] for r in card_rows if r['accepted']), Decimal(0))
+            row['card_pending'] = sum((r['amount'] for r in card_rows if not r['accepted']), Decimal(0))
+            row['review_total'] = row['pending_expenses'] + row['pending_returns'] + row['card_pending']
+            open_projects.append(row)
         currency_totals = {row['currency']: row['total_amount'] for row in currencies}
         rub_total = currency_totals.get('RUB', Decimal(0))
         count = sum(row['document_count'] for row in currencies)
         return {
             'start': start, 'end': end, 'start_at': start, 'end_at': end, 'generated_at': generated_at,
             'document_count': count, 'documents': count, 'document_total': rub_total,
-            'project_count': project_count, 'employee_count': employee_count,
+            'project_count': len(projects), 'employee_count': employee_count,
+            'open_projects': open_projects,
             'total_amount': rub_total, 'currency': 'RUB', 'totals_by_currency': currency_totals,
             'exact_duplicates': sum(row['exact_duplicates'] for row in currencies),
             'probable_duplicates': sum(row['probable_duplicates'] for row in currencies),
