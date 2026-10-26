@@ -80,10 +80,16 @@ class MaxClient:
     async def send(self, user_id, text):
         if type(user_id) is not int or user_id <= 0 or not isinstance(text, str) or not text:
             raise ValueError('Некорректный получатель или текст MAX.')
+        buttons = getattr(text, 'buttons', None)
         for start in range(0, len(text), 3500):
             wait = self.rate_interval - (time.monotonic() - self.last_send)
             if wait > 0:
                 await asyncio.sleep(wait)
             self.last_send = time.monotonic()
+            body = {'text': str(text[start:start + 3500])}
+            if buttons and start + 3500 >= len(text):
+                body['attachments'] = [{'type': 'inline_keyboard', 'payload': {'buttons': [
+                    [{'type': 'message', 'text': label} for label in row] for row in buttons
+                ]}}]
             await self._request('POST', '/messages', params={'user_id': user_id, 'disable_link_preview': 'true'},
-                json={'text': text[start:start + 3500]})
+                json=body)

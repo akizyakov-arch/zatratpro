@@ -1,6 +1,8 @@
 """Platform-authenticated MAX events become canonical-user service calls."""
 import re
 
+from app.max_bot.menu import HOME, MAIN, PERIODS, MenuText, command_text, money_menu
+
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.member_directory import MemberDirectory
@@ -15,6 +17,7 @@ HELP = ('FIINOPS · MAX\n'
         '/balance — деньги у сотрудников и долги компании\n'
         '/advance ID — карточка выдачи\n'
         '/receive ID — подтвердить фактическое получение денег\n'
+        '/reports — выбрать период отчёта\n'
         '/report [month|week|all_time] — денежный отчёт\n'
         '/link КОД — подключить существующую учётную запись\n'
         'Загрузка чеков через MAX будет добавлена следующим этапом.')
@@ -62,8 +65,12 @@ class MaxHandler:
         if event is None:
             return None
         sender, text = event
+        text = command_text(text)
         try:
-            return sender, await self._command(sender, text)
+            result = await self._command(sender, text)
+            if not isinstance(result, MenuText) and result != LINK_HELP and not text.lower().startswith('/link'):
+                result = MenuText(result, [HOME])
+            return sender, result
         except (AccountLinkError, AdvanceError, MembershipError, ValueError) as exc:
             return sender, str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
 
@@ -78,20 +85,22 @@ class MaxHandler:
         actor = await self.links.resolve('max', str(sender))
         if actor is None:
             return LINK_HELP
-        if command in ('/start', '/help'):
-            return HELP
+        if command == '/start':
+            return MenuText('FIINOPS · Главное меню\nВыберите раздел.', MAIN)
+        if command == '/help':
+            return MenuText(HELP, MAIN)
+        if command == '/reports':
+            await self.directory.projects(actor)
+            return MenuText('Отчёты по деньгам\nВыберите период (UTC).', PERIODS)
         if command == '/profile':
             accounts = await self.links.accounts('max', str(sender))
             return f'Профиль FIINOPS №{actor}\nСвязанные аккаунты:\n' + '\n'.join(f"{a['platform']}: {a['external_id']}" for a in accounts)
         if command in ('/projects', 'проекты'):
             projects = await self.directory.projects(actor)
             return 'Открытые проекты:\n' + ('\n'.join(f"№{p['id']} · {p['name']}" for p in projects) or 'Проектов пока нет.')
-        if command in ('/money', 'деньги'):
-            rows = await self.advances.list(actor)
-            return 'Выдачи на закупки (последние 30):\n' + ('\n'.join(
-                f"№{r['id']} · {r['employee_name'] or ''} · {r['project_name']} · {r['amount']} RUB · "
-                + ('отменена' if r['canceled_at'] else 'получено' if r['received_at'] else 'ожидает получения') for r in rows)
-                or 'Выдач пока нет.') + '\n/advance ID — открыть выдачу.'
+        if command in ('/money', '/money_page'):
+            page = int(arg) if command == '/money_page' and re.fullmatch('[1-6]', arg) else 1
+            return money_menu(await self.advances.list(actor), page)
         if command == '/balance':
             rows = await self.advances.balances(actor)
             lines = ['Деньги: получено − принятые расходы − подтверждённые возвраты.']
@@ -99,7 +108,7 @@ class MaxHandler:
                 name = ' '.join(p for p in (row['first_name'], row['last_name']) if p) or f"Сотрудник №{row['employee_id']}"
                 lines.append(f"{name}: у сотрудника {max(row['balance'], 0):.2f} RUB; компания должна {max(-row['balance'], 0):.2f} RUB; ожидает получения {row['pending']:.2f} RUB.")
             return '\n'.join(lines) if rows else 'Выдач пока нет. Остаток: 0.00 RUB.'
-        if command in ('/advance', '/receive'):
+        if command in ('/advance', '/receive', '/receive_prompt'):
             if not re.fullmatch(r'[1-9][0-9]{0,17}', arg):
                 return 'Формат: /advance ID или /receive ID. Получение подтверждайте только после фактической передачи денег.'
             aid = int(arg)
@@ -107,6 +116,16 @@ class MaxHandler:
                 await self.advances.receive(actor, aid)
                 return f'Получение выдачи №{aid} подтверждено. Остаток обновлён в общем учёте.'
             row = await self.advances.card(actor, aid)
+            if command == '/receive_prompt':
+                if row['employee_id'] != actor or row['canceled_at']:
+                    raise AdvanceError('Получение этой выдачи недоступно.')
+                if row['received_at']:
+                    return MenuText('Получение этой выдачи уже подтверждено.', [[f'Выдача №{aid}'], HOME])
+                return MenuText(
+                    f"Подтвердить получение {row['amount']} RUB?\nПроект: {row['project_name']}\n"
+                    'Нажмите «Да, получил» только после фактической передачи денег.',
+                    [[f'Да, получил №{aid}'], [f'Выдача №{aid}'], HOME],
+                )
             state = 'отменена' if row['canceled_at'] else 'получено' if row['received_at'] else 'ожидает получения'
             lines = [f"Выдача №{aid} · {row['project_name']}", row['purpose'], f"Сумма: {row['amount']} RUB", f'Статус: {state}']
             if row['received_at']:
@@ -118,7 +137,11 @@ class MaxHandler:
             for e in row['expenses']:
                 state = 'отклонён' if e['rejected_at'] else 'принят' if e['approved_at'] else 'на проверке'
                 lines.append(f"Чек №{e['document_id']}: {e['amount']} RUB — {state}" + (f" · {e['rejection_reason']}" if e['rejected_at'] else ''))
-            return '\n'.join(lines)
+            buttons = []
+            if not row['received_at'] and not row['canceled_at'] and row['employee_id'] == actor:
+                buttons.append([f'Подтвердить получение №{aid}'])
+            buttons.extend([['Деньги', 'Остаток'], HOME])
+            return MenuText('\n'.join(lines), buttons)
         if command == '/report':
-            return format_money_report(await get_money_report_for_user(actor, report_period_start(arg or 'month')))
-        return 'Тестовое подключение MAX: фото и кнопки ещё не поддерживаются.\n' + HELP
+            return MenuText(format_money_report(await get_money_report_for_user(actor, report_period_start(arg or 'month'))), PERIODS)
+        return 'Тестовое подключение MAX: загрузка фото ещё не поддерживается.\n' + HELP
