@@ -27,6 +27,7 @@ def build_main_menu_keyboard(
     menu_kind: str = "employee",
     has_company: bool = True,
     can_view_reports: bool = False,
+    allow_web_app: bool = True,
 ) -> ReplyKeyboardMarkup:
     if menu_kind == "platform_owner":
         keyboard = [
@@ -59,6 +60,11 @@ def build_main_menu_keyboard(
     if has_company and menu_kind != 'platform_owner':
         keyboard.insert(-1, [KeyboardButton(text=MENU_BUTTONS['money'])])
 
+    if menu_kind == 'manager' and has_company and allow_web_app:
+        from app.web.config import mini_app_url
+        url = mini_app_url()
+        if url:
+            keyboard.insert(0, [KeyboardButton(text='Панель руководителя')])
     keyboard.append([KeyboardButton(text=MENU_BUTTONS['profile'])])
 
     return ReplyKeyboardMarkup(

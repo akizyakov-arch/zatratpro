@@ -40,6 +40,17 @@ class DeploymentTests(unittest.TestCase):
             self.assertNotIn('private-', ' '.join(errors))
         self.assertEqual(checks.check(self.settings()), [])
 
+    def test_mini_app_requires_numeric_bot_id_only_when_enabled(self):
+        for bot_id in ('0', '-1', 'bot_name', '', '9223372036854775808'):
+            self.assertTrue(checks.check(self.settings() | {
+                'WEB_MINI_APP_ENABLED': 'true', 'WEB_TELEGRAM_BOT_ID': bot_id,
+            }), bot_id)
+        self.assertTrue(checks.check(self.settings() | {'WEB_MINI_APP_ENABLED': 'invalid'}))
+        self.assertEqual(checks.check(self.settings() | {
+            'WEB_MINI_APP_ENABLED': 'true', 'WEB_TELEGRAM_BOT_ID': '1234567890',
+        }), [])
+        self.assertEqual(checks.check(self.settings() | {'WEB_MINI_APP_ENABLED': 'false'}), [])
+
     def run_backup(self, return_codes):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -1,0 +1,26 @@
+.telegram-mini { color-scheme: light; }
+.telegram-mini body {
+  padding: max(env(safe-area-inset-top), var(--mini-safe-top, 0px))
+    max(env(safe-area-inset-right), var(--mini-safe-right, 0px))
+    max(env(safe-area-inset-bottom), var(--mini-safe-bottom, 0px))
+    max(env(safe-area-inset-left), var(--mini-safe-left, 0px));
+}
+.mini-tabs { display: none; }
+.mini-gate { max-width: 440px; margin: 12vh auto; padding: 24px; }
+.mini-gate p { line-height: 1.6; }
+@media (max-width: 700px) {
+  .telegram-mini .main-content { padding-bottom: calc(90px + var(--mini-safe-bottom, 0px)); }
+  .telegram-mini .sidebar { top: var(--mini-safe-top, 0px); padding-bottom: 85px; }
+  .telegram-mini input, .telegram-mini select, .telegram-mini textarea { font-size: 16px; }
+  .telegram-mini .button { min-height: 44px; }
+  .mini-tabs {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+    padding: 6px max(4px, var(--mini-safe-right, 0px))
+      max(8px, env(safe-area-inset-bottom), var(--mini-safe-bottom, 0px))
+      max(4px, var(--mini-safe-left, 0px));
+    background: var(--paper); border-top: 1px solid var(--line);
+  }
+  .mini-tabs a { display: grid; place-items: center; min-height: 46px; font-size: 11px; color: var(--muted); border-radius: 9px; }
+  .mini-tabs a[aria-current="page"] { color: var(--accent); background: var(--accent-light); font-weight: 700; }
+}

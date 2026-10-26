@@ -158,6 +158,42 @@ class WebAuthService:
             await self._event(c, 'authenticated', user_id=user['id'], request_id=row['id'], session_id=session_id)
             return {'status': 'authenticated', 'user': user, 'csrf_token': csrf, 'session_token': token, 'session_id': session_id}
 
+    async def telegram_session(self, proof, user_agent=''):
+        async with get_pool().acquire() as c, c.transaction():
+            # Serialize with suspension before issuing any new session.
+            uid = await c.fetchval(
+                """SELECT u.id FROM users u JOIN external_accounts a ON a.user_id=u.id
+                   WHERE a.platform='telegram' AND a.external_id=$1 FOR NO KEY UPDATE OF u""",
+                str(proof['telegram_id']),
+            )
+            if uid is None:
+                raise WebAuthError('Сначала зарегистрируйтесь в боте и получите роль руководителя.')
+            if not await c.fetchval("SELECT clock_timestamp() BETWEEN to_timestamp($1::double precision)-interval '30 seconds' AND to_timestamp($1::double precision)+interval '5 minutes'", proof['auth_date']):
+                raise WebAuthError('Вход Telegram истёк. Откройте приложение заново.')
+            user = await self._user(c, uid)
+            if user['role'] != 'manager':
+                raise WebAuthError('Мини-приложение доступно руководителю активной компании.')
+            await c.execute('DELETE FROM telegram_mini_logins WHERE expires_at<clock_timestamp()')
+            accepted = await c.fetchval(
+                """INSERT INTO telegram_mini_logins(proof_hash,user_id,expires_at)
+                   VALUES($1,$2,to_timestamp($3::double precision)) ON CONFLICT DO NOTHING RETURNING proof_hash""",
+                proof['proof_hash'], uid, proof['auth_date'] + 330,
+            )
+            if accepted is None:
+                raise WebAuthError('Этот вход уже использован. Закройте мини-приложение и откройте заново.')
+            await c.execute(
+                "INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'web',$2) ON CONFLICT(user_id,platform) DO NOTHING",
+                uid, 'web:' + uuid4().hex,
+            )
+            session_id, token, csrf = uuid4().hex, secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+            await c.execute(
+                """INSERT INTO web_sessions(id,user_id,token_hash,csrf_token,browser_description,expires_at,channel)
+                   VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '1 hour','telegram')""",
+                session_id, uid, token_hash(token), csrf, 'Telegram · ' + browser_description(user_agent)[:140],
+            )
+            await self._event(c, 'telegram_authenticated', user_id=uid, session_id=session_id)
+            return {'user': user, 'csrf_token': csrf, 'session_token': token}
+
     async def authenticate(self, session_token):
         digest = token_hash(session_token)
         async with get_pool().acquire() as c, c.transaction():
@@ -167,8 +203,10 @@ class WebAuthService:
             ):
                 raise WebAuthError('Сессия завершена. Войдите через Telegram заново.')
             user = await self._user(c, row['user_id'])
+            if row['channel'] == 'telegram' and user['role'] != 'manager':
+                raise WebAuthError('Доступ руководителя прекращён.')
             await c.execute('UPDATE web_sessions SET last_seen_at=clock_timestamp() WHERE id=$1', row['id'])
-            return {'user': user, 'csrf_token': row['csrf_token'], 'session_id': row['id']}
+            return {'user': user, 'csrf_token': row['csrf_token'], 'session_id': row['id'], 'channel': row['channel']}
 
     async def revoke(self, session_token):
         digest = token_hash(session_token)

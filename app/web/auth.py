@@ -6,7 +6,9 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from app.services.web_auth import WebAuthError, WebAuthService
-from app.web.config import get_web_settings
+from app.web.config import get_web_settings, mini_app_url
+from pydantic import BaseModel, Field, ConfigDict
+from app.services.telegram_mini_auth import verify_init_data
 
 router = APIRouter(prefix='/api/auth', tags=['auth'])
 service = WebAuthService()
@@ -37,7 +39,16 @@ async def current_user(request: Request):
     auth = getattr(request.state, 'web_auth', None)
     if auth is None:
         try:
-            auth = await service.authenticate(request.cookies.get(SESSION_COOKIE))
+            header = request.headers.get('authorization')
+            if header is not None and not header.startswith('Bearer '):
+                raise WebAuthError('Недействительная сессия.')
+            if header is not None and not mini_app_url():
+                raise WebAuthError('Мини-приложение пока не настроено.')
+            token = header[7:] if header is not None else request.cookies.get(SESSION_COOKIE)
+            auth = await service.authenticate(token)
+            if header is not None and auth['channel'] != 'telegram':
+                raise WebAuthError('Недействительная сессия мини-приложения.')
+            request.state.session_token = token
         except WebAuthError as exc:
             raise HTTPException(401, str(exc)) from None
         request.state.web_auth = auth
@@ -98,7 +109,7 @@ async def me(request: Request, response: Response):
 @router.post('/logout')
 async def logout(request: Request, response: Response):
     await require_csrf(request)
-    await service.revoke(request.cookies.get(SESSION_COOKIE))
+    await service.revoke(request.state.session_token)
     response.delete_cookie(SESSION_COOKIE, path='/', secure=secure_cookies(), httponly=True, samesite='strict')
     response.headers['Cache-Control'] = 'no-store'
     return {'ok': True}
@@ -131,3 +142,23 @@ async def profile(request: Request, response: Response):
         return await service.profile(user['id'])
     except WebAuthError as exc:
         raise HTTPException(401, str(exc)) from None
+
+
+class TelegramLogin(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    init_data: str = Field(min_length=1, max_length=16384)
+
+
+@router.post('/telegram-mini')
+async def telegram_mini(data: TelegramLogin, request: Request, response: Response):
+    check_origin(request)
+    if not mini_app_url():
+        raise HTTPException(503, 'Мини-приложение пока не настроено.')
+    try:
+        await service._rate_limit('start', 'mini:' + (request.client.host if request.client else 'unknown'), 20)
+        proof = verify_init_data(data.init_data, get_web_settings().telegram_bot_id)
+        result = await service.telegram_session(proof, request.headers.get('user-agent', ''))
+    except WebAuthError as exc:
+        raise HTTPException(401, str(exc)) from None
+    response.headers['Cache-Control'] = 'no-store'
+    return result

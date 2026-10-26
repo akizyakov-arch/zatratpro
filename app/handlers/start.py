@@ -125,7 +125,7 @@ async def _ensure_context(message: Message):
     return await company_service.get_user_context(message.from_user.id)
 
 
-async def _main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
+async def _main_menu_markup_for_user(user, *, allow_web_app=False) -> ReplyKeyboardMarkup:
     if user is None:
         return build_main_menu_keyboard(has_company=False)
     await company_service.ensure_platform_user(user)
@@ -134,11 +134,12 @@ async def _main_menu_markup_for_user(user) -> ReplyKeyboardMarkup:
         menu_kind=context.menu_kind,
         has_company=context.has_company,
         can_view_reports=context.can_view_reports,
+        allow_web_app=allow_web_app,
     )
 
 
 async def _main_menu_markup(message: Message) -> ReplyKeyboardMarkup:
-    return await _main_menu_markup_for_user(message.from_user)
+    return await _main_menu_markup_for_user(message.from_user, allow_web_app=getattr(getattr(message, 'chat', None), 'type', None) == 'private')
 
 
 async def _help_menu_kind_for_user(user) -> str:
