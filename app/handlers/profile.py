@@ -34,11 +34,11 @@ async def _show_profile(message, user):
     connected = {account['platform'] for account in accounts}
     text = ['Мой профиль', 'Связанные аккаунты:']
     text.extend(f"{account['platform']}: {account['external_id']}" for account in accounts)
-    text.append('Бот MAX ещё не подключён. Можно подготовить код привязки для будущего адаптера MAX; подключение сейчас не завершится без него.')
+    text.append('Для подключения MAX получите код здесь и отправьте /link КОД в боте MAX. Затем подтвердите конкретный аккаунт в этом Telegram-профиле. Подключение доступно после запуска настроенного бота MAX.')
     pending_text, rows = _pending_rows(pending)
     text.extend(pending_text)
     if 'max' not in connected:
-        rows.append(('Подготовить код для MAX', 'profile:issue:max'))
+        rows.append(('Код для подключения MAX', 'profile:issue:max'))
     rows.append(('Обновить профиль', 'profile:refresh'))
     await message.answer('\n'.join(text), reply_markup=keyboard(rows))
 

@@ -9,22 +9,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TMP_DIR = BASE_DIR / "tmp"
 
 
-class Settings(BaseSettings):
-    telegram_bot_token: str = Field(alias="TELEGRAM_BOT_TOKEN")
-    ocr_space_api_key: str = Field(alias="OCR_SPACE_API_KEY")
-    deepseek_api_key: str = Field(alias="DEEPSEEK_API_KEY")
-    deepseek_base_url: str = Field(
-        default="https://api.deepseek.com",
-        alias="DEEPSEEK_BASE_URL",
-    )
-    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+class DatabaseSettings(BaseSettings):
     postgres_db: str = Field(default="zatratpro", alias="POSTGRES_DB")
     postgres_user: str = Field(default="zatratpro", alias="POSTGRES_USER")
     postgres_password: str = Field(default="change_me", alias="POSTGRES_PASSWORD")
     postgres_host: str = Field(default="zatratpro-db", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
-    bot_owner_telegram_id: int = Field(default=0, alias="BOT_OWNER_TELEGRAM_ID")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -39,6 +29,24 @@ class Settings(BaseSettings):
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+
+class Settings(DatabaseSettings):
+    telegram_bot_token: str = Field(alias="TELEGRAM_BOT_TOKEN")
+    ocr_space_api_key: str = Field(alias="OCR_SPACE_API_KEY")
+    deepseek_api_key: str = Field(alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com",
+        alias="DEEPSEEK_BASE_URL",
+    )
+    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    bot_owner_telegram_id: int = Field(default=0, alias="BOT_OWNER_TELEGRAM_ID")
+
+
+def get_database_settings() -> DatabaseSettings:
+    # Read once per pool initialization, independently of adapter credentials.
+    return DatabaseSettings()
 
 
 @lru_cache

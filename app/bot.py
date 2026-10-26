@@ -14,6 +14,7 @@ from app.handlers.web_login import router as web_login_router
 from app.handlers.link_notifications import start_notifications,stop_notifications
 from app.logging_utils import RedactingFormatter
 from app.services.database import close_db, init_db
+from app.services.platform_owner import synchronize_owner
 
 
 def configure_logging() -> None:
@@ -26,6 +27,11 @@ def configure_logging() -> None:
 
 async def on_startup(bot: Bot) -> None:
     await init_db()
+    try:
+        await synchronize_owner(get_settings().bot_owner_telegram_id)
+    except BaseException:
+        await close_db()
+        raise
     logging.getLogger(__name__).info("Database pool initialized")
     start_notifications(bot)
 
