@@ -2,6 +2,7 @@
 import asyncio
 from io import BytesIO
 import json
+import logging
 from pathlib import Path
 import re
 import subprocess
@@ -9,6 +10,8 @@ import sys
 import tempfile
 
 from app.config import TMP_DIR
+
+logger = logging.getLogger(__name__)
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_PDF_PAGES = 10
@@ -102,7 +105,9 @@ async def extract_pdf(message, ocr_service):
         texts = []
         for number in pages:
             await message.answer(f'Распознаю страницу {number + 1} PDF…')
+            logger.info('pdf_page_start page=%s provider=%s', number + 1, type(ocr_service).__name__)
             text = await ocr_service.extract_text(Path(directory) / f'{number + 1}.jpg')
+            logger.info('pdf_page_done page=%s chars=%s', number + 1, len(text))
             if not text.strip():
                 raise PDFError(f'На странице {number + 1} не удалось прочитать текст. Документ не сохранён. Проверь скан или выбери другой диапазон страниц.')
             texts.append(f'--- Страница {number + 1} ---\n{text}')

@@ -11,6 +11,7 @@ from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService, DocumentValidationError
 from app.services.json_formatter import chunk_message, format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
+from app.services.recognition import get_provider_name, create_recognizer, PROVIDERS
 from app.services.pdf_files import PDFError, extract_pdf
 from app.services.projects import ProjectService
 from app.services.telegram_files import TelegramFileService
@@ -188,10 +189,12 @@ async def process_photo(message: Message) -> None:
 
     bot = message.bot
     file_service = TelegramFileService(bot)
-    ocr_service = OCRSpaceService()
+    provider = await get_provider_name(message.from_user.id)
+    ocr_service = create_recognizer(provider)
     deepseek_service = DeepSeekService()
+    logger.info('recognition_start upload=%s source=%s provider=%s', upload_id, 'pdf' if is_pdf else 'photo', provider)
 
-    await message.answer(f'{_person_name(message.from_user)}, документ получен. Начинаю распознавание.', reply_markup=menu_markup)
+    await message.answer(f'{_person_name(message.from_user)}, документ получен. Распознавание: {PROVIDERS[provider]}.', reply_markup=menu_markup)
     file_path = None
     try:
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot):
@@ -221,12 +224,13 @@ async def process_photo(message: Message) -> None:
         await message.answer('OCR выполнялся слишком долго. Попробуй отправить документ еще раз.', reply_markup=menu_markup)
         return
     except PDFError as exc:
+        logger.warning('pdf_rejected upload=%s error_type=%s', upload_id, type(exc).__name__)
         await clear_document_flow(message.from_user.id, upload_id)
         await message.answer(str(exc), reply_markup=menu_markup)
         return
     except OCRSpaceError as exc:
         await clear_document_flow(message.from_user.id, upload_id)
-        logger.exception('OCR failed')
+        logger.exception('Recognition failed upload=%s provider=%s', upload_id, provider)
         await message.answer(f'OCR не удался: {exc}', reply_markup=menu_markup)
         return
     except Exception as exc:  # noqa: BLE001
@@ -301,7 +305,7 @@ async def process_photo(message: Message) -> None:
         return
 
     await message.answer(
-        f'{_person_name(message.from_user)}, выбери проект для сохранения документа.',
+        f'{_person_name(message.from_user)}, проверь количества, суммы и реквизиты выше, затем выбери проект для сохранения документа.',
         reply_markup=build_projects_keyboard(projects, allow_create_project=context.can_manage_company, upload_id=upload_id),
     )
 

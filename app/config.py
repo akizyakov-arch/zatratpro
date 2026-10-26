@@ -40,6 +40,7 @@ class Settings(DatabaseSettings):
         alias="DEEPSEEK_BASE_URL",
     )
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+    deepseek_vision_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_VISION_MODEL")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     bot_owner_telegram_id: int = Field(default=0, alias="BOT_OWNER_TELEGRAM_ID")
 
