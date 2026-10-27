@@ -5,6 +5,7 @@ import sys
 from aiogram import Bot, Dispatcher
 
 from app.config import get_settings
+from app.handlers.ai_reports import router as ai_reports_router
 from app.handlers.settings import router as settings_router
 from app.handlers.documents import router as documents_router
 from app.handlers.start import router as start_router
@@ -53,6 +54,7 @@ async def main() -> None:
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
 
+    dispatcher.include_router(ai_reports_router)
     dispatcher.include_router(settings_router)
     dispatcher.include_router(mini_app_router)
     dispatcher.include_router(web_login_router)
