@@ -58,6 +58,9 @@ def build_main_menu_keyboard(
             [KeyboardButton(text=MENU_BUTTONS["help"])],
         ]
 
+    if menu_kind == 'manager' and has_company:
+        keyboard.insert(1, [KeyboardButton(text='ИИ-отчёты')])
+
     if has_company and menu_kind != 'platform_owner':
         keyboard.insert(-1, [KeyboardButton(text=MENU_BUTTONS['money'])])
 
