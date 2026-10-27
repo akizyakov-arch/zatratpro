@@ -117,6 +117,11 @@ class AdvanceService:
                 await self._event(c, aid, actor, 'received')
 
     async def attach(self, actor, aid, document):
+        """Post the saved document against received cash, atomically and once.
+
+        Legacy approved_* fields store the posting time and employee; there is
+        no separate manager approval for new expenses.
+        """
         async with get_pool().acquire() as c, c.transaction():
             row = await self._access(c, actor, aid)
             self._not_canceled(row)
@@ -128,16 +133,17 @@ class AdvanceService:
             if await c.fetchval('SELECT 1 FROM card_expenses WHERE document_id=$1 AND rejected_at IS NULL',document):
                 raise AdvanceError('Чек уже оплачен бизнес-картой.')
             amount = money(doc['total_amount'])
-            eid = await c.fetchval('INSERT INTO advance_expenses(advance_id,document_id,amount) VALUES($1,$2,$3) ON CONFLICT(document_id) WHERE rejected_at IS NULL DO NOTHING RETURNING id', aid,document,amount)
+            eid = await c.fetchval('INSERT INTO advance_expenses(advance_id,document_id,amount,approved_by,approved_at) VALUES($1,$2,$3,$4,clock_timestamp()) ON CONFLICT(document_id) WHERE rejected_at IS NULL DO NOTHING RETURNING id', aid,document,amount,actor)
             if eid is None:
                 old = await c.fetchrow('SELECT id,advance_id FROM advance_expenses WHERE document_id=$1 AND rejected_at IS NULL',document)
                 if old['advance_id'] != aid:
                     raise AdvanceError('Документ уже привязан к другой выдаче.')
                 return old['id']
-            await self._event(c, aid, actor, 'expense_submitted', expense_id=eid, document_id=document, amount=amount)
+            await self._event(c, aid, actor, 'expense_recorded', expense_id=eid, document_id=document, amount=amount)
             return eid
 
     async def approve_expense(self, actor, aid, eid):
+        """Compatibility for historical records and old buttons; posted rows are unchanged."""
         async with get_pool().acquire() as c, c.transaction():
             self._not_canceled(await self._access(c,actor,aid,manager=True))
             row = await c.fetchrow('SELECT * FROM advance_expenses WHERE id=$1 AND advance_id=$2',eid,aid)
@@ -211,7 +217,7 @@ class AdvanceService:
             if row is None:
                 raise AdvanceError('Операция не найдена.')
             if row['approved_at'] is not None:
-                raise AdvanceError('Принятую операцию отклонить нельзя.')
+                raise AdvanceError('Учтённую операцию отклонить нельзя.')
             if row['rejected_at'] is not None:
                 if row['rejection_reason'] != reason:
                     raise AdvanceError('Операция уже отклонена с другой причиной.')

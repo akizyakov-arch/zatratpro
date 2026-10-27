@@ -148,10 +148,10 @@
       : row.rejected_at
         ? badge("Отклонено", "danger")
         : row.approved_at
-          ? badge("Принято", "success")
+          ? badge("Учтено", "success")
           : row.received_at
             ? badge("Получено", "success")
-            : badge("На проверке", "warning");
+            : badge("Ожидает подтверждения", "warning");
   function button(label, action, kind = "", image) {
     return h(
       "button",
@@ -1079,25 +1079,20 @@
                     ["Получено сотрудниками", money(p.received)],
                     ["У сотрудников", money(p.cash)],
                     ["Компания должна сотрудникам", money(p.debt)],
-                    ["Принято расходов по выдачам", money(p.spent)],
+                    ["Расходы из выдач", money(p.spent)],
                     ["Возвращено", money(p.returned)],
                     ["Ожидает получения", money(p.pending)],
-                    ["На проверке", money(p.review_total)],
-                    ["Бизнес-карты · принято", money(p.card_spent)],
+                    ["Возвраты к подтверждению", money(p.pending_returns)],
+                    ["Бизнес-карты · учтено", money(p.card_spent)],
                   ]),
                   h(
                     "details",
                     { class: "project-review-breakdown" },
-                    h("summary", {}, "Расшифровка остатков и проверки"),
+                    h("summary", {}, "Расшифровка остатков"),
                     detail([
                       ["Остаток на начало", money(p.opening)],
                       ["Расчётный остаток на конец", money(p.closing)],
-                      [
-                        "Расходы по выдачам на проверке",
-                        money(p.pending_expenses),
-                      ],
-                      ["Возвраты на проверке", money(p.pending_returns)],
-                      ["Бизнес-карты на проверке", money(p.card_pending)],
+                      ["Возвраты к подтверждению", money(p.pending_returns)],
                     ]),
                   ),
                   h(
@@ -1167,15 +1162,9 @@
           "#/money",
         ),
         metric(
-          "На проверке",
-          money(
-            t.pending_expenses != null
-              ? Number(t.pending_expenses) +
-                  Number(t.pending_returns || 0) +
-                  Number(m.card_pending || 0)
-              : null,
-          ),
-          "Расходы и возвраты",
+          "Возвраты к подтверждению",
+          money(t.pending_returns),
+          "Получение денег от сотрудников",
           "clock",
           "#/money/reviews",
         ),
@@ -1202,11 +1191,10 @@
             { class: "panel-body" },
             detail([
               ["Получено сотрудниками", money(t.received)],
-              ["Принято расходов", money(t.spent)],
+              ["Учтённые расходы", money(t.spent)],
               ["Возвращено", money(t.returned)],
               ["Ожидает получения", money(t.pending)],
-              ["Расходы на проверке", money(t.pending_expenses)],
-              ["Возвраты на проверке", money(t.pending_returns)],
+              ["Возвраты к подтверждению", money(t.pending_returns)],
             ]),
           ),
           "Выбранный период",
@@ -1244,7 +1232,7 @@
       { class: "tabs", "aria-label": "Разделы денег" },
       [
         ["", "Выдачи"],
-        ["reviews", "На проверке"],
+        ["reviews", "Подтверждение возвратов"],
         ["cards", "Бизнес-карты"],
       ].map(([id, label]) =>
         h(
@@ -1609,8 +1597,9 @@
         issued: "Выдача создана",
         received: "Получение подтверждено",
         canceled: "Выдача отменена",
-        expense_submitted: "Чек отправлен на проверку",
-        expense_approved: "Расход принят",
+        expense_submitted: "Документ привязан к выдаче",
+        expense_approved: "Расход учтён",
+        expense_recorded: "Расход учтён",
         expense_rejected: "Расход отклонён",
         return_submitted: "Заявлен возврат",
         return_approved: "Возврат подтверждён",
@@ -1625,11 +1614,9 @@
         { class: "muted" },
         datetime(row.approved_at || row.rejected_at),
       );
-    const base =
-      type === "card"
-        ? `/api/card-expenses/${row.id}`
-        : `/api/advances/${advanceId}/${type === "return" ? "returns" : "expenses"}/${row.id}`;
-    const label = type === "return" ? "Подтвердить возврат" : "Принять расход";
+    if (type !== "return") return null;
+    const base = `/api/advances/${advanceId}/returns/${row.id}`;
+    const label = "Подтвердить возврат";
     return h(
       "div",
       { class: "row-actions" },
@@ -1638,7 +1625,7 @@
         () =>
           confirmAction(
             label,
-            `${money(row.amount)}${row.employee_name ? " · " + row.employee_name : ""}. ${type === "return" ? "Подтвердите фактическое получение возврата компанией." : "Проверьте документ перед принятием."}`,
+            `${money(row.amount)}${row.employee_name ? " · " + row.employee_name : ""}. Подтвердите фактическое получение возврата компанией.`,
             () => api(`${base}/approve`, { method: "POST", body: {} }),
             { label },
           ),
@@ -1662,7 +1649,7 @@
     main.lastChild.remove();
     main.append(
       panel(
-        "Ожидают вашего решения",
+        "Возвраты на подтверждение",
         paginatedTable(
           [
             {
@@ -1706,7 +1693,7 @@
           {
             emptyTitle: "Всё проверено",
             emptyDescription:
-              "Новые расходы и возвраты появятся здесь, когда сотрудники отправят их через бота.",
+              "Здесь появляются возвраты, требующие подтверждения получения компанией. Расходы по документам учитываются сразу.",
           },
         ),
         "Расходы и возвраты",
@@ -1767,8 +1754,8 @@
             label: "Состояние расхода",
             options: [
               { value: "", label: "Все расходы" },
-              { value: "pending", label: "На проверке" },
-              { value: "approved", label: "Принято" },
+              { value: "pending", label: "Исторические: не учтено" },
+              { value: "approved", label: "Учтено" },
               { value: "rejected", label: "Отклонено" },
             ],
           },
@@ -1814,7 +1801,7 @@
       h(
         "p",
         { class: "section-footnote" },
-        "Принятие расхода — проверка руководителем. Сверка с банком и баланс банковского счёта здесь не выполняются.",
+        "Документ, оплаченный картой, учитывается сразу после привязки. Баланс банковского счёта здесь не ведётся.",
       ),
     );
   }
@@ -2455,12 +2442,10 @@
           ],
           ["Компания должна", money(report.employee_debt), "amount"],
           ["Ожидает получения", money(totals.pending)],
-          ["Принято по выдачам", money(totals.spent)],
+          ["Учтено по выдачам", money(totals.spent)],
           ["Возвращено", money(totals.returned)],
-          ["Карты: принято", money(report.card_spent)],
-          ["Расходы на проверке", money(totals.pending_expenses)],
-          ["Возвраты на проверке", money(totals.pending_returns)],
-          ["Карты: на проверке", money(report.card_pending)],
+          ["Карты: учтено", money(report.card_spent)],
+          ["Возвраты к подтверждению", money(totals.pending_returns)],
         ]),
       ),
     );
@@ -2532,13 +2517,12 @@
           detail([
             ["Остаток на начало", money(t.opening)],
             ["Получено", money(t.received)],
-            ["Принято расходов", money(t.spent)],
+            ["Учтённые расходы", money(t.spent)],
             ["Возвращено", money(t.returned)],
             ["Остаток на конец", money(t.closing)],
-            ["Карты: принято", money(m.card_spent)],
+            ["Карты: учтено", money(m.card_spent)],
             ["Ожидает получения", money(t.pending)],
-            ["Расходы на проверке", money(t.pending_expenses)],
-            ["Возвраты на проверке", money(t.pending_returns)],
+            ["Возвраты к подтверждению", money(t.pending_returns)],
           ]),
         ),
       ),

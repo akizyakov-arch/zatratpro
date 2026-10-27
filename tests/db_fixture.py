@@ -95,6 +95,11 @@ class DatabaseFixture(unittest.IsolatedAsyncioTestCase):
             return await c.fetchval('SELECT count(*) FROM documents')
 
 
+    async def legacy_pending_expense(self, expense_id, *, card=False):
+        """Recreate pre-016 data for historical approval/rejection coverage only."""
+        table = 'card_expenses' if card else 'advance_expenses'
+        await self.pool.execute(f'UPDATE {table} SET approved_at=NULL,approved_by=NULL WHERE id=$1', expense_id)
+
     async def finance_ids(self):
         async with self.pool.acquire() as c:
             return tuple([await c.fetchval('SELECT id FROM users WHERE telegram_id=$1',u.id) for u in (self.manager,self.employee)])

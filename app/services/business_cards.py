@@ -35,6 +35,7 @@ class BusinessCardService:
                 ORDER BY d.id DESC LIMIT 30''',member['company_id'],actor)
 
     async def submit(self,actor,card_id,document_id):
+        """Record card payment immediately; approved_* are legacy posting fields."""
         async with get_pool().acquire() as c,c.transaction():
             member=await self.access._lock_member(c,actor)
             if not await c.fetchval('SELECT 1 FROM business_cards WHERE id=$1 AND company_id=$2',card_id,member['company_id']):
@@ -45,7 +46,7 @@ class BusinessCardService:
             if await c.fetchval('SELECT 1 FROM advance_expenses WHERE document_id=$1 AND rejected_at IS NULL',document_id):
                 raise AdvanceError('Чек уже относится к подотчётным деньгам.')
             amount=money(doc['total_amount'])
-            eid=await c.fetchval('INSERT INTO card_expenses(card_id,document_id,submitted_by,amount) VALUES($1,$2,$3,$4) ON CONFLICT(document_id) WHERE rejected_at IS NULL DO NOTHING RETURNING id',card_id,document_id,actor,amount)
+            eid=await c.fetchval('INSERT INTO card_expenses(card_id,document_id,submitted_by,amount,approved_by,approved_at) VALUES($1,$2,$3,$4,$3,clock_timestamp()) ON CONFLICT(document_id) WHERE rejected_at IS NULL DO NOTHING RETURNING id',card_id,document_id,actor,amount)
             if eid is None:
                 old=await c.fetchrow('SELECT id,card_id FROM card_expenses WHERE document_id=$1 AND rejected_at IS NULL',document_id)
                 if old['card_id']!=card_id: raise AdvanceError('У чека уже выбрана другая карта.')
@@ -53,6 +54,7 @@ class BusinessCardService:
             return eid
 
     async def approve(self,actor,eid):
+        """Compatibility route; already recorded card payments are unchanged."""
         async with get_pool().acquire() as c,c.transaction():
             member=await self.access._lock_member(c,actor)
             if member['role']!='manager': raise AdvanceError('Расходы принимает руководитель.')
@@ -71,7 +73,7 @@ class BusinessCardService:
             if row is None:
                 raise AdvanceError('Расход недоступен.')
             if row['approved_at'] is not None:
-                raise AdvanceError('Принятый расход отклонить нельзя.')
+                raise AdvanceError('Учтённый расход отклонить нельзя.')
             if row['rejected_at'] is not None:
                 if row['rejection_reason'] != reason:
                     raise AdvanceError('Расход уже отклонён с другой причиной.')

@@ -2,7 +2,7 @@
 REPORTS = {
  'projects':'Проекты',
  'advances':'Оформленные выдачи', 'received':'Подтверждённое получение',
- 'expenses':'Расходы сотрудников', 'returns':'Возвраты', 'cards':'Расходы по бизнес-картам',
+ 'expenses':'Расходы из выдач', 'returns':'Возвраты', 'cards':'Расходы по бизнес-картам',
  'documents':'Документы затрат', 'items':'Позиции документов',
  'balance':'Расчётный остаток', 'cash':'Деньги у сотрудников', 'debt':'Долг компании сотрудникам',
  'overview':'Финансовая сводка', 'attention':'Операции на проверке',
@@ -44,5 +44,5 @@ GROUPS = {'project':'project_name','employee':"employee_name||' · №'||employe
 # A single read-only queue across all current pending financial operations.
 SOURCES['attention']=' UNION ALL '.join(
     "SELECT company_id,project_id,employee_id,amount,currency,at,status,'"+title+" #'||label label,vendor,card,item,quantity,price,note FROM ("+SOURCES[k]+") queued WHERE status='pending'"
-    for k,title in [('advances','Выдача'),('expenses','Расход'),('returns','Возврат'),('cards','Карта')]
+    for k,title in [('advances','Выдача'),('returns','Возврат')]
 )

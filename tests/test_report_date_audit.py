@@ -47,7 +47,7 @@ class ReportDateAudit(DatabaseFixture):
                 self.assertEqual(documents.totals.get('RUB',0),expected)
                 overview=await build_report(m,ReportIntent(report='overview',group_by='employee',date_basis=basis,start=start,end=end))
                 self.assertEqual(overview.totals.get('Документы (RUB)',0),expected)
-                self.assertEqual(overview.totals['Принятые расходы сотрудников'],0)
+                self.assertEqual(overview.totals['Расходы из выдач'],0)
                 if expected:self.assertIn('Test 1003',overview.text)
                 self.assertIn('по дате документа' if basis=='document' else 'по дате загрузки',documents.text)
         document_dates=await build_report(m,ReportIntent(report='documents',date_basis='document'))

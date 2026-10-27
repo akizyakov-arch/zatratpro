@@ -79,30 +79,30 @@ def build_manager_report_workbook(
 
     if money_report is not None:
         money = workbook.create_sheet('Money')
-        _append_row(money, ['Сотрудник ID','Сотрудник','Проект ID','Проект','На начало RUB','Получено RUB','Принятые расходы RUB','Возвраты RUB','На конец RUB','Ожидает получения RUB','Расходы на проверке RUB','Возвраты на проверке RUB'])
+        _append_row(money, ['Сотрудник ID','Сотрудник','Проект ID','Проект','На начало RUB','Получено RUB','Учтённые расходы RUB','Возвраты RUB','На конец RUB','Ожидает получения RUB','Исторические расходы без учёта RUB','Возвраты к подтверждению RUB'])
         for row in money_report['rows']:
             name = employee_name(row)
             _append_row(money, [row['employee_id'],name,row['project_id'],row['project_name']]+[float(row[k]) for k in CASH_FIELDS])
         _append_row(money, ['ИТОГО','','','']+[float(money_report['totals'][k]) for k in CASH_FIELDS])
         _append_row(overview, ['Деньги: остаток на начало RUB',float(money_report['totals']['opening'])])
         _append_row(overview, ['Деньги: получено RUB',float(money_report['totals']['received'])])
-        _append_row(overview, ['Деньги: принято расходов RUB',float(money_report['totals']['spent'])])
+        _append_row(overview, ['Деньги: учтено расходов RUB',float(money_report['totals']['spent'])])
         _append_row(overview, ['Деньги: возвраты RUB',float(money_report['totals']['returned'])])
         _append_row(overview, ['Деньги: остаток на конец RUB',float(money_report['totals']['closing'])])
         _append_row(overview, ['Деньги: ожидает получения RUB',float(money_report['totals']['pending'])])
-        _append_row(overview, ['Деньги: расходы на проверке RUB',float(money_report['totals']['pending_expenses'])])
-        _append_row(overview, ['Деньги: возвраты на проверке RUB',float(money_report['totals']['pending_returns'])])
+        _append_row(overview, ['Деньги: исторические расходы без учёта RUB',float(money_report['totals']['pending_expenses'])])
+        _append_row(overview, ['Деньги: возвраты к подтверждению RUB',float(money_report['totals']['pending_returns'])])
         cash, debt = cash_and_employee_debt(money_report)
         _append_row(overview, ['Деньги: на руках у сотрудников RUB',float(cash)])
         _append_row(overview, ['Деньги: компания должна сотрудникам RUB',float(debt)])
 
     if money_report is not None:
         card_sheet=workbook.create_sheet('BusinessCards')
-        _append_row(card_sheet, ['Чек ID','Карта','Последние 4 цифры','Сотрудник','Проект','Сумма RUB','Статус','Принято'])
+        _append_row(card_sheet, ['Чек ID','Карта','Последние 4 цифры','Сотрудник','Проект','Сумма RUB','Статус','Учтено'])
         for r in money_report.get('card_rows',[]):
-            _append_row(card_sheet, [r['document_id'],r['card_name'],r['last4'],employee_name(r),r['project_name'],float(r['amount']),'Принято' if r['accepted'] else 'На проверке',r['approved_at'].isoformat() if r['accepted'] and r['approved_at'] else ''])
-        _append_row(overview, ['Бизнес-карты: принято RUB',float(money_report.get('card_spent',0))])
-        _append_row(overview, ['Бизнес-карты: на проверке RUB',float(money_report.get('card_pending',0))])
+            _append_row(card_sheet, [r['document_id'],r['card_name'],r['last4'],employee_name(r),r['project_name'],float(r['amount']),'Учтено' if r['accepted'] else 'Историческая запись без учёта',r['approved_at'].isoformat() if r['accepted'] and r['approved_at'] else ''])
+        _append_row(overview, ['Бизнес-карты: учтено RUB',float(money_report.get('card_spent',0))])
+        _append_row(overview, ['Бизнес-карты: исторические без учёта RUB',float(money_report.get('card_pending',0))])
 
     for sheet in workbook.worksheets:
         # All cells in these exports are literal data; never export formulas from

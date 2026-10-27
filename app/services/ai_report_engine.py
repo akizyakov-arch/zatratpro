@@ -164,12 +164,11 @@ async def balance_rows(c,intent,ctx,project,employee):
         cards=await BusinessCardService().report(ctx['id'],start,end,connection=c,project_id=project['id'] if project else None,employee_id=employee['id'] if employee else None)
         if project_ids is not None:cards=[r for r in cards if r['project_id'] in project_ids]
         t=report['totals']
-        values={'Получено':t['received'],'Принятые расходы сотрудников':t['spent'],'Возвраты':t['returned'],
+        values={'Получено':t['received'],'Расходы из выдач':t['spent'],'Возвраты':t['returned'],
                 'У сотрудников':cash,'Компания должна':debt,'Ожидает получения':t['pending'],
-                'Расходы на проверке':t['pending_expenses'],'Возвраты на проверке':t['pending_returns'],
-                'Бизнес-карты: принято':sum((r['amount'] for r in cards if r['accepted']),Decimal(0)),
-                'Бизнес-карты: на проверке':sum((r['amount'] for r in cards if not r['accepted']),Decimal(0))}
-        if intent.report=='attention':values={k:v for k,v in values.items() if 'проверке' in k or 'Ожидает' in k}
+                'Возвраты к подтверждению':t['pending_returns'],
+                'Бизнес-карты: учтено':sum((r['amount'] for r in cards if r['accepted']),Decimal(0))}
+        if intent.report=='attention':values={k:v for k,v in values.items() if 'подтверждению' in k or 'Ожидает' in k}
         doc_intent=ReportIntent(report='documents',start=intent.start,end=intent.end,date_basis=intent.date_basis,group_by=intent.group_by,project_status=intent.project_status)
         doc_rows,doc_totals,_=await event_rows(c,doc_intent,ctx,project,employee)
         values['Документов']=Decimal(sum(r['count'] for r in doc_rows))
