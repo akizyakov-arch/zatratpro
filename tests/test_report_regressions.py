@@ -70,7 +70,7 @@ class ReportRegressionTests(unittest.TestCase):
             'accepted': False, 'approved_at': NOW + timedelta(days=1),
         }
         wb = workbook_for(report(cards=[card]))
-        self.assertEqual(wb['BusinessCards']['G2'].value, 'На проверке')
+        self.assertEqual(wb['BusinessCards']['G2'].value, 'Историческая запись без учёта')
         self.assertIsNone(wb['BusinessCards']['H2'].value)
         self.assertEqual(wb['BusinessCards']['C2'].value, '0012')
         self.assertEqual(wb['BusinessCards']['D2'].value, 'Сотрудник №12')
