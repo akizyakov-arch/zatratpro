@@ -119,7 +119,7 @@ class MaxHandler:
             return result
         if command == '/balance':
             rows = await self.advances.balances(actor)
-            lines = ['Деньги: получено − принятые расходы − подтверждённые возвраты.']
+            lines = ['Деньги: получено − учтённые расходы − подтверждённые возвраты.']
             for row in rows:
                 name = ' '.join(p for p in (row['first_name'], row['last_name']) if p) or f"Сотрудник №{row['employee_id']}"
                 lines.append(f"{name}: у сотрудника {max(row['balance'], 0):.2f} RUB; компания должна {max(-row['balance'], 0):.2f} RUB; ожидает получения {row['pending']:.2f} RUB.")
@@ -151,7 +151,7 @@ class MaxHandler:
             if row['cancel_reason']:
                 lines.append('Причина отмены: ' + row['cancel_reason'])
             for e in row['expenses']:
-                state = 'отклонён' if e['rejected_at'] else 'принят' if e['approved_at'] else 'на проверке'
+                state = 'отклонён' if e['rejected_at'] else 'учтён' if e['approved_at'] else 'ожидает переноса в учёт'
                 lines.append(f"Чек №{e['document_id']}: {e['amount']} RUB — {state}" + (f" · {e['rejection_reason']}" if e['rejected_at'] else ''))
             buttons = []
             if not row['received_at'] and not row['canceled_at'] and row['employee_id'] == actor:

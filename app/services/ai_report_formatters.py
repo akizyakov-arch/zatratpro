@@ -45,7 +45,7 @@ def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,pr
     for caption,value in [('Проект',project['name'] if project else None),('Сотрудник',employee['name'] if employee else None),('Поставщик',intent.vendor),('Карта',intent.card),('Товар',intent.item)]:
         if value:lines.append(f'{caption}: {value}')
     if intent.project_status:lines.append('Проекты: '+('открытые' if intent.project_status=='active' else 'архивные'))
-    if intent.status!='all':lines.append('Статус: '+STATUS[intent.status])
+    if intent.status!='all':lines.append('Статус: '+('учтено' if intent.status=='approved' and intent.report in ('expenses','cards') else STATUS[intent.status]))
     if intent.report in ('documents','items','overview'):
         lines.append('Чеки: по дате документа (без даты не включены)' if intent.date_basis=='document' else 'Чеки: по дате загрузки')
     lines.append('')
@@ -81,7 +81,7 @@ def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,pr
                     lines.append(f'   {row["item"]} · количество: {qty}; цена: {amount(row.get("price"),row["currency"])}')
                 if row.get('vendor'):lines.append('   Поставщик: '+row['vendor'])
                 if row.get('card'):lines.append('   Карта: '+row['card'])
-                if row.get('status') not in (None,'all'):lines.append('   '+STATUS[row['status']].capitalize())
+                if row.get('status') not in (None,'all'):lines.append('   '+('Учтено' if row['status']=='approved' and intent.report in ('expenses','cards') else STATUS[row['status']].capitalize()))
                 if row.get('note'):lines.append('   '+DOCUMENT_TYPE_TITLES.get(row['note'],row['note']))
                 lines.append('')
             else:
@@ -118,7 +118,7 @@ def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,pr
     if intent.report=='overview':notes.append('Документы и движение денег показаны отдельно; эти суммы не складываются.')
     if intent.repeat_after_rejection:notes.append('Только повторные заявки после отказа по тому же документу.')
     if intent.min_count:notes.append(f'Показаны группы с числом операций от {intent.min_count}.')
-    if intent.inactive_days:notes.append(f'Нет принятых расходов или возвратов за {intent.inactive_days} дней до конца периода. Это повод для сверки, не установленная просрочка.')
+    if intent.inactive_days:notes.append(f'Нет учтённых расходов или подтверждённых возвратов за {intent.inactive_days} дней до конца периода. Это повод для сверки, не установленная просрочка.')
     if intent.group_by=='project' and intent.report in ('cash','debt'):notes.append('Общий итог сводится по сотрудникам между проектами, поэтому может отличаться от суммы проектных остатков.')
     if intent.report=='items':notes.append('Количество — как распознано; разные единицы не складываются автоматически.')
     if notes:lines.extend(['']+notes)

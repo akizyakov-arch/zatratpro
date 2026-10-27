@@ -94,7 +94,7 @@ class FinanceRegressionTests(DatabaseFixture):
                 await asyncio.sleep(.01)
         self.fail('The expected approval did not wait for the advance lock')
 
-    async def test_approval_timestamp_is_after_lock_wait_not_transaction_start(self):
+    async def test_automatic_expense_timestamp_is_after_lock_wait_not_transaction_start(self):
         manager, employee = await self.finance_ids()
         service = AdvanceService()
         aid = await service.issue(manager, employee, self.project.id, 100, 'Materials', 'approval-time')
@@ -102,18 +102,17 @@ class FinanceRegressionTests(DatabaseFixture):
         document_id = await DocumentService().save_document(
             self.employee, self.project, 'preview', self.document, upload_id='approval-time-document',
         )
-        eid = await service.attach(employee, aid, document_id)
         async with self.pool.acquire() as blocker:
             async with blocker.transaction():
                 await blocker.execute('SELECT id FROM advances WHERE id=$1 FOR UPDATE', aid)
-                task = asyncio.create_task(service.approve_expense(manager, aid, eid))
+                task = asyncio.create_task(service.attach(employee, aid, document_id))
                 try:
                     cutoff = await self._wait_for_advance_lock()
                 except BaseException:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
                     raise
-        await asyncio.wait_for(task, 5)
+        eid = await asyncio.wait_for(task, 5)
         report = await service.report(manager, cutoff - timedelta(days=1), cutoff)
         self.assertEqual(report['totals']['spent'], 0)
         self.assertEqual(report['totals']['closing'], 100)

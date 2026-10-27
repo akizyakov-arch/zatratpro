@@ -29,11 +29,7 @@ async def cards_entry(message):
         rows=[('Указать оплату чека картой','bcard:documents')]
         if member['role']=='manager': rows.insert(0,('Добавить карту','bcard:new'))
         expenses=await service.report(uid,datetime(2000,1,1,tzinfo=timezone.utc))
-        pending=[e for e in expenses if not e['accepted']]
-        if member['role']=='manager':
-            rows.extend([(f"Принять №{e['document_id']} · {e['amount']} · {e['project_name']}",f"bcard:approve:{e['id']}") for e in pending[:30]])
-            rows.extend([(f"Отклонить №{e['document_id']}",f"bcard:reject:{e['id']}") for e in pending[:30]])
-        lines.append(f'Расходов на проверке: {len(pending)}. Карточные покупки не уменьшают подотчётный остаток.')
+        lines.append(f'Учтено расходов: {len(expenses)}. Покупки по карте не уменьшают подотчётный остаток.')
         rejected = await service.ledger(uid, status='rejected', per_page=10)
         for expense in rejected['items']:
             lines.append(f"Чек №{expense['document_id']} отклонён: {expense['rejection_reason']}")
@@ -68,10 +64,10 @@ async def card_callback(callback):
             await callback.message.answer('Какой бизнес-картой оплачен чек?',reply_markup=keyboard([(f"{c['name']} ···· {c['last4']}",f"bcard:submit:{parts[2]}:{c['id']}") for c in cards]))
         elif action=='submit':
             await service.submit(uid,int(parts[3]),int(parts[2]))
-            await callback.message.answer('Оплата бизнес-картой записана и ожидает принятия руководителем. Наличный остаток не изменился.')
+            await callback.message.answer('Оплата бизнес-картой учтена. Остаток денег у сотрудника не изменился.')
         elif action=='approve':
             await service.approve(uid,int(parts[2]))
-            await callback.message.answer('Карточный расход принят.')
+            await callback.message.answer('Карточный расход уже учтён.')
         elif action=='reject':
             member = await directory.membership(uid)
             if member['role'] != 'manager': raise AdvanceError('Расходы проверяет руководитель.')

@@ -278,7 +278,7 @@ class DatabaseTests(DatabaseFixture):
         self.assertEqual(await self.document_count(), 1)
 
 
-    async def test_advance_full_lifecycle_counts_only_approved_movements(self):
+    async def test_advance_lifecycle_posts_costs_immediately_and_confirms_returns(self):
         from app.services.advances import AdvanceService
         s=AdvanceService();manager,employee=await self.finance_ids()
         aid=await s.issue(manager,employee,self.project.id,'150','Materials','issue-1')
@@ -286,7 +286,8 @@ class DatabaseTests(DatabaseFixture):
         await s.receive(employee,aid);await s.receive(employee,aid)
         document=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='finance-check')
         eid=await s.attach(employee,aid,document)
-        self.assertEqual((await s.card(employee,aid))['balance'],150)
+        self.assertEqual((await s.card(employee,aid))['balance'],50)
+        self.assertEqual(await s.attach(employee,aid,document),eid)
         await s.approve_expense(manager,aid,eid);await s.approve_expense(manager,aid,eid)
         self.assertEqual((await s.card(employee,aid))['balance'],50)
         rid=await s.request_return(employee,aid,50,'return-1')
@@ -294,7 +295,7 @@ class DatabaseTests(DatabaseFixture):
         await s.approve_return(manager,aid,rid);await s.approve_return(manager,aid,rid)
         self.assertEqual((await s.card(employee,aid))['balance'],0)
         async with self.pool.acquire() as c:
-            self.assertEqual(await c.fetchval('SELECT count(*) FROM advance_events WHERE advance_id=$1',aid),6)
+            self.assertEqual(await c.fetchval('SELECT count(*) FROM advance_events WHERE advance_id=$1',aid),5)
 
     async def test_advance_permissions_and_unreceived_expense(self):
         from app.services.advances import AdvanceService,AdvanceError
@@ -375,7 +376,7 @@ class DatabaseTests(DatabaseFixture):
         self.assertIn('нет активных сотрудников',callback.message.answer.call_args.args[0])
         self.assertNotIn('reply_markup',callback.message.answer.call_args.kwargs)
 
-    async def test_money_on_hand_excludes_unreceived_and_unapproved_operations(self):
+    async def test_money_on_hand_posts_expenses_but_waits_for_cash_confirmation(self):
         from app.services.advances import AdvanceService
         s=AdvanceService();manager,employee=await self.finance_ids()
         aid=await s.issue(manager,employee,self.project.id,200,'x','received')
@@ -386,7 +387,7 @@ class DatabaseTests(DatabaseFixture):
         doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='balance-doc')
         eid=await s.attach(employee,aid,doc)
         rid=await s.request_return(employee,aid,25,'return-balance')
-        self.assertEqual((await s.balances(employee))[0]['balance'],200)
+        self.assertEqual((await s.balances(employee))[0]['balance'],100)
         await s.approve_expense(manager,aid,eid);await s.approve_return(manager,aid,rid)
         row=(await s.balances(employee))[0]
         self.assertEqual(row['balance'],75);self.assertEqual(row['pending'],300)
@@ -420,6 +421,7 @@ class DatabaseTests(DatabaseFixture):
         await s.issue(manager,employee,self.project.id,300,'x','pending-report')
         doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='report-doc')
         eid=await s.attach(employee,aid,doc)
+        await self.legacy_pending_expense(eid)
         rid=await s.request_return(employee,aid,25,'report-return')
         now=datetime.now(timezone.utc);start=now-timedelta(days=1)
         async with self.pool.acquire() as c:
@@ -531,7 +533,7 @@ class DatabaseTests(DatabaseFixture):
         doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='card-xlsx')
         eid=await s.submit(employee,card,doc)
         before=await get_money_report(self.manager.id,'all_time')
-        self.assertEqual(before['card_pending'],100);self.assertEqual(before['card_spent'],0)
+        self.assertEqual(before['card_pending'],0);self.assertEqual(before['card_spent'],100)
         await s.approve(manager,eid)
         report=await get_money_report(self.manager.id,'all_time')
         self.assertEqual(report['card_spent'],100);self.assertEqual(report['totals']['spent'],0)

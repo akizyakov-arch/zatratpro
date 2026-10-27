@@ -22,6 +22,8 @@ class CatalogTests(DatabaseFixture):
         await AdvanceService().receive(employee,aid)
         doc=await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='catalog-doc')
         eid=await AdvanceService().attach(employee,aid,doc)
+        # Catalog includes historical pending/rejected records from before migration 016.
+        await self.legacy_pending_expense(eid)
         return manager,employee,aid,doc,eid
 
     async def test_pending_approved_rejected_expenses_and_periods(self):
@@ -44,8 +46,8 @@ class CatalogTests(DatabaseFixture):
         for kind,expected in [('balance',1400),('cash',1400),('debt',0)]:
             self.assertEqual((await build_report(m,ReportIntent(report=kind,group_by='employee'))).totals['RUB'],expected)
         overview=await build_report(m,ReportIntent(report='overview'))
-        self.assertEqual(overview.totals['Принятые расходы сотрудников'],100)
-        self.assertEqual(overview.totals['Бизнес-карты: принято'],0)
+        self.assertEqual(overview.totals['Расходы из выдач'],100)
+        self.assertEqual(overview.totals['Бизнес-карты: учтено'],0)
         self.assertFalse((await build_report(m,ReportIntent(report='attention'))).rows)
 
     async def test_cards_returns_cancellations_and_attention_queue(self):
@@ -53,6 +55,7 @@ class CatalogTests(DatabaseFixture):
         await self.pool.execute('UPDATE advance_expenses SET rejected_at=clock_timestamp(),rejected_by=$2,rejection_reason=$3 WHERE id=$1',x,m,'Wrong')
         card=await BusinessCardService().register(m,'Office card','1234')
         expense=await BusinessCardService().submit(e,card,d)
+        await self.legacy_pending_expense(expense, card=True)
         self.assertEqual((await build_report(m,ReportIntent(report='cards',status='pending',card='1234'))).totals['RUB'],100)
         await BusinessCardService().approve(m,expense)
         self.assertEqual((await build_report(m,ReportIntent(report='cards',group_by='card'))).totals['RUB'],100)
@@ -128,7 +131,7 @@ class CatalogTests(DatabaseFixture):
         m,e,a,d,x=await self.prepare()
         await self.pool.execute("UPDATE advance_expenses SET rejected_at=clock_timestamp(),rejected_by=$2,rejection_reason='Test' WHERE id=$1",x,m)
         again=await AdvanceService().attach(e,a,d)
-        result=await build_report(m,ReportIntent(report='expenses',status='pending',repeat_after_rejection=True))
+        result=await build_report(m,ReportIntent(report='expenses',status='approved',repeat_after_rejection=True))
         self.assertEqual(result.totals['RUB'],100)
         await AdvanceService().issue(m,e,self.project.id,'500','More','repeat-day')
         result=await build_report(m,ReportIntent(report='advances',group_by='employee_day',min_count=2))

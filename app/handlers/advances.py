@@ -37,13 +37,10 @@ async def show_card(message,uid,aid):
     if not manager and not canceled and card['received_at']:
         rows.extend([('Приложить чек',f'cash:documents:{aid}'),('Вернуть остаток',f'cash:return:{aid}')])
     for expense in card['expenses']:
-        state = 'отклонён' if expense['rejected_at'] else ('принят' if expense['approved_at'] else 'на проверке')
+        state = 'отклонён' if expense['rejected_at'] else ('учтён' if expense['approved_at'] else 'ожидает переноса в учёт')
         text+=f"\nЧек №{expense['document_id']}: {expense['amount']} — {state}"
         if expense['rejected_at']:
             text += f". Причина: {expense['rejection_reason']}"
-        if manager and not expense['approved_at'] and not expense['rejected_at']:
-            rows.append((f"Принять чек №{expense['document_id']}",f"cash:expense:{aid}:{expense['id']}"))
-            rows.append((f"Отклонить чек №{expense['document_id']}",f"cash:reject_expense:{aid}:{expense['id']}"))
     for ret in card['returns']:
         state = 'отклонён' if ret['rejected_at'] else ('принят' if ret['approved_at'] else 'на проверке')
         text+=f"\nВозврат №{ret['id']}: {ret['amount']} — {state}"
@@ -112,14 +109,14 @@ async def balances_entry(message):
             await message.answer('Деньги на руках: 0.00 RUB. Выдач пока нет.')
             return
         from app.services.json_formatter import chunk_message
-        lines = ['Деньги на руках', 'Получено − принятые расходы − подтверждённые возвраты.', '']
+        lines = ['Деньги на руках', 'Получено − учтённые расходы − подтверждённые возвраты.', '']
         total = 0
         for row in records:
             name = ' '.join(part for part in (row['first_name'], row['last_name']) if part) or f"Сотрудник №{row['employee_id']}"
             lines.extend([
                 name,
                 f"Получено: {row['received']:.2f} RUB",
-                f"Принятые расходы: {row['spent']:.2f} RUB",
+                f"Учтённые расходы: {row['spent']:.2f} RUB",
                 f"Возвращено: {row['returned']:.2f} RUB",
                 f"На руках: {max(row['balance'], 0):.2f} RUB",
             ])
@@ -147,7 +144,7 @@ async def list_advances(message):
         rows=[(f"№{r['id']} · {r['employee_name']} · {r['project_name']} · {r['amount']} RUB",f"cash:card:{r['id']}") for r in records]
         if member['role']=='manager':
             rows.insert(0,('Выдать деньги', 'cash:issue'))
-        await message.answer('Выдачи на закупки (последние 30). Остаток = выдано − принятые расходы − возвраты.',reply_markup=keyboard(rows) if rows else None)
+        await message.answer('Выдачи на закупки (последние 30). Остаток = выдано − учтённые расходы − возвраты.',reply_markup=keyboard(rows) if rows else None)
     except AdvanceError as exc:
         await message.answer(str(exc))
 

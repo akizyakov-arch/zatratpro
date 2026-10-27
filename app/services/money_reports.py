@@ -69,20 +69,18 @@ def format_money_report(report: dict) -> str:
         f"Период UTC: {report['start']:%d.%m.%Y} — {report['end']:%d.%m.%Y}",
         f"На начало: {totals['opening']:.2f}",
         f"Получено: {totals['received']:.2f}",
-        f"Принятые расходы: {totals['spent']:.2f}",
+        f"Учтённые расходы: {totals['spent']:.2f}",
         f"Возвращено: {totals['returned']:.2f}",
         f"Расчётный остаток на конец: {totals['closing']:.2f}",
         f'На руках у сотрудников: {cash:.2f}',
         f'Компания должна сотрудникам: {debt:.2f}',
         f"Ожидает получения: {totals['pending']:.2f}",
-        f"Расходы на проверке: {totals['pending_expenses']:.2f}",
-        f"Возвраты на проверке: {totals['pending_returns']:.2f}",
+        f"Возвраты к подтверждению: {totals['pending_returns']:.2f}",
         'Выдачи не прибавляются к затратам по чекам. Отрицательный остаток — долг компании сотруднику.',
-        f"Бизнес-карты: принято {report.get('card_spent', 0):.2f}; "
-        f"на проверке {report.get('card_pending', 0):.2f} RUB. В подотчётный остаток не входят.",
+        f"Бизнес-карты: учтено {report.get('card_spent', 0):.2f} RUB. В подотчётный остаток не входят.",
     ]
     for card in report.get('card_rows', []):
-        status = 'принято' if card['accepted'] else 'на проверке'
+        status = 'учтено' if card['accepted'] else 'историческая запись без учёта'
         lines.append(
             f"Карта {card['card_name']} ···· {card['last4']} · {employee_name(card)} · "
             f"{card['project_name']} · {card['amount']:.2f} · {status}"

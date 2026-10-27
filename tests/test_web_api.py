@@ -78,7 +78,7 @@ class WebAPITests(DatabaseFixture):
             user or self.employee, project or self.project, 'Receipt preview', self.document,
         )
 
-    async def test_web_issue_bot_receipt_web_approval_report_and_excel_agree(self):
+    async def test_web_issue_bot_receipt_automatic_cost_report_and_excel_agree(self):
         user = await self.login()
         manager, employee = await self.finance_ids()
         self.assertEqual(user['id'], manager)
@@ -92,9 +92,9 @@ class WebAPITests(DatabaseFixture):
         eid = await AdvanceService().attach(employee, aid, document)
         review = await self.client.get('/api/reviews')
         self.assertEqual(review.status_code, 200, review.text)
-        self.assertEqual(review.json()['total'], 1)
-        self.assertEqual(review.json()['items'][0]['type'], 'expense')
-        self.assertEqual(review.json()['items'][0]['document_id'], document)
+        self.assertEqual(review.json()['total'], 0)
+        self.assertEqual(str((await AdvanceService().card(employee, aid))['balance']), '100.10')
+        # Compatibility route for old buttons is an idempotent no-op.
         response = await self.client.post(f'/api/advances/{aid}/expenses/{eid}/approve', headers=self.headers)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual((await self.client.get('/api/reviews')).json()['total'], 0)
@@ -118,7 +118,7 @@ class WebAPITests(DatabaseFixture):
         self.assertIn('attachment;', exported.headers['content-disposition'])
         self.assertEqual(exported.headers['cache-control'], 'no-store')
 
-    async def test_review_queue_contains_returns_and_cards_and_allows_decisions(self):
+    async def test_review_queue_only_requires_cash_return_confirmation(self):
         await self.login()
         manager, employee = await self.finance_ids()
         aid = await self.issue(amount='300')
@@ -129,18 +129,19 @@ class WebAPITests(DatabaseFixture):
         card_id = card_response.json()['id']
         ceid = await BusinessCardService().submit(employee, card_id, await self.save_document())
         page = await self.client.get('/api/reviews?per_page=1')
-        self.assertEqual(page.json()['total'], 2)
+        self.assertEqual(page.json()['total'], 1)
         self.assertEqual(len(page.json()['items']), 1)
         second = await self.client.get('/api/reviews?per_page=1&page=2')
-        self.assertEqual({page.json()['items'][0]['type'], second.json()['items'][0]['type']}, {'return', 'card'})
+        self.assertEqual(page.json()['items'][0]['type'], 'return')
+        self.assertEqual(second.json()['items'], [])
         rejected = await self.client.post(f'/api/card-expenses/{ceid}/reject', headers=self.headers, json={'reason': 'Оплата другим способом'})
-        self.assertEqual(rejected.status_code, 200, rejected.text)
+        self.assertEqual(rejected.status_code, 400, rejected.text)
         approved = await self.client.post(f'/api/advances/{aid}/returns/{rid}/approve', headers=self.headers)
         self.assertEqual(approved.status_code, 200, approved.text)
         self.assertEqual((await self.client.get('/api/reviews')).json()['total'], 0)
-        rows = (await self.client.get('/api/card-expenses?status=rejected')).json()
+        rows = (await self.client.get('/api/card-expenses?status=approved')).json()
         self.assertEqual(rows['total'], 1)
-        self.assertEqual(rows['items'][0]['rejection_reason'], 'Оплата другим способом')
+        self.assertIsNotNone(rows['items'][0]['approved_at'])
         self.assertEqual(str((await AdvanceService().card(employee, aid))['balance']), '280.00')
 
     async def test_api_requires_session_same_origin_csrf_and_current_role(self):
