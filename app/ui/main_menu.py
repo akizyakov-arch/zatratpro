@@ -66,7 +66,7 @@ def build_main_menu_keyboard(
         url = mini_app_url()
         if url:
             keyboard.insert(0, [KeyboardButton(text='Панель руководителя')])
-    keyboard.append([KeyboardButton(text=MENU_BUTTONS['profile']), KeyboardButton(text=MENU_BUTTONS['settings'])])
+    keyboard.insert(-1, [KeyboardButton(text=MENU_BUTTONS['profile']), KeyboardButton(text=MENU_BUTTONS['settings'])])
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
