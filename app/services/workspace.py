@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from app.config import get_settings
+from app.config import get_owner_telegram_id
 from app.services.database import get_pool
 
 
@@ -55,13 +55,14 @@ async def ensure_settled(connection, company_id, *, employee_id=None, project_id
 
 class WorkspaceService:
     async def _context(self, c, actor):
+        owner_id = get_owner_telegram_id()
         row = await c.fetchrow('''SELECT u.id,u.first_name,u.last_name,u.username,u.is_active,
             EXISTS(SELECT 1 FROM external_accounts a WHERE a.user_id=u.id
               AND a.platform='telegram' AND a.external_id=$2 AND u.telegram_id=$3 AND $3<>0) AS owner,
             cm.company_id,cm.role,c.name AS company_name,c.status AS company_status
             FROM users u LEFT JOIN company_members cm ON cm.user_id=u.id AND cm.status='active'
             LEFT JOIN companies c ON c.id=cm.company_id WHERE u.id=$1''', actor,
-            str(get_settings().bot_owner_telegram_id), get_settings().bot_owner_telegram_id)
+            str(owner_id), owner_id)
         if row is None or not row['is_active']:
             raise WorkspaceError('Учётная запись недоступна.')
         result = _person(row)

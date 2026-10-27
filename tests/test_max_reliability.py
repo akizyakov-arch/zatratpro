@@ -9,7 +9,7 @@ from db_fixture import DatabaseFixture
 from test_max_adapter import message
 from app.config import DatabaseSettings
 from app.max_bot.client import MaxAPIError
-from app.max_bot.handler import MaxHandler
+from app.max_bot.handler import LINK_HELP, MaxHandler
 from app.max_bot.runner import PollingLeaseLost, poll
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.database import close_db, init_db
@@ -213,7 +213,7 @@ class MaxReliabilityTests(DatabaseFixture):
                 await poll(client, 333)
         self.assertIn(self.project.name, replies[0])
         self.assertNotIn(self.project.name, replies[1])
-        self.assertIn('Подключите существующий профиль', replies[1])
+        self.assertEqual(replies[1], LINK_HELP)
 
     async def test_cancelling_poller_releases_database_lock(self):
         started = asyncio.Event()

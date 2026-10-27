@@ -150,6 +150,7 @@ class AccountLinkService:
                 return repeated
         await self._record_attempt(target_platform, target_external_id)
         async with get_pool().acquire() as connection, connection.transaction():
+            await connection.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', f'external:{target_platform}:{target_external_id}')
             row = await connection.fetchrow(
                 '''SELECT * FROM account_link_requests
                    WHERE code_hash=$1 AND target_platform=$2 AND status IN ('issued','claimed','confirmed') FOR UPDATE''',
