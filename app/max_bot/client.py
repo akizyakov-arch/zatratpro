@@ -2,10 +2,12 @@
 import asyncio
 import ssl
 import time
+from pathlib import Path
 
 import httpx
 
-API_URL = 'https://platform-api.max.ru'
+API_URL = 'https://platform-api2.max.ru'
+ROOT_CA = Path(__file__).with_name('certs') / 'russian_trusted_root_ca.pem'
 UPDATE_TYPES = 'bot_started,message_created'
 
 
@@ -21,6 +23,9 @@ class MaxClient:
         if not isinstance(token, str) or not token.strip():
             raise ValueError('MAX_BOT_TOKEN не настроен.')
         context = ssl.create_default_context()
+        # The official API uses Russian Trusted Root CA. Add it only to MAX's
+        # context, preserving the system roots and normal hostname verification.
+        context.load_verify_locations(cafile=str(ROOT_CA))
         if ca_bundle:
             context.load_verify_locations(cafile=ca_bundle)
         self.http = httpx.AsyncClient(base_url=API_URL, headers={'Authorization': token},
@@ -38,8 +43,12 @@ class MaxClient:
     async def _request(self, method, path, **kwargs):
         try:
             response = await self.http.request(method, path, **kwargs)
-        except httpx.HTTPError:
-            raise MaxAPIError('MAX: ошибка сети или проверки сертификата.') from None
+        except httpx.TimeoutException:
+            raise MaxAPIError('MAX: превышено время ожидания ответа API.') from None
+        except httpx.HTTPError as exc:
+            if 'CERTIFICATE_VERIFY_FAILED' in str(exc).upper():
+                raise MaxAPIError('MAX: сертификат API не прошёл проверку. Проверьте доверенный корневой CA и MAX_CA_BUNDLE.') from None
+            raise MaxAPIError('MAX: не удалось соединиться с API. Проверьте DNS и доступ к platform-api2.max.ru:443.') from None
         if response.status_code != 200:
             retry = response.headers.get('Retry-After', '')
             retry = min(60, max(1, int(retry))) if retry.isdigit() and len(retry) < 6 else 3

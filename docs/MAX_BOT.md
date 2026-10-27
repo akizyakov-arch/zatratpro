@@ -12,12 +12,12 @@
 вашему профилю процессу. Полученный токен относится только к MAX.
 
 В облачной среде добавляется секрет с именем **MAX_BOT_TOKEN**, переменная
-`MAX_BOT_TOKEN`, разрешённый адрес назначения **platform-api.max.ru**.
+`MAX_BOT_TOKEN`, разрешённый адрес назначения **platform-api2.max.ru**.
 Токен не нужно отправлять в чат, записывать в GitHub или в браузерную демопанель.
 На собственном сервере можно использовать закрытый `.env` с правами 0600.
 
 Документация MAX проверена 26.10.2026: текущий API использует новый хост
-`platform-api.max.ru`, а авторизация передаётся заголовком `Authorization`.
+`platform-api2.max.ru`, а авторизация передаётся заголовком `Authorization`.
 Параметры query для токена не используются. Запросы не перенаправляются на
 другие хосты. При необходимости `MAX_CA_BUNDLE` указывает PEM-файл доверенных
 корневых сертификатов; он дополняет системный trust store. Проверка TLS включена.
@@ -205,3 +205,43 @@ HTTP 401, прочие неизвестные 4xx, ошибки обработк
 
 Подтверждение получения через MAX также ставит уведомление в общую очередь:
 его получает оформивший выдачу руководитель в привязанный Telegram.
+
+## TLS и актуальный адрес API
+
+По [официальной документации](https://dev.max.ru/docs-api/) и
+[MAX Messenger Agent Skill](https://github.com/max-messenger/max-agents-skill)
+нужно использовать `platform-api2.max.ru`, а не устаревший `platform-api.max.ru`.
+Ответ 401 от старого адреса не означает, что на него следует переключать бота.
+
+В клиент включён публичный Russian Trusted Root CA из официального источника
+Госуслуг; отпечаток проверен по скиллу MAX. Сертификат добавляется только в
+SSL-контекст MAX, в дополнение к системным корням, без отключения TLS и
+проверки имени хоста. Dockerfile копирует его вместе с каталогом app.
+`MAX_CA_BUNDLE` остаётся необязательным дополнительным CA-файлом.
+
+Детали происхождения, SHA-256 и срок действия — в
+`app/max_bot/certs/README.md`. В диагностике различаются тайм-аут, TLS и
+ошибка соединения; исходные исключения с возможными реквизитами не выводятся.
+
+### Отдельный контейнер MAX для тестового VPS
+
+Запуск Telegram-контейнера не запускает MAX. Для тестового Long Polling
+подготовлен `docker-compose.max-dev.yml`; production требует HTTPS Webhook.
+Добавьте `MAX_BOT_TOKEN` в локальный `.env`, затем:
+
+```bash
+docker compose -p fiinops -f docker-compose.yml -f docker-compose.max-dev.yml build zatratpro-max
+docker compose -p fiinops -f docker-compose.yml -f docker-compose.max-dev.yml run --rm --no-deps zatratpro-max python -m app.max_bot --check
+```
+
+Если авторизация успешна и webhook-подписок 0:
+
+```bash
+docker compose -p fiinops -f docker-compose.yml -f docker-compose.max-dev.yml up -d --no-deps zatratpro-max
+docker compose -p fiinops -f docker-compose.yml -f docker-compose.max-dev.yml logs --tail=40 zatratpro-max
+```
+
+Используйте то же имя Compose-проекта, что у работающей БД (`fiinops` в данном
+примере). Оба бота работают с одной базой и каноническими пользователями.
+Существующие webhook-подписки скрипт не удаляет и при их наличии polling не
+запускает. Одновременно должен работать только один MAX polling-процесс.
