@@ -18,10 +18,13 @@ def command_text(text):
     names = {'главное меню': '/start', 'проекты': '/projects', 'деньги': '/money',
              'отчёты': '/reports', 'профиль': '/profile', 'остаток': '/balance',
              'за неделю': '/report week', 'за месяц': '/report month',
-             'за всё время': '/report all_time', 'пригласить сотрудника': '/invite'}
+             'за всё время': '/report all_time', 'пригласить сотрудника': '/invite',
+             'подключить telegram': '/link_telegram', 'обновить профиль': '/profile'}
     if text.lower() in names:
         return names[text.lower()]
     for pattern, command in (
+        (r'Подтвердить Telegram · ([a-f0-9]{32})', '/link_confirm'),
+        (r'Отменить привязку · ([a-f0-9]{32})', '/link_cancel'),
         (r'Выдача №([1-9][0-9]{0,17})', '/advance'),
         (r'Подтвердить получение №([1-9][0-9]{0,17})', '/receive_prompt'),
         (r'Да, получил №([1-9][0-9]{0,17})', '/receive'),

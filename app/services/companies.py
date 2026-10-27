@@ -91,6 +91,7 @@ class CompanyService:
         settings = get_settings()
         system_role = "owner" if telegram_user.id == settings.bot_owner_telegram_id and settings.bot_owner_telegram_id else "user"
         async with pool.acquire() as connection, connection.transaction():
+            await connection.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', f'external:telegram:{telegram_user.id}')
             linked = await connection.fetchrow(
                 """SELECT account.user_id,u.telegram_id,u.is_active FROM external_accounts account
                    JOIN users u ON u.id=account.user_id
@@ -108,6 +109,10 @@ class CompanyService:
                     telegram_user.first_name, telegram_user.last_name, system_role,
                 )
                 return linked['user_id']
+            if await connection.fetchval("""SELECT 1 FROM account_link_requests
+                WHERE target_platform='telegram' AND target_external_id=$1
+                AND status='claimed' AND expires_at>clock_timestamp()""", str(telegram_user.id)):
+                raise CompanyAccessError('Подтвердите подключение этого Telegram-аккаунта в исходном MAX-профиле. До подтверждения новый профиль не создаётся.')
             user_id = await connection.fetchval(
                 """
                 INSERT INTO users (telegram_id, username, first_name, last_name, system_role)

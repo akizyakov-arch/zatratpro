@@ -2,6 +2,7 @@
 import re
 
 from app.max_bot.issue import IssueMenu
+from app.max_bot.profile import ProfileMenu
 from app.max_bot.menu import HOME, MAIN, PERIODS, MenuText, command_text, money_menu
 
 from app.services.account_links import AccountLinkError, AccountLinkService
@@ -16,6 +17,7 @@ from app.services.report_periods import report_period_start
 
 HELP = ('FIINOPS · MAX\n'
         '/profile — профиль и связанные аккаунты\n'
+        '/link_telegram — подключить Telegram к текущему профилю\n'
         '/projects — открытые проекты\n'
         '/money — выдачи на закупки\n'
         '/balance — деньги у сотрудников и долги компании\n'
@@ -67,6 +69,7 @@ class MaxHandler:
         self.advances = AdvanceService()
         self.directory = MemberDirectory()
         self.issue_menu = IssueMenu()
+        self.profile_menu = ProfileMenu()
 
     async def handle(self, update):
         event = event_message(update)
@@ -118,7 +121,7 @@ class MaxHandler:
             if member['role'] != 'manager':
                 raise AdvanceError('Приглашать сотрудников может только руководитель компании.')
             invite = await WorkspaceService().invite_employee(actor)
-            return MenuText(f"Приглашение сотруднику действует 72 часа и используется один раз.\nОтправьте человеку команду для нашего MAX-бота:\n/join {invite['code']}\nНовый код заменяет предыдущее неиспользованное приглашение сотрудника.", [HOME])
+            return MenuText(f"Приглашение сотруднику действует 72 часа и используется один раз.\nЧеловек может выбрать Telegram или MAX и отправить в нашем боте:\n/join {invite['code']}\nНовый код заменяет предыдущее неиспользованное приглашение сотрудника.", [HOME])
         if command == '/start':
             return MenuText('FIINOPS · Главное меню\nВыберите раздел.', await self._main_buttons(actor))
         if command == '/help':
@@ -127,8 +130,17 @@ class MaxHandler:
             await self.directory.projects(actor)
             return MenuText('Отчёты по деньгам\nВыберите период (UTC).', PERIODS)
         if command == '/profile':
-            accounts = await self.links.accounts('max', str(sender))
-            return f'Профиль FIINOPS №{actor}\nСвязанные аккаунты:\n' + '\n'.join(f"{a['platform']}: {a['external_id']}" for a in accounts)
+            return await self.profile_menu.show(sender, actor)
+        if command == '/link_telegram':
+            return await self.profile_menu.issue_telegram(sender)
+        if command in ('/link_confirm', '/link_cancel'):
+            if not re.fullmatch(r'[a-f0-9]{32}', arg):
+                raise AccountLinkError('Откройте профиль и используйте актуальную кнопку привязки.')
+            if command == '/link_confirm':
+                await self.links.confirm('max', str(sender), arg)
+            else:
+                await self.links.cancel('max', str(sender), arg)
+            return await self.profile_menu.show(sender, actor)
         if command in ('/projects', 'проекты'):
             projects = await self.directory.projects(actor)
             return 'Открытые проекты:\n' + ('\n'.join(f"№{p['id']} · {p['name']}" for p in projects) or 'Проектов пока нет.')

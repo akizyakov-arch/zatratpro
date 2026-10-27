@@ -274,7 +274,11 @@ def _format_duplicate_card(row) -> str:
 
 @router.message(CommandStart())
 async def start_command(message: Message, command: CommandObject | None = None) -> None:
-    context = await _ensure_context(message)
+    try:
+        context = await _ensure_context(message)
+    except CompanyAccessError as exc:
+        await message.answer(str(exc))
+        return
     payload = command.args if command is not None else None
     if payload and payload.startswith('join_'):
         await join_company(message, payload.removeprefix('join_'))
