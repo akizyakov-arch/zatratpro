@@ -144,6 +144,24 @@ class WebAPITests(DatabaseFixture):
         self.assertIsNotNone(rows['items'][0]['approved_at'])
         self.assertEqual(str((await AdvanceService().card(employee, aid))['balance']), '280.00')
 
+    async def test_duplicate_warning_and_list_include_archives_outside_selected_period(self):
+        await self.login()
+        original = await self.save_document()
+        copy = await self.save_document()
+        await self.pool.execute("UPDATE projects SET status='archived',archived_at=clock_timestamp() WHERE id=$1", self.project.id)
+        await self.pool.execute("UPDATE documents SET created_at='2001-01-01' WHERE id=ANY($1::bigint[])", [original, copy])
+        result = await self.client.get('/api/overview?period=month')
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()['document_count'], 0)
+        self.assertEqual(result.json()['duplicate_review'], {
+            'total': 1, 'exact': 1, 'probable': 0, 'involving_archived_projects': 1,
+        })
+        rows = await self.client.get('/api/documents?period=all_time&duplicate_status=flagged')
+        self.assertEqual(rows.status_code, 200, rows.text)
+        self.assertEqual(rows.json()['total'], 1)
+        self.assertEqual(rows.json()['items'][0]['id'], copy)
+        self.assertEqual(rows.json()['items'][0]['project_status'], 'archived')
+
     async def test_api_requires_session_same_origin_csrf_and_current_role(self):
         for endpoint in ('/api/projects', '/api/reviews', '/api/reports/export', '/api/owner/stats'):
             self.assertEqual((await self.client.get(endpoint)).status_code, 401)

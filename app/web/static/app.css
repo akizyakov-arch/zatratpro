@@ -561,6 +561,16 @@ a.metric:hover {
 .summary-strip strong {
   font-weight: 650;
 }
+.summary-strip.duplicate-alert {
+  border-color: #efcf9a;
+  background: #fff5e5;
+  color: #7b4d12;
+  flex-wrap: wrap;
+}
+.duplicate-alert > div {
+  flex: 1;
+  min-width: 180px;
+}
 .project-overview {
   margin-top: 28px;
 }

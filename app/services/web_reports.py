@@ -19,7 +19,7 @@ from app.services.report_exports import build_manager_report_workbook, _append_r
 
 
 _DOCUMENT_SELECT = """
-    SELECT d.*, p.name AS project_name,
+    SELECT d.*, p.name AS project_name, p.status AS project_status,
            COALESCE(NULLIF(d.external_document_number,''),NULLIF(d.incoming_number,'')) AS document_number,
            COALESCE(NULLIF(concat_ws(' ',u.first_name,u.last_name),''),u.username,'Сотрудник №'||u.id) AS uploaded_by_name,
            u.username AS uploaded_by_username,
@@ -86,9 +86,12 @@ class WebReportService:
         if employee_id is not None:
             add('d.uploaded_by_user_id=?', employee_id)
         if duplicate_status is not None:
-            if duplicate_status not in ('none', 'exact', 'probable', 'not_checked'):
+            if duplicate_status not in ('none', 'exact', 'probable', 'not_checked', 'flagged'):
                 raise AdvanceError('Неизвестный статус дубля.')
-            add('d.duplicate_status=?', duplicate_status)
+            if duplicate_status == 'flagged':
+                clauses.append("d.duplicate_status IN ('exact','probable')")
+            else:
+                add('d.duplicate_status=?', duplicate_status)
         if payment_source is not None:
             if payment_source == 'advance':
                 clauses.append('ae.id IS NOT NULL')
@@ -219,6 +222,17 @@ class WebReportService:
                 FROM documents WHERE company_id=$1 AND created_at>=$2 AND created_at<$3
                 GROUP BY currency
             """, company, start, end)
+            # Unresolved duplicate warnings must survive period changes and project archival.
+            duplicate_review = dict(await c.fetchrow("""
+                SELECT count(*) AS total,
+                    count(*) FILTER (WHERE d.duplicate_status='exact') AS exact,
+                    count(*) FILTER (WHERE d.duplicate_status='probable') AS probable,
+                    count(*) FILTER (WHERE p.status='archived' OR source_p.status='archived') AS involving_archived_projects
+                FROM documents d JOIN projects p ON p.id=d.project_id AND p.company_id=d.company_id
+                LEFT JOIN documents source ON source.id=d.duplicate_of_document_id AND source.company_id=d.company_id
+                LEFT JOIN projects source_p ON source_p.id=source.project_id AND source_p.company_id=d.company_id
+                WHERE d.company_id=$1 AND d.duplicate_status IN ('exact','probable')
+            """, company))
             money = await self._money(c, actor, start, end)
             projects = await c.fetch("SELECT id,name FROM projects WHERE company_id=$1 AND status='active' ORDER BY lower(name),id", company)
             project_documents = await c.fetch('''SELECT d.project_id,d.currency,count(*) AS document_count,
@@ -261,6 +275,7 @@ class WebReportService:
             'total_amount': rub_total, 'currency': 'RUB', 'totals_by_currency': currency_totals,
             'exact_duplicates': sum(row['exact_duplicates'] for row in currencies),
             'probable_duplicates': sum(row['probable_duplicates'] for row in currencies),
+            'duplicate_review': duplicate_review,
             **money['totals'], 'card_spent': money['card_spent'], 'card_pending': money['card_pending'],
             'cash': money['cash_on_hand'], 'debt': money['employee_debt'], 'money': money,
         }

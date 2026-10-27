@@ -1123,6 +1123,37 @@
       ),
     );
   }
+  function duplicateNotice(review) {
+    if (!review?.total) return null;
+    return h(
+      "div",
+      { class: "summary-strip duplicate-alert", role: "status" },
+      icon("file"),
+      h(
+        "div",
+        {},
+        h("strong", {}, `Дубли документов к проверке: ${review.total}`),
+        h(
+          "p",
+          {},
+          `Точных: ${review.exact}. Возможных: ${review.probable}. За всё время, включая архивные проекты.`,
+        ),
+        review.involving_archived_projects
+          ? h(
+              "p",
+              {},
+              `Связаны с архивными проектами: ${review.involving_archived_projects}.`,
+            )
+          : null,
+      ),
+      link(
+        "Проверить дубли",
+        "#/documents?period=all_time&duplicate_status=flagged",
+        "small",
+        "arrow",
+      ),
+    );
+  }
   async function overview(main, params) {
     const data = await api("/api/overview?" + query(params));
     const m = data.money || data;
@@ -1169,6 +1200,7 @@
           "#/money/reviews",
         ),
       ),
+      duplicateNotice(data.duplicate_review),
       openProjectsOverview(data.open_projects, params),
       h(
         "div",
@@ -1214,7 +1246,13 @@
               "div",
               { class: "inline-actions mt-24" },
               link("Все отчёты", "#/reports", "small", "chart"),
-              link("Проверить расходы", "#/money/reviews", "small", "arrow"),
+              link("Подтвердить возвраты", "#/money/reviews", "small", "arrow"),
+              link(
+                "Дубли документов",
+                "#/documents?period=all_time&duplicate_status=flagged",
+                "small",
+                "file",
+              ),
             ),
           ),
         ),
@@ -1838,7 +1876,7 @@
     main.replaceChildren(
       header(
         "Документы",
-        "Чеки, акты и накладные, загруженные сотрудниками через бота.",
+        "Все сохранённые документы входят в затраты, независимо от источника оплаты. Дубли требуют проверки руководителем.",
       ),
       filterForm(
         "documents",
@@ -1855,6 +1893,7 @@
             label: "Дубли",
             options: [
               { value: "", label: "Все документы" },
+              { value: "flagged", label: "Все дубли к проверке" },
               { value: "exact", label: "Точные дубли" },
               { value: "probable", label: "Возможные дубли" },
               { value: "none", label: "Без дублей" },
@@ -1905,7 +1944,7 @@
             },
             {
               label: "Проект / сотрудник",
-              render: (r) => mainCell(r.project_name, r.uploaded_by_name),
+              render: (r) => mainCell(documentProject(r), r.uploaded_by_name),
             },
             {
               label: "Сумма",
@@ -1937,7 +1976,7 @@
       h(
         "p",
         { class: "section-footnote" },
-        "Период отбора — дата загрузки документа (UTC). Дата на чеке указана в карточке документа.",
+        "Период отбора — дата загрузки документа (UTC). Архивные проекты включены. Пометка дубля не исключает документ из затрат до решения руководителя.",
       ),
     );
   }
@@ -1946,7 +1985,13 @@
       ? badge("Подотчёт", "info")
       : source === "card"
         ? badge("Бизнес-карта", "success")
-        : badge("Не указан");
+        : badge("Оплата не привязана");
+  }
+  function documentProject(document) {
+    return (
+      document.project_name +
+      (document.project_status === "archived" ? " (архив)" : "")
+    );
   }
   function duplicateBadge(s) {
     return s === "exact"
@@ -2011,7 +2056,7 @@
                 d.external_document_number ||
                 d.incoming_number,
             ],
-            ["Проект", d.project_name],
+            ["Проект", documentProject(d)],
             ["Сумма", money(d.total_amount, d.currency || "RUB"), "amount"],
             ["Дата документа", date(d.document_date)],
             ["Дата загрузки", datetime(d.created_at)],
@@ -2117,7 +2162,7 @@
           money(document.total_amount, document.currency),
           money(original.total_amount, original.currency),
         ],
-        ["Проект", document.project_name, original.project_name],
+        ["Проект", documentProject(document), documentProject(original)],
         ["Загрузил", document.uploaded_by_name, original.uploaded_by_name],
       ].map(([label, current, source]) => ({ label, current, source }));
       openDialog(
