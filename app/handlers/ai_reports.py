@@ -4,7 +4,7 @@ from io import BytesIO
 from aiogram import F,Router
 from aiogram.filters import Command,BaseFilter
 from aiogram.types import BufferedInputFile,InlineKeyboardMarkup,InlineKeyboardButton
-from app.services.ai_reports import report_actor,parse_question,ReportIntent,ReportQuestionError
+from app.services.ai_reports import report_actor,parse_question,ReportIntent,ReportQuestionError,NameChoiceRequired,intent_key
 from app.services.ai_report_engine import build_report
 from app.services.ai_report_sessions import session,remember,exit_mode
 from app.services.speech import transcribe_voice,SpeechError,MAX_VOICE_BYTES,MAX_VOICE_SECONDS
@@ -90,26 +90,40 @@ async def ask_report(message):
         saved=await session(actor)
         previous=ReportIntent.model_validate_json(saved['intent']) if saved and saved['intent'] else None
         intent=await parse_question(text,previous)
-        # Keep the interpreted filters even if an ambiguous name requires clarification.
-        await remember(actor,intent)
-        result=await build_report(actor,intent)
-        current=await WorkspaceService().context(actor)
-        if current['role']!='manager' or current['company_id']!=result.company_id:
-            raise ReportQuestionError('Доступ к компании изменился. Повтори запрос.')
-        for chunk in chunk_message(result.text):await message.answer(chunk)
-        if intent.excel:
-            # Recheck current access before delivering the already computed company data.
-            await report_actor(message.from_user.id)
-            current=await WorkspaceService().context(actor)
-            if current['role']!='manager' or current['company_id']!=result.company_id:
-                raise ReportQuestionError('Доступ к компании изменился. Повтори запрос.')
-            await message.answer_document(BufferedInputFile(result.workbook(),filename='ai-report.xlsx'))
-        await message.answer('Можно уточнить вопрос текстом или голосом.',reply_markup=EXIT)
+        await deliver_report(message,actor,intent)
+    except NameChoiceRequired as exc:
+        await show_name_choices(message,actor,exc)
     except (ReportQuestionError,SpeechError,WebAuthError,WorkspaceError,AdvanceError) as exc:
         await message.answer(str(exc))
     except Exception as exc:
         logger.warning('ai_report_failed error_type=%s',type(exc).__name__)
         await message.answer('Не удалось сформировать отчёт. Повтори позже.')
+
+
+async def show_name_choices(message,actor,error):
+    saved=await session(actor)
+    if not saved or not saved['intent']:
+        await message.answer('Запрос истёк. Повтори вопрос.');return
+    current=ReportIntent.model_validate_json(saved['intent'])
+    key=intent_key(current)
+    buttons=[[InlineKeyboardButton(text=(r['name'][:100]+' · №'+str(r['id'])),callback_data=f'ai:select:{error.kind}:{r["id"]}:{key}')] for r in error.choices]
+    buttons.append([InlineKeyboardButton(text='Отмена',callback_data='ai:exit')])
+    await message.answer(f'Для «{error.query}» есть похожие или совпадающие названия. Выбери '+('проект' if error.kind=='project' else 'сотрудника')+':',reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+async def deliver_report(message,actor,intent):
+    await remember(actor,intent)
+    result=await build_report(actor,intent)
+    current=await WorkspaceService().context(actor)
+    if current['role']!='manager' or current['company_id']!=result.company_id:
+        raise ReportQuestionError('Доступ к компании изменился. Повтори запрос.')
+    for chunk in chunk_message(result.text):await message.answer(chunk)
+    if intent.excel:
+        current=await WorkspaceService().context(actor)
+        if current['role']!='manager' or current['company_id']!=result.company_id:
+            raise ReportQuestionError('Доступ к компании изменился. Повтори запрос.')
+        await message.answer_document(BufferedInputFile(result.workbook(),filename='ai-report.xlsx'))
+    await message.answer('Можно уточнить вопрос текстом или голосом.',reply_markup=EXIT)
 
 
 class ReportTextFilter(BaseFilter):
@@ -128,6 +142,38 @@ class ReportTextFilter(BaseFilter):
 
 
 router.message.register(ask_report,ReportTextFilter())
+
+
+@router.callback_query(F.data.startswith('ai:select:'))
+@serialize_user
+async def choose_report_name(callback):
+    if callback.from_user is None or callback.message is None:return
+    await callback.answer()
+    try:
+        actor=await report_actor(callback.from_user.id)
+        saved=await session(actor)
+        if not saved or not saved['enabled'] or not saved['intent']:
+            raise ReportQuestionError('Этот запрос истёк. Повтори вопрос.')
+        _,_,kind,raw_id,key=callback.data.split(':')
+        intent=ReportIntent.model_validate_json(saved['intent'])
+        if key!=intent_key(intent):raise ReportQuestionError('Это кнопка от предыдущего запроса. Повтори вопрос.')
+        selected=int(raw_id)
+        if kind not in ('project','employee') or selected<=0:raise ReportQuestionError('Некорректный выбор.')
+        current=await WorkspaceService().context(actor)
+        if kind=='project':
+            name=await get_pool().fetchval('SELECT name FROM projects WHERE id=$1 AND company_id=$2',selected,current['company_id'])
+        else:
+            name=await get_pool().fetchval("SELECT COALESCE(NULLIF(trim(concat_ws(' ',u.first_name,u.last_name)),''),u.username,'Пользователь №'||u.id) FROM users u JOIN company_members cm ON cm.user_id=u.id WHERE u.id=$1 AND cm.company_id=$2",selected,current['company_id'])
+        if name is None:raise ReportQuestionError('Этот вариант больше недоступен.')
+        setattr(intent,kind,name);setattr(intent,kind+'_id',selected)
+        await deliver_report(callback.message,actor,intent)
+    except NameChoiceRequired as exc:
+        await show_name_choices(callback.message,actor,exc)
+    except (ReportQuestionError,WorkspaceError,AdvanceError,ValueError) as exc:
+        await callback.message.answer(str(exc) if not isinstance(exc,ValueError) or isinstance(exc,(ReportQuestionError,WorkspaceError,AdvanceError)) else 'Не удалось прочитать выбор. Повтори вопрос.')
+    except Exception as exc:
+        logger.warning('ai_name_selection_failed error_type=%s',type(exc).__name__)
+        await callback.message.answer('Не удалось сформировать отчёт. Повтори вопрос.')
 
 
 class ExitOnNavigationFilter(BaseFilter):

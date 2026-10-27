@@ -105,3 +105,14 @@ def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,pr
     if intent.report=='items':notes.append('Количество — как распознано; разные единицы не складываются автоматически.')
     if notes:lines.extend(['']+notes)
     return '\n'.join(lines).strip()
+
+
+def format_projects(intent,ctx,rows):
+    title='Активные проекты' if intent.project_status=='active' else 'Архивные проекты' if intent.project_status=='archived' else 'Все проекты'
+    lines=[title,ctx['company_name'],'',f'Найдено: {len(rows)}']
+    for row in rows[:intent.limit]:
+        suffix='' if intent.project_status else ' — '+('активный' if row['project_status']=='active' else 'архивный')
+        lines.append('• '+row['label']+suffix)
+    if not rows:lines.append('Проектов с таким статусом нет.')
+    if len(rows)>intent.limit:lines.append(f'Показано {intent.limit} из {len(rows)}. Полный список можно выгрузить в Excel.')
+    return '\n'.join(lines)

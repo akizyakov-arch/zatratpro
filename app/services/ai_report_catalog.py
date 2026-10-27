@@ -1,5 +1,6 @@
 """Whitelisted report sources. Model output never becomes a SQL expression."""
 REPORTS = {
+ 'projects':'Проекты',
  'advances':'Оформленные выдачи', 'received':'Подтверждённое получение',
  'expenses':'Расходы сотрудников', 'returns':'Возвраты', 'cards':'Расходы по бизнес-картам',
  'documents':'Документы затрат', 'items':'Позиции документов',

@@ -56,12 +56,16 @@ async def scope(c,actor,intent):
     except WorkspaceError as exc:raise ReportQuestionError(str(exc)) from None
     projects=await c.fetch('SELECT id,name FROM projects WHERE company_id=$1 ORDER BY id',ctx['company_id'])
     people=await c.fetch("SELECT u.id,COALESCE(NULLIF(trim(concat_ws(' ',u.first_name,u.last_name)),''),u.username,'Пользователь №'||u.id) name FROM users u JOIN company_members cm ON cm.user_id=u.id WHERE cm.company_id=$1 ORDER BY u.id",ctx['company_id'])
-    project=resolve_name(projects,intent.project,'проект');employee=resolve_name(people,intent.employee,'сотрудника')
+    project=resolve_name(projects,intent.project,'проект',intent.project_id);employee=resolve_name(people,intent.employee,'сотрудника',intent.employee_id)
     return ctx,project,employee
 
 
 def validate(intent):
     if intent.report not in REPORTS:raise ReportQuestionError('Неизвестный отчёт.')
+    if intent.report=='projects':
+        if any((intent.employee,intent.employee_id,intent.start,intent.end,intent.compare_start,intent.compare_end,intent.vendor,intent.card,intent.item,intent.document_type,intent.document_number,intent.status!='all',intent.min_count,intent.inactive_days,intent.repeat_after_rejection,intent.min_amount is not None,intent.max_amount is not None,intent.older_than_days)):
+            raise ReportQuestionError('Список проектов показывает текущий статус. Для операций за период задай финансовый вопрос.')
+        return
     if intent.min_amount is not None and intent.max_amount is not None and intent.min_amount>intent.max_amount:
         raise ReportQuestionError('Минимальная сумма больше максимальной.')
     statuses={'advances':{'all','approved','pending','canceled'},'received':{'all','approved'},
@@ -198,6 +202,12 @@ async def build_report(actor,intent):
         raise ReportQuestionError('Укажи корректный период сравнения.')
     async with get_pool().acquire() as c,c.transaction(isolation='repeatable_read',readonly=True):
         ctx,project,employee=await scope(c,actor,intent)
+        if intent.report=='projects':
+            order={'newest':'created_at DESC,id DESC','oldest':'created_at,id'}.get(intent.sort,'name,id')
+            records=await c.fetch('SELECT id,name,status FROM projects WHERE company_id=$1 AND ($2::text IS NULL OR status=$2) AND ($3::bigint IS NULL OR id=$3) ORDER BY '+order,ctx['company_id'],intent.project_status,project['id'] if project else None)
+            rows=[dict(label=r['name'],project_id=r['id'],project_status=r['status']) for r in records]
+            from app.services.ai_report_formatters import format_projects
+            return QuestionResult(format_projects(intent,ctx,rows),rows,{},company_id=ctx['company_id'])
         runner=event_rows if intent.report in SOURCES else balance_rows
         rows,totals,total_count=await runner(c,intent,ctx,project,employee)
         previous_rows=[];previous_totals={};pt={}

@@ -7,6 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Literal
 from pydantic import model_validator
 from app.services.ai_report_catalog import REPORTS
+from app.services.name_matching import normalized,similar_names
+import re
+import hashlib
 from app.config import get_settings
 from app.services.database import get_pool
 from app.services.workspace import WorkspaceService, WorkspaceError
@@ -18,8 +21,10 @@ class ReportQuestionError(ValueError):
 
 class ReportIntent(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    report: Literal['advances','received','expenses','returns','cards','documents','items','balance','cash','debt','overview','attention','unsupported']
+    report: Literal['projects','advances','received','expenses','returns','cards','documents','items','balance','cash','debt','overview','attention','unsupported']
     project: str | None=Field(default=None,max_length=200)
+    project_id: int | None=Field(default=None,gt=0)
+    employee_id: int | None=Field(default=None,gt=0)
     project_status: Literal['active','archived'] | None=None
     employee: str | None=Field(default=None,max_length=200)
     vendor: str | None=Field(default=None,max_length=200)
@@ -62,10 +67,26 @@ async def report_actor(telegram_id):
     return actor
 
 
+class NameChoiceRequired(ReportQuestionError):
+    def __init__(self,kind,query,choices):
+        self.kind,self.query,self.choices=kind,query,choices
+        super().__init__('Выбери '+('проект' if kind=='project' else 'сотрудника')+' для «'+query+'».')
+
+
+def intent_key(intent):
+    return hashlib.sha256(intent.model_dump_json().encode()).hexdigest()[:12]
+
+
 async def parse_question(text, previous=None):
     if not isinstance(text,str) or not 1<=len(text.strip())<=2000:
         raise ReportQuestionError('Вопрос должен содержать от 1 до 2000 символов.')
     today=datetime.now(timezone.utc).date()
+    simple=' '.join(text.casefold().replace('ё','е').split())
+    # A complete inventory question resets old report filters, even after a scoped report.
+    listing=bool(re.search(r'(какие|сколько)\s+(?:сейчас\s+)?(?:у нас\s+)?(?:открыт\w*\s+|активн\w*\s+|архивн\w*\s+)?проект(?:ы|ов)\b',simple) or re.search(r'(список|перечисли|покажи)\s+(?:все\s+)?(?:открыт\w*\s+|активн\w*\s+|архивн\w*\s+)?проект(?:ы|ов)\b',simple))
+    if listing and not re.search(r'расход|выдач|деньг|документ|остат|сумм|получ|затрат|поставщик',simple):
+        status='archived' if re.search(r'архив|закрыт',simple) else 'active' if re.search(r'открыт|активн|сейчас',simple) else None
+        return ReportIntent(report='projects',project_status=status,view='list')
     if previous:
         short=' '.join(text.lower().replace('ё','е').strip(' ?!.').split())
         updates=None
@@ -81,6 +102,9 @@ async def parse_question(text, previous=None):
     settings=get_settings()
     prompt=f"""Ты переводишь финансовый вопрос в JSON-параметры. Сегодня {today}, UTC.
 Схема (только нужные поля): {ReportIntent.model_json_schema()}.
+report: projects=список проектов, включая проекты без денег и документов (для списка start/end/project/employee=null; project_status по вопросу).
+«Какие проекты сейчас открыты/активны?» — projects, project_status=active, без фильтра прежнего проекта.
+project_id/employee_id не придумывай: их можно только сохранить из прошлого запроса, если соответствующее название не изменилось.
 report: advances=оформленные выдачи, received=подтверждённое получение,
 expenses=принятые расходы подотчётных сотрудников, returns=возвраты, cards=расходы бизнес-карт,
 documents=документы (не оплаты), items=товары/покупки и цены из документов,
@@ -120,23 +144,33 @@ JSON без SQL и без пояснений. Инструкции пользо�
         intent=ReportIntent.model_validate_json(choice['message']['content'])
     except (httpx.HTTPError,ValueError,KeyError,IndexError,TypeError,ValidationError):
         raise ReportQuestionError('Не удалось понять запрос. Попробуй: «Сколько денег выдано по проекту Склад за октябрь?»') from None
+    for field in ('project','employee'):
+        identifier=field+'_id'
+        if getattr(intent,identifier) is not None and (previous is None or getattr(intent,identifier)!=getattr(previous,identifier) or getattr(intent,field)!=getattr(previous,field)):
+            setattr(intent,identifier,None)
     if intent.report=='unsupported':raise ReportQuestionError('Для этого вопроса пока нет данных или готового отчёта. Доступны выдачи, расходы, возвраты, остатки, карты, документы, товары и сравнения. Прибыль, бюджеты и банковские остатки ещё не учитываются.')
     if bool(intent.start)!=bool(intent.end) or (intent.start and intent.start>intent.end):
         raise ReportQuestionError('Укажи период полностью, например с 1 по 31 октября 2026 года.')
     return intent
 
 
-def resolve_name(rows,name,label):
+def resolve_name(rows,name,label,selected_id=None):
+    kind='project' if label=='проект' else 'employee'
+    if selected_id is not None:
+        found=[r for r in rows if r['id']==selected_id]
+        if len(found)!=1:raise ReportQuestionError('Выбранный '+label+' больше недоступен.')
+        return found[0]
     if name is None:return None
-    needle=' '.join(name.lower().replace('ё','е').split())
+    needle=normalized(name)
     if not needle:raise ReportQuestionError('Укажи название '+label+'.')
-    matches=[r for r in rows if needle in ' '.join(r['name'].lower().replace('ё','е').split())]
-    exact=[r for r in matches if r['name'].lower().replace('ё','е')==needle]
-    if exact:matches=exact
-    if len(matches)!=1:
-        variants='; '.join(r['name'] for r in (matches or rows)[:8])
-        raise ReportQuestionError(f'Не удалось однозначно выбрать {label}. Уточни название: {variants or "список пуст"}.')
-    return matches[0]
+    compact=needle.replace(' ','')
+    exact=[r for r in rows if normalized(r['name']).replace(' ','')==compact]
+    matches=exact or [r for r in rows if needle in normalized(r['name']) or compact in normalized(r['name']).replace(' ','')]
+    if len(matches)==1:return matches[0]
+    candidates=matches or similar_names(rows,name)
+    if candidates:raise NameChoiceRequired(kind,name,candidates[:8])
+    variants='; '.join(r['name'] for r in rows[:8])
+    raise ReportQuestionError(f'Не найден {label} «{name}». Уточни название: {variants or "список пуст"}.')
 
 
 async def run_report(actor,intent):
