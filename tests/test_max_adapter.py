@@ -35,6 +35,7 @@ class MaxTransportTests(unittest.IsolatedAsyncioTestCase):
             result = await client.me()
         self.assertEqual(result['user_id'], 12)
         self.assertEqual(str(requests[0].url), API_URL + '/me')
+        self.assertEqual(requests[0].url.host, 'platform-api.max.ru')
         self.assertEqual(requests[0].headers['Authorization'], 'private-max-token')
         self.assertNotIn('private-max-token', str(requests[0].url))
 

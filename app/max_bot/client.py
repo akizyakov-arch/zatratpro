@@ -5,7 +5,7 @@ import time
 
 import httpx
 
-API_URL = 'https://platform-api2.max.ru'
+API_URL = 'https://platform-api.max.ru'
 UPDATE_TYPES = 'bot_started,message_created'
 
 
