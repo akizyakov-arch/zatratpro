@@ -53,6 +53,21 @@ class MaxIssueTests(DatabaseFixture):
         self.assertIsNone(await self.pool.fetchval('SELECT received_at FROM advances'))
         self.assertEqual(await self.pool.fetchval("SELECT count(*) FROM advance_events WHERE kind='issued'"),1)
 
+    async def test_purpose_can_be_skipped_with_button(self):
+        await self.setup_manager()
+        reply = await self.press('Выдать деньги')
+        reply = await self.press(reply.buttons[0][0])
+        reply = await self.press(reply.buttons[0][0])
+        reply = await self.press('150')
+        self.assertIn('необязательно', reply)
+        self.assertIn('Без назначения', reply.buttons[0][0])
+        reply = await self.press(reply.buttons[0][0])
+        self.assertIn('не указано', reply)
+        self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM advances'), 0)
+        reply = await self.press(reply.buttons[0][0])
+        self.assertIn('создана', reply)
+        self.assertEqual(await self.pool.fetchval('SELECT purpose FROM advances'), '')
+
     async def test_concurrent_confirmation_is_idempotent(self):
         manager, employee, row = await self.draft()
         flow = AdvanceIssueFlow()

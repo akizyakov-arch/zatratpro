@@ -175,7 +175,7 @@ async def cash_callback(callback):
             employee, project = int(parts[2]), int(parts[3])
             await directory.validate_issue(uid, employee, project)
             await set_pending_action(callback.from_user.id,'advance_issue',{'employee':int(parts[2]),'project':int(parts[3]),'key':callback.id})
-            await callback.message.answer('Отправьте сумму и назначение одним сообщением. Например: 15000 Краска и кисти. /cancel — отмена.')
+            await callback.message.answer('Отправьте сумму, например: 15000. Назначение необязательно, его можно дописать после суммы. /cancel — отмена.')
         else:
             aid=int(parts[2])
             if action in ('cancel_issue', 'reject_expense', 'reject_return'):
@@ -236,7 +236,9 @@ async def amount_input(message, pending_action=None):
     try:
         uid=await actor(message.from_user)
         if state.action=='advance_issue':
-            amount,purpose=message.text.strip().split(maxsplit=1)
+            parts = message.text.strip().split(maxsplit=1)
+            amount = parts[0] if parts else ''
+            purpose = parts[1] if len(parts) > 1 else ''
             aid=await service.issue(uid,state.payload['employee'],state.payload['project'],amount,purpose,state.payload['key'])
             await pop_pending_action(message.from_user.id, expected_revision=state.revision)
             await message.answer('Выдача зарегистрирована. Сотрудник подтвердит получение в разделе «Деньги на закупки».')
@@ -256,4 +258,4 @@ async def amount_input(message, pending_action=None):
             await message.answer('Решение сохранено. Причина доступна в карточке выдачи сотруднику.')
         await show_card(message,uid,aid)
     except (AdvanceError,ValueError) as exc:
-        await message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Укажите сумму и назначение. /cancel — отмена.')
+        await message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Укажите сумму. Назначение необязательно. /cancel — отмена.')

@@ -15,6 +15,10 @@ from app.handlers.profile import router as profile_router
 from app.handlers.web_login import router as web_login_router
 from app.handlers.mini_app import router as mini_app_router
 from app.handlers.link_notifications import start_notifications,stop_notifications
+from app.handlers.advance_notifications import (
+    start_notifications as start_advance_notifications,
+    stop_notifications as stop_advance_notifications,
+)
 from app.logging_utils import RedactingFormatter
 from app.services.database import close_db, init_db
 from app.services.platform_owner import synchronize_owner
@@ -37,9 +41,11 @@ async def on_startup(bot: Bot) -> None:
         raise
     logging.getLogger(__name__).info("Database pool initialized")
     start_notifications(bot)
+    start_advance_notifications(bot)
 
 
 async def on_shutdown() -> None:
+    await stop_advance_notifications()
     await stop_notifications()
     await close_db()
     logging.getLogger(__name__).info("Database pool closed")

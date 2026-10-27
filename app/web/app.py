@@ -90,7 +90,7 @@ class AdvanceInput(Input):
     employee_id: int = Field(gt=0)
     project_id: int = Field(gt=0)
     amount: str = Field(min_length=1, max_length=30)
-    purpose: str = Field(min_length=1, max_length=1000)
+    purpose: str | None = Field(default='', max_length=1000)
     request_key: str = Field(min_length=1, max_length=200)
 
 

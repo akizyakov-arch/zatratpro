@@ -162,6 +162,18 @@ class WebAPITests(DatabaseFixture):
         self.assertEqual(rows.json()['items'][0]['id'], copy)
         self.assertEqual(rows.json()['items'][0]['project_status'], 'archived')
 
+    async def test_advance_purpose_can_be_omitted_empty_or_null(self):
+        await self.login()
+        _, employee = await self.finance_ids()
+        for index, extra in enumerate(({}, {'purpose': ''}, {'purpose': None}, {'purpose': '   '})):
+            response = await self.client.post('/api/advances', headers=self.headers, json={
+                'employee_id': employee, 'project_id': self.project.id, 'amount': '50',
+                'request_key': f'optional-purpose-{index}', **extra,
+            })
+            self.assertEqual(response.status_code, 201, response.text)
+            card = await self.client.get(f"/api/advances/{response.json()['id']}")
+            self.assertEqual(card.json()['purpose'], '')
+
     async def test_api_requires_session_same_origin_csrf_and_current_role(self):
         for endpoint in ('/api/projects', '/api/reviews', '/api/reports/export', '/api/owner/stats'):
             self.assertEqual((await self.client.get(endpoint)).status_code, 401)
