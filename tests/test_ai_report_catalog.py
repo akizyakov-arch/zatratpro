@@ -87,7 +87,7 @@ class CatalogTests(DatabaseFixture):
         answer=await build_report(m,ReportIntent(report='documents',group_by='none',limit=1))
         self.assertEqual(answer.totals,{'RUB':Decimal(100),'USD':Decimal(100)})
         self.assertIn('Показано 1 из 2',answer.text)
-        self.assertIn('Найдено записей: 2',answer.text)
+        self.assertIn('Документов: 2',answer.text)
         self.assertFalse((await build_report(m,ReportIntent(report='documents',min_amount=101))).rows)
         self.assertFalse((await build_report(m,ReportIntent(report='documents',vendor='Other vendor'))).rows)
         self.assertFalse((await build_report(m,ReportIntent(report='advances',status='pending',older_than_days=7))).rows)
@@ -97,7 +97,7 @@ class CatalogTests(DatabaseFixture):
         await self.pool.execute("UPDATE documents SET vendor='=1+1' WHERE id=$1",d)
         today=datetime.now(timezone.utc).date()
         result=await build_report(m,ReportIntent(report='documents',view='list',compare_start=date(2020,1,1),compare_end=date(2020,1,2),excel=True))
-        self.assertIn('изменение +100.00',result.text)
+        self.assertIn('Изменение: +100 ₽',result.text)
         workbook=load_workbook(BytesIO(result.workbook()),data_only=False)
         found=[cell for sheet in workbook for row in sheet for cell in row if cell.value=='=1+1']
         self.assertTrue(found)
