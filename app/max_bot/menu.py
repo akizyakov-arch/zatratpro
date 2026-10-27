@@ -18,7 +18,7 @@ def command_text(text):
     names = {'главное меню': '/start', 'проекты': '/projects', 'деньги': '/money',
              'отчёты': '/reports', 'профиль': '/profile', 'остаток': '/balance',
              'за неделю': '/report week', 'за месяц': '/report month',
-             'за всё время': '/report all_time'}
+             'за всё время': '/report all_time', 'пригласить сотрудника': '/invite'}
     if text.lower() in names:
         return names[text.lower()]
     for pattern, command in (

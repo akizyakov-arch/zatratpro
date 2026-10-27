@@ -32,6 +32,20 @@ class DatabaseSettings(BaseSettings):
         )
 
 
+class OwnerSettings(BaseSettings):
+    """Owner policy can be read without Telegram/OCR provider credentials."""
+    bot_owner_telegram_id: int = Field(default=0, alias='BOT_OWNER_TELEGRAM_ID')
+    model_config = DatabaseSettings.model_config
+
+
+def get_owner_telegram_id() -> int:
+    # Reuse the active application configuration when it has been initialized.
+    # Standalone MAX can read owner policy without initializing API credentials.
+    if get_settings.cache_info().currsize:
+        return get_settings().bot_owner_telegram_id
+    return OwnerSettings().bot_owner_telegram_id
+
+
 class Settings(DatabaseSettings):
     model_config = SettingsConfigDict(**{**DatabaseSettings.model_config, 'hide_input_in_errors': True})
     telegram_bot_token: str = Field(alias="TELEGRAM_BOT_TOKEN")

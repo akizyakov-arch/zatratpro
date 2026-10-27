@@ -7,6 +7,9 @@ from app.max_bot.menu import HOME, MAIN, PERIODS, MenuText, command_text, money_
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.member_directory import MemberDirectory
+from app.services.companies import CompanyAccessError
+from app.services.max_onboarding import MaxOnboardingService
+from app.services.workspace import WorkspaceError, WorkspaceService
 from app.services.membership import MembershipError
 from app.services.money_reports import format_money_report, get_money_report_for_user
 from app.services.report_periods import report_period_start
@@ -20,9 +23,12 @@ HELP = ('FIINOPS · MAX\n'
         '/receive ID — подтвердить фактическое получение денег\n'
         '/reports — выбрать период отчёта\n'
         '/report [month|week|all_time] — денежный отчёт\n'
+        '/join КОД — вступить в компанию без Telegram\n'
+        '/invite — приглашение сотруднику (для руководителя)\n'
         '/link КОД — подключить существующую учётную запись\n'
         'Загрузка чеков через MAX будет добавлена следующим этапом.')
-LINK_HELP = ('Подключите существующий профиль FIINOPS: в Telegram откройте «Мой профиль», '
+LINK_HELP = ('Можно вступить в компанию без Telegram: отправьте /join КОД приглашения.\n'
+             'Если профиль FIINOPS уже есть в Telegram, подключите его: в Telegram откройте «Мой профиль», '
              'получите код для MAX и отправьте сюда /link КОД. Затем подтвердите аккаунт '
              'в Telegram. Компания, роль и история останутся прежними.')
 
@@ -77,16 +83,28 @@ class MaxHandler:
                     event_id = body.get('mid') if isinstance(body, dict) else None
                     result = await self.issue_menu.handle(actor, text, event_id)
             if result is None:
-                result = await self._command(sender, text)
+                profile = update.get('user') if update.get('update_type') == 'bot_started' else update.get('message', {}).get('sender')
+                result = await self._command(sender, text, profile=profile)
             if not isinstance(result, MenuText) and result != LINK_HELP and not text.lower().startswith('/link'):
                 result = MenuText(result, [HOME])
             return sender, result
-        except (AccountLinkError, AdvanceError, MembershipError, ValueError) as exc:
-            return sender, str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
+        except (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError, ValueError) as exc:
+            return sender, str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
 
-    async def _command(self, sender, text):
+    async def _main_buttons(self, actor):
+        try:
+            member = await self.advances.membership(actor)
+        except AdvanceError:
+            return MAIN
+        return MAIN + [['Пригласить сотрудника']] if member['role'] == 'manager' else MAIN
+
+    async def _command(self, sender, text, *, profile=None):
         parts = text.split(maxsplit=1)
         command, arg = (parts[0].lower(), parts[1].strip() if len(parts) > 1 else '') if parts else ('', '')
+        if command == '/join':
+            result = await MaxOnboardingService().join(sender, arg, profile=profile)
+            role = {'manager': 'руководитель', 'employee': 'сотрудник'}[result['role']]
+            return MenuText(f"Вы в компании «{result['company'].name}». Роль: {role}.\nВыберите раздел.", await self._main_buttons(result['user_id']))
         if command == '/link':
             if not arg:
                 return LINK_HELP
@@ -95,10 +113,16 @@ class MaxHandler:
         actor = await self.links.resolve('max', str(sender))
         if actor is None:
             return LINK_HELP
+        if command == '/invite':
+            member = await self.advances.membership(actor)
+            if member['role'] != 'manager':
+                raise AdvanceError('Приглашать сотрудников может только руководитель компании.')
+            invite = await WorkspaceService().invite_employee(actor)
+            return MenuText(f"Приглашение сотруднику действует 72 часа и используется один раз.\nОтправьте человеку команду для нашего MAX-бота:\n/join {invite['code']}\nНовый код заменяет предыдущее неиспользованное приглашение сотрудника.", [HOME])
         if command == '/start':
-            return MenuText('FIINOPS · Главное меню\nВыберите раздел.', MAIN)
+            return MenuText('FIINOPS · Главное меню\nВыберите раздел.', await self._main_buttons(actor))
         if command == '/help':
-            return MenuText(HELP, MAIN)
+            return MenuText(HELP, await self._main_buttons(actor))
         if command == '/reports':
             await self.directory.projects(actor)
             return MenuText('Отчёты по деньгам\nВыберите период (UTC).', PERIODS)
