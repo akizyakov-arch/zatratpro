@@ -3,6 +3,7 @@ import logging
 import sys
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from app.config import get_settings
 from app.handlers.ai_reports import router as ai_reports_router
@@ -51,11 +52,17 @@ async def on_shutdown() -> None:
     logging.getLogger(__name__).info("Database pool closed")
 
 
+def create_bot(settings):
+    proxy = settings.telegram_proxy_url.get_secret_value()
+    session = AiohttpSession(proxy=proxy) if proxy else None
+    return Bot(token=settings.telegram_bot_token, session=session)
+
+
 async def main() -> None:
     configure_logging()
     settings = get_settings()
 
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = create_bot(settings)
     dispatcher = Dispatcher()
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)

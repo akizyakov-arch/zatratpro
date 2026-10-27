@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import Field, AliasChoices
+from pydantic import Field, AliasChoices, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,7 +33,27 @@ class DatabaseSettings(BaseSettings):
 
 
 class Settings(DatabaseSettings):
+    model_config = SettingsConfigDict(**{**DatabaseSettings.model_config, 'hide_input_in_errors': True})
     telegram_bot_token: str = Field(alias="TELEGRAM_BOT_TOKEN")
+    telegram_proxy_url: SecretStr = Field(default='', alias='TELEGRAM_PROXY_URL')
+
+    @field_validator('telegram_proxy_url')
+    @classmethod
+    def validate_telegram_proxy(cls, value):
+        url = value.get_secret_value().strip()
+        if not url:
+            return SecretStr('')
+        try:
+            parsed = urlsplit(url)
+            if parsed.scheme not in ('http', 'socks5'):
+                raise ValueError
+            if (not parsed.hostname or not parsed.port or parsed.path not in ('', '/')
+                    or parsed.query or parsed.fragment or any(c.isspace() for c in url)):
+                raise ValueError
+        except ValueError:
+            raise ValueError('TELEGRAM_PROXY_URL: нужен http://host:port или socks5://host:port. MTProxy не поддерживает Telegram Bot API.') from None
+        return SecretStr(url)
+
     ocr_space_api_key: str = Field(alias="OCR_SPACE_API_KEY")
     deepseek_api_key: str = Field(alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
