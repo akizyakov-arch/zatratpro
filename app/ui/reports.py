@@ -35,6 +35,7 @@ from app.services.report_periods import (
 def build_reports_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="ИИ-отчёты: голосом или текстом", callback_data="manager:reports:ai")],
             [InlineKeyboardButton(text="По деньгам", callback_data="cash:report")],
             [InlineKeyboardButton(text="По проектам", callback_data=MANAGER_REPORTS_PROJECTS_CALLBACK)],
             [InlineKeyboardButton(text="По сотрудникам", callback_data=MANAGER_REPORTS_EMPLOYEES_CALLBACK)],
