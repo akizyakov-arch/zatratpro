@@ -45,7 +45,7 @@ class QuestionResult:
 def bounds(intent):
     if bool(intent.start)!=bool(intent.end) or (intent.start and intent.start>intent.end) or intent.end==date.max:
         raise ReportQuestionError('Укажи корректные начальную и конечную даты.')
-    start=datetime.combine(intent.start,datetime.min.time(),timezone.utc) if intent.start else datetime(2000,1,1,tzinfo=timezone.utc)
+    start=datetime.combine(intent.start,datetime.min.time(),timezone.utc) if intent.start else datetime(1,1,1,tzinfo=timezone.utc)
     end=datetime.combine(intent.end+timedelta(days=1),datetime.min.time(),timezone.utc) if intent.end else datetime.now(timezone.utc)
     if start>=end:raise ReportQuestionError('Некорректный период.')
     return start,end
@@ -62,6 +62,8 @@ async def scope(c,actor,intent):
 
 def validate(intent):
     if intent.report not in REPORTS:raise ReportQuestionError('Неизвестный отчёт.')
+    if intent.date_basis=='document' and intent.report not in ('documents','items','overview'):
+        raise ReportQuestionError('Дата чека применяется к документам и затратам по ним. Движение денег считается по датам операций.')
     if intent.report=='projects':
         if any((intent.employee,intent.employee_id,intent.start,intent.end,intent.compare_start,intent.compare_end,intent.vendor,intent.card,intent.item,intent.document_type,intent.document_number,intent.status!='all',intent.min_count,intent.inactive_days,intent.repeat_after_rejection,intent.min_amount is not None,intent.max_amount is not None,intent.older_than_days)):
             raise ReportQuestionError('Список проектов показывает текущий статус. Для операций за период задай финансовый вопрос.')
@@ -96,6 +98,8 @@ def validate(intent):
 async def event_rows(c,intent,ctx,project,employee):
     start,end=bounds(intent)
     source=SOURCES[intent.report]
+    if intent.date_basis=='document' and intent.report in ('documents','items'):
+        source=source.replace('d.created_at at','d.document_date at')
     clauses=['e.company_id=$1','($2::bigint IS NULL OR e.project_id=$2)','($3::bigint IS NULL OR e.employee_id=$3)','e.at>=$4','e.at<$5']
     params=[ctx['company_id'],project['id'] if project else None,employee['id'] if employee else None,start,end]
     def add(condition,value):
@@ -134,7 +138,9 @@ async def event_rows(c,intent,ctx,project,employee):
     having=''
     if intent.min_count:
         params.append(intent.min_count);having=f' HAVING count(*)>=${len(params)}'
-    rows=await c.fetch(selected+f' SELECT {expr} label,currency,COALESCE(sum(amount),0) amount,count(*) count,min(at) first_at,max(at) last_at FROM selected GROUP BY {expr},currency{having} ORDER BY {order}',*params)
+    ref={'project':'project_id','employee':'employee_id','employee_day':'employee_id'}.get(intent.group_by)
+    extra_group=','+ref if ref else ''
+    rows=await c.fetch(selected+f' SELECT {expr} label,{ref or "NULL::bigint"} group_ref,currency,COALESCE(sum(amount),0) amount,count(*) count,min(at) first_at,max(at) last_at FROM selected GROUP BY {expr},currency{extra_group}{having} ORDER BY {order}',*params)
     if intent.min_count:
         totals={}
         for row in rows:totals[row['currency']]=totals.get(row['currency'],Decimal(0))+row['amount']
@@ -164,28 +170,36 @@ async def balance_rows(c,intent,ctx,project,employee):
                 'Бизнес-карты: принято':sum((r['amount'] for r in cards if r['accepted']),Decimal(0)),
                 'Бизнес-карты: на проверке':sum((r['amount'] for r in cards if not r['accepted']),Decimal(0))}
         if intent.report=='attention':values={k:v for k,v in values.items() if 'проверке' in k or 'Ожидает' in k}
+        doc_intent=ReportIntent(report='documents',start=intent.start,end=intent.end,date_basis=intent.date_basis,group_by=intent.group_by,project_status=intent.project_status)
+        doc_rows,doc_totals,_=await event_rows(c,doc_intent,ctx,project,employee)
+        values['Документов']=Decimal(sum(r['count'] for r in doc_rows))
+        values.update({'Документы ('+currency+')':value for currency,value in doc_totals.items()})
         if intent.group_by=='none':
-            rows=[{'label':k,'amount':v,'currency':'RUB'} for k,v in values.items()]
+            rows=[{'label':k,'amount':v,'currency':k.removeprefix('Документы (').removesuffix(')') if k.startswith('Документы (') else '' if k=='Документов' else 'RUB'} for k,v in values.items()]
         else:
             groups={}
             def group(key,name):
                 return groups.setdefault(key,dict(label=name,received=Decimal(0),spent=Decimal(0),returned=Decimal(0),amount=Decimal(0),pending=Decimal(0),card_spent=Decimal(0),currency='RUB'))
             for r in report['rows']:
                 key=r['project_id'] if intent.group_by=='project' else r['employee_id']
-                name=r['project_name'] if intent.group_by=='project' else ' '.join(filter(None,(r['first_name'],r['last_name']))) or str(key)
+                name=r['project_name'] if intent.group_by=='project' else (' '.join(filter(None,(r['first_name'],r['last_name']))) or 'Сотрудник')+' · №'+str(key)
                 g=group(key,name)
                 for field in ('received','spent','returned','pending'):g[field]+=r[field]
                 g['amount']+=r['closing']
             for r in cards:
                 key=r['project_id'] if intent.group_by=='project' else r['submitted_by']
-                name=r['project_name'] if intent.group_by=='project' else ' '.join(filter(None,(r['first_name'],r['last_name']))) or str(key)
+                name=r['project_name'] if intent.group_by=='project' else (' '.join(filter(None,(r['first_name'],r['last_name']))) or 'Сотрудник')+' · №'+str(key)
                 g=group(key,name)
                 if r['accepted']:g['card_spent']+=r['amount']
+            for r in doc_rows:
+                g=group(r['group_ref'],r['label'])
+                g['documents_'+r['currency']]=r['amount']
+                g['document_count']=g.get('document_count',0)+r['count']
             rows=list(groups.values())
         return rows,values,len(rows)
     grouped=defaultdict(lambda:defaultdict(Decimal))
     for row in report['rows']:
-        name=(row['project_name'] if intent.group_by=='project' else (' '.join(filter(None,(row['first_name'],row['last_name']))) or str(row['employee_id'])) if intent.group_by=='employee' else 'Всего')
+        name=(row['project_name'] if intent.group_by=='project' else (' '.join(filter(None,(row['first_name'],row['last_name']))) or 'Сотрудник')+' · №'+str(row['employee_id']) if intent.group_by=='employee' else 'Всего')
         grouped[name][row['employee_id']]+=row['closing']
     rows=[]
     for label,people in grouped.items():

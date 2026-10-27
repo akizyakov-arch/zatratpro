@@ -20,6 +20,12 @@ def amount(value,currency='RUB',signed=False):
     return text+' '+{'RUB':'₽','USD':'$','EUR':'€'}.get(currency,currency)
 
 
+def metric_amount(key,value,signed=False):
+    if key=='Документов':return f'{int(value):+d}' if signed else str(int(value))
+    match=re.fullmatch(r'Документы \(([^)]+)\)',key)
+    return amount(value,match[1] if match else 'RUB',signed)
+
+
 def period(start,end):
     if start is None:return 'Всё время'
     if start==end:return f'{start.day} {MONTHS[start.month-1]} {start.year}'
@@ -34,16 +40,18 @@ def count_text(count,report):
 
 
 def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,previous_rows,previous_totals):
-    title='Выдачи денег' if intent.report=='advances' else REPORTS[intent.report]
+    title='Выдачи денег' if intent.report=='advances' else 'Затраты по документам' if intent.report=='documents' else REPORTS[intent.report]
     lines=[title,f'{ctx["company_name"]} · {period(intent.start,intent.end)} (UTC)']
     for caption,value in [('Проект',project['name'] if project else None),('Сотрудник',employee['name'] if employee else None),('Поставщик',intent.vendor),('Карта',intent.card),('Товар',intent.item)]:
         if value:lines.append(f'{caption}: {value}')
     if intent.project_status:lines.append('Проекты: '+('открытые' if intent.project_status=='active' else 'архивные'))
     if intent.status!='all':lines.append('Статус: '+STATUS[intent.status])
+    if intent.report in ('documents','items','overview'):
+        lines.append('Чеки: по дате документа (без даты не включены)' if intent.date_basis=='document' else 'Чеки: по дате загрузки')
     lines.append('')
     caption='Выдано' if intent.report=='advances' else 'Итого'
     if totals:
-        for key,value in totals.items():lines.append(f'{key}: {amount(value)}' if intent.report=='overview' else f'{caption}: {amount(value,key)}')
+        for key,value in totals.items():lines.append(f'{key}: {metric_amount(key,value)}' if intent.report=='overview' else f'{caption}: {amount(value,key)}')
     elif not rows:lines.append(f'{caption}: 0 ₽')
     if intent.report in SOURCES:
         count=total_count if intent.view=='list' or intent.report=='items' else sum(r.get('count',0) for r in rows)
@@ -78,7 +86,13 @@ def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,pr
                 lines.append('')
             else:
                 suffix=' · '+count_text(row['count'],intent.report) if 'count' in row else ''
-                lines.append(f'• {label(row["label"])} — {amount(row.get("amount"),row["currency"])}{suffix}')
+                if intent.report=='overview' and intent.group_by=='none':
+                    lines.append(f'• {row["label"]}: {metric_amount(row["label"],row["amount"])}')
+                else:
+                    lines.append(f'• {label(row["label"])} — '+('остаток ' if intent.report=='overview' else '')+amount(row.get("amount"),row["currency"])+suffix)
+                if 'document_count' in row:
+                    lines.append(f'  Документов: {row["document_count"]}')
+                    lines.extend('  Затраты по документам: '+amount(value,key.removeprefix('documents_')) for key,value in row.items() if key.startswith('documents_'))
                 if 'received' in row:
                     lines.extend([f'  Получено: {amount(row["received"])} · расходы: {amount(row["spent"])}',f'  Возвраты: {amount(row["returned"])} · карты: {amount(row["card_spent"])}',f'  Ожидает получения: {amount(row["pending"])}'])
     if total_count>intent.limit:lines.extend(['',f'Показано {min(intent.limit,len(rows))} из {total_count}. Итог включает все найденные операции.'])
@@ -89,8 +103,11 @@ def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,pr
             current=totals.get(key,Decimal(0));prior=previous_totals.get(key,Decimal(0))
             currency='RUB' if intent.report=='overview' else key
             prefix=key+': ' if intent.report=='overview' else ''
-            lines.append(f'{prefix}Было {amount(prior,currency)} → стало {amount(current,currency)}')
-            lines.append('Изменение: '+amount(current-prior,currency,signed=True))
+            old=metric_amount(key,prior) if intent.report=='overview' else amount(prior,currency)
+            new=metric_amount(key,current) if intent.report=='overview' else amount(current,currency)
+            delta=metric_amount(key,current-prior,True) if intent.report=='overview' else amount(current-prior,currency,signed=True)
+            lines.append(f'{prefix}Было {old} → стало {new}')
+            lines.append('Изменение: '+delta)
         if intent.view=='summary' and intent.report in SOURCES and intent.report!='items':
             now={(r['label'],r['currency']):r['amount'] for r in rows};before={(r['label'],r['currency']):r['amount'] for r in previous_rows}
             changes=[(name,currency,now.get((name,currency),Decimal(0))-before.get((name,currency),Decimal(0))) for name,currency in set(now)|set(before)]
@@ -98,6 +115,7 @@ def format_answer(intent,ctx,project,employee,rows,totals,total_count,pending,pr
             lines.extend(['','Что изменилось:'])
             lines.extend(f'• {label(name)}: {amount(change,currency,signed=True)}' for name,currency,change in changes[:intent.limit])
     notes=[]
+    if intent.report=='overview':notes.append('Документы и движение денег показаны отдельно; эти суммы не складываются.')
     if intent.repeat_after_rejection:notes.append('Только повторные заявки после отказа по тому же документу.')
     if intent.min_count:notes.append(f'Показаны группы с числом операций от {intent.min_count}.')
     if intent.inactive_days:notes.append(f'Нет принятых расходов или возвратов за {intent.inactive_days} дней до конца периода. Это повод для сверки, не установленная просрочка.')

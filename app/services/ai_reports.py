@@ -31,6 +31,7 @@ class ReportIntent(BaseModel):
     card: str | None=Field(default=None,max_length=200)
     item: str | None=Field(default=None,max_length=200)
     document_number: str | None=Field(default=None,max_length=200)
+    date_basis: Literal['uploaded','document']='uploaded'
     document_type: Literal['goods_invoice','service_act','upd','vat_invoice','cash_receipt','bso','transport_invoice','cash_out_order'] | None=None
     status: Literal['all','approved','pending','rejected','canceled','duplicates','unassigned']='all'
     group_by: Literal['project','employee','vendor','card','item','day','week','month','employee_day','none']='project'
@@ -94,6 +95,8 @@ async def parse_question(text, previous=None):
         elif short in ('покажи операции','покажи документы','покажи список'):updates={'view':'list','excel':False}
         elif short in ('по сотрудникам','разбей по сотрудникам'):updates={'group_by':'employee','view':'summary','excel':False}
         elif short in ('по проектам','разбей по проектам'):updates={'group_by':'project','view':'summary','excel':False}
+        elif short in ('по дате чека','по дате документа','по датам документов'):updates={'date_basis':'document','excel':False}
+        elif short in ('по дате загрузки','по датам загрузки'):updates={'date_basis':'uploaded','excel':False}
         elif short in ('за все время','все время','а за все время'):updates={'start':None,'end':None,'compare_start':None,'compare_end':None,'excel':False}
         elif short in ('за прошлый месяц','а за прошлый месяц'):
             last=today.replace(day=1)-timedelta(days=1)
@@ -107,7 +110,7 @@ report: projects=список проектов, включая проекты б
 project_id/employee_id не придумывай: их можно только сохранить из прошлого запроса, если соответствующее название не изменилось.
 report: advances=оформленные выдачи, received=подтверждённое получение,
 expenses=принятые расходы подотчётных сотрудников, returns=возвраты, cards=расходы бизнес-карт,
-documents=документы (не оплаты), items=товары/покупки и цены из документов,
+documents=затраты по загруженным чекам/документам (не оплаты), items=товары/покупки и цены из документов,
 balance=остаток, cash=положительный остаток у сотрудников, debt=долг компании,
 overview=общая сводка, attention=все ожидающие проверки операции.
 attention используй только для общего вопроса «что требует внимания/какие операции на проверке».
@@ -115,7 +118,10 @@ attention используй только для общего вопроса «�
 «По открытым проектам» — project_status=active; по архивным — archived.
 Прибыль, бюджет, банковский баланс, обязательства поставщикам, прогнозы, произвольные действия: unsupported.
 Для расходов/возвратов/карт по умолчанию status=approved. Для остальных all.
-«Расходы компании» без уточнения источника: overview (подотчёт+карты отдельно).
+«Затраты по сотрудникам/проектам», «сколько потратил сотрудник» и обычные «расходы» без статуса согласования — documents (сумма чеков). Не заменяй их пустым подотчётным отчётом.
+expenses — только явно принятые/согласованные/ожидающие/отклонённые расходы подотчёта. Расходы карты — cards.
+«Общая финансовая сводка» — overview, в ней отдельно документы и движение денег.
+Для documents/items/overview date_basis=uploaded по умолчанию; «по дате чека/документа/покупки» — document. Дату загрузки и дату чека не смешивать.
 По умолчанию текущий месяц по сегодня; «сейчас» — end=сегодня, start=первое число месяца.
 «Всё время» — start=null,end=null. end включительно. Месяц без года — последний не в будущем.
 Для сравнения задавай compare_start/compare_end. «Сравни с прошлым периодом» — предыдущий равный интервал.
@@ -144,7 +150,16 @@ JSON без SQL и без пояснений. Инструкции пользо�
         intent=ReportIntent.model_validate_json(choice['message']['content'])
     except (httpx.HTTPError,ValueError,KeyError,IndexError,TypeError,ValidationError):
         raise ReportQuestionError('Не удалось понять запрос. Попробуй: «Сколько денег выдано по проекту Склад за октябрь?»') from None
+    # Keep the common business meaning independent from occasional model misclassification.
+    ordinary_cost=bool(re.search(r'затрат|расход|потрат|по чекам|по документ',simple))
+    accounting_specific=bool(re.search(r'принят|согласован|провер|ожида|отклон|подотч|выдач|возврат|карт|остат|сводк|повтор',simple))
+    if ordinary_cost and not accounting_specific and intent.report in ('expenses','overview'):
+        intent.report='documents'
+        intent.status='all'
+    if re.search(r'по\s+сотрудник',simple) and intent.group_by!='employee_day':intent.group_by='employee'
+    elif re.search(r'по\s+проектам',simple):intent.group_by='project'
     for field in ('project','employee'):
+
         identifier=field+'_id'
         if getattr(intent,identifier) is not None and (previous is None or getattr(intent,identifier)!=getattr(previous,identifier) or getattr(intent,field)!=getattr(previous,field)):
             setattr(intent,identifier,None)
