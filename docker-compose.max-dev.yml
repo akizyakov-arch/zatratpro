@@ -1,0 +1,11 @@
+# Test MAX Long Polling only. Production must use HTTPS Webhook.
+services:
+  zatratpro-max:
+    build: .
+    command: ["python", "-m", "app.max_bot", "--poll-dev"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      zatratpro-db:
+        condition: service_healthy
