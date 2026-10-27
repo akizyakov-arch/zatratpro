@@ -39,6 +39,10 @@ class OwnerSettings(BaseSettings):
 
 
 def get_owner_telegram_id() -> int:
+    # Reuse the active application configuration when it has been initialized.
+    # Standalone MAX can read owner policy without initializing API credentials.
+    if get_settings.cache_info().currsize:
+        return get_settings().bot_owner_telegram_id
     return OwnerSettings().bot_owner_telegram_id
 
 

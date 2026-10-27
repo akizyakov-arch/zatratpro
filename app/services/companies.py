@@ -244,7 +244,9 @@ class CompanyService:
         user = await connection.fetchrow('SELECT is_active,system_role,telegram_id FROM users WHERE id=$1 FOR NO KEY UPDATE', user_id)
         if user is None or not user['is_active']:
             raise CompanyAccessError('Учётная запись отключена или не найдена.')
-        if user['system_role'] == 'owner' or (user['telegram_id'] and user['telegram_id'] == get_owner_telegram_id()):
+        owner_id = get_owner_telegram_id()
+        if ((owner_id > 0 and user['telegram_id'] == owner_id)
+                or (owner_id == 0 and user['system_role'] == 'owner')):
             raise CompanyAccessError('Owner не может быть участником компании.')
         active_memberships = await connection.fetch(
             """
