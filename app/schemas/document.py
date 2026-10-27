@@ -23,7 +23,12 @@ class DocumentItem(BaseModel):
     price: float | None = None
     line_total: float | None = None
 
-    @field_validator("quantity", "price", "line_total", mode="before")
+    vat_rate: float | None = None
+    vat_amount: float | None = None
+    line_total_without_vat: float | None = None
+    price_includes_vat: bool | None = None
+
+    @field_validator("quantity", "price", "line_total", "vat_rate", "vat_amount", "line_total_without_vat", mode="before")
     @classmethod
     def normalize_numbers(cls, value: Any) -> Any:
         return _coerce_number(value)

@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.schemas.document import DocumentSchema
@@ -11,6 +11,7 @@ from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.documents import DocumentService, DocumentValidationError
 from app.services.json_formatter import chunk_message, format_document_preview
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
+from app.services.document_checks import document_warnings, review_fingerprint, warning_text
 from app.services.recognition import get_provider_name, create_recognizer, PROVIDERS
 from app.services.pdf_files import PDFError, extract_pdf
 from app.services.projects import ProjectService
@@ -109,6 +110,15 @@ async def _save_pending_document(callback: CallbackQuery, pending_document: Pend
     if project is None:
         await clear_document_flow(callback.from_user.id, pending_document.upload_id)
         await callback.message.answer('Проект больше недоступен. Отправь документ заново.', reply_markup=menu_markup)
+        return
+    document = pending_document.extracted_document
+    if document_warnings(document) and pending_document.reviewed_fingerprint != review_fingerprint(document):
+        for chunk in chunk_message(warning_text(document)):
+            await callback.message.answer(chunk)
+        await callback.message.answer('Сверь выделенные строки с оригиналом. Если есть ошибка — отмени загрузку и отправь более чёткий скан. Сохранить можно после проверки.', reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='Проверил по оригиналу — сохранить', callback_data='document:review:' + pending_document.upload_id)],
+            [InlineKeyboardButton(text='Отменить', callback_data=PROJECT_CANCEL_CALLBACK + ':' + pending_document.upload_id)],
+        ]))
         return
     try:
         document_id = await document_service.save_document(
@@ -439,8 +449,34 @@ async def duplicate_save_callback(callback: CallbackQuery) -> None:
     if pending_document.duplicate_check is None:
         await callback.answer('Нет документа для подтверждения. Отправь документ заново.', show_alert=True)
         return
+    pending_document.duplicate_confirmed = True
+    if not await store_pending_document(callback.from_user.id, pending_document):
+        await callback.answer('Загрузка истекла.', show_alert=True)
+        return
     await callback.answer()
     await _save_pending_document(callback, pending_document, await _main_menu_markup_for_user(callback.from_user))
+
+
+@router.callback_query(F.data.startswith('document:review:'))
+@serialize_document_user
+async def review_document_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    pending = await get_pending_document(callback.from_user.id)
+    if (pending is None or callback.data.rsplit(':', 1)[-1] != pending.upload_id
+            or pending.extracted_document is None or pending.selected_project_id is None
+            or pending.duplicate_check is None):
+        await callback.answer('Эта загрузка недоступна. Выбери проект заново.', show_alert=True)
+        return
+    if pending.duplicate_check.status in ('exact', 'probable') and not pending.duplicate_confirmed:
+        await callback.answer('Сначала подтверди решение по дублю документа.', show_alert=True)
+        return
+    pending.reviewed_fingerprint = review_fingerprint(pending.extracted_document)
+    if not await store_pending_document(callback.from_user.id, pending):
+        await callback.answer('Загрузка истекла.', show_alert=True)
+        return
+    await callback.answer()
+    await _save_pending_document(callback, pending, await _main_menu_markup_for_user(callback.from_user))
 
 
 @router.message(~F.text)

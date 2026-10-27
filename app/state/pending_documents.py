@@ -20,6 +20,8 @@ class PendingDocument:
     extracted_document: DocumentSchema | None = None
     duplicate_check: DuplicateCheckResult | None = None
     selected_project_id: int | None = None
+    reviewed_fingerprint: str | None = None
+    duplicate_confirmed: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     upload_id: str = field(default_factory=lambda: token_urlsafe(16))
 

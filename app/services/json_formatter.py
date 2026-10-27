@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
 from app.schemas.document import DocumentItem, DocumentSchema
+from app.services.document_checks import warning_text
 
 
 DOCUMENT_TYPE_TITLES = {
@@ -56,6 +57,9 @@ def format_document_preview(document: DocumentSchema) -> str:
         lines.append("")
         lines.append(f"Итого: {_format_amount(document.total)} {currency_display}")
 
+    warning = warning_text(document)
+    if warning:
+        lines.extend(["", warning])
     return "\n".join(lines).strip()
 
 
