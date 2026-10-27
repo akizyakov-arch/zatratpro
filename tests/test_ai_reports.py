@@ -72,12 +72,12 @@ class AIReportTests(DatabaseFixture):
         await AdvanceService().receive(employee,a)
         intent=ReportIntent(report='advances',project='Project')
         answer=await run_report(manager,intent)
-        self.assertIn('Всего: 4000.00',answer)
-        self.assertIn('получение: 2500.00',answer)
+        self.assertIn('Выдано: 4 000 ₽',answer)
+        self.assertIn('Получение не подтверждено: 2 500 ₽',answer)
         intent=ReportIntent(report='advances',employee='Test 1003',start=date(2020,1,1),end=date(2099,1,1))
-        self.assertIn('Всего: 4000.00',await run_report(manager,intent))
+        self.assertIn('Выдано: 4 000 ₽',await run_report(manager,intent))
         intent.end=date(2020,1,2)
-        self.assertIn('Всего: 0.00',await run_report(manager,intent))
+        self.assertIn('Выдано: 0 ₽',await run_report(manager,intent))
 
     async def test_employee_and_owner_denied_and_foreign_project_not_resolved(self):
         manager,employee=await self.finance_ids()

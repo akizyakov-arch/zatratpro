@@ -13,9 +13,7 @@ from app.services.advances import AdvanceService
 from app.services.business_cards import BusinessCardService
 from app.services.money_reports import cash_and_employee_debt
 from app.services.report_exports import _append_row
-from app.services.json_formatter import DOCUMENT_TYPE_TITLES
 
-STATUS_LABELS={'all':'все','approved':'принято / подтверждено','pending':'ожидает проверки / получения','rejected':'отклонено','canceled':'отменено','duplicates':'дубли','unassigned':'без привязки к оплате'}
 
 
 @dataclass
@@ -210,61 +208,6 @@ async def build_report(actor,intent):
             previous=intent.model_copy(update={'start':intent.compare_start,'end':intent.compare_end,'compare_start':None,'compare_end':None})
             bounds(previous)
             previous_rows,previous_totals,_=await runner(c,previous,ctx,project,employee)
-    period=f'{intent.start:%d.%m.%Y} — {intent.end:%d.%m.%Y}' if intent.start else 'всё время'
-    lines=[REPORTS[intent.report],f'Период UTC: {period}',f'Компания: {ctx["company_name"]}']
-    if project:lines.append('Проект: '+project['name'])
-    if intent.project_status:lines.append('Проекты: '+('открытые' if intent.project_status=='active' else 'архивные'))
-    if employee:lines.append('Сотрудник: '+employee['name'])
-    if intent.vendor:lines.append('Поставщик: '+intent.vendor)
-    if intent.card:lines.append('Карта: '+intent.card)
-    if intent.item:lines.append('Товар: '+intent.item)
-    if intent.repeat_after_rejection:lines.append('Только повторные заявки после отказа по тому же документу.')
-    if intent.min_count:lines.append(f'В группе не меньше {intent.min_count} операций.')
-    if intent.inactive_days:lines.append(f'Нет принятых расходов или возвратов за {intent.inactive_days} дней до конца периода. Это признак для проверки, а не установленная просрочка.')
-    if intent.status!='all':lines.append('Статус: '+STATUS_LABELS[intent.status])
-    for currency,amount in totals.items():lines.append(f'{currency}: {amount:.2f} ₽' if intent.report=='overview' else f'Всего {currency}: {amount:.2f}')
-    if intent.report in SOURCES:
-        matched_count=total_count if intent.view=='list' or intent.report=='items' else sum(r.get('count',0) for r in rows)
-        lines.append(f'Найдено записей: {matched_count}')
-    if not rows:lines.append('За выбранный период операций не найдено. Всего: 0.00 ₽')
-    # Compatibility wording for the first report and a useful received/pending distinction.
-    if intent.report=='advances':
-        lines.append(f'Всего: {totals.get("RUB",Decimal(0)):.2f} ₽')
-        if intent.status=='all':
-            lines.append(f'Из них ещё не подтверждено получение: {pt.get("RUB",Decimal(0)):.2f} ₽')
-    for row in rows[:intent.limit]:
-        if 'at' in row:
-            line=f'{row["at"]:%d.%m.%Y} · {row["label"]} · {row["employee_name"]} · {row["project_name"]}'
-            if row.get('item'):line+=f' · {row["item"]} · количество {row["quantity"]}; цена {row["price"]}'
-            if row.get('vendor'):line+=' · '+row['vendor']
-            if row.get('card'):line+=' · '+row['card']
-            if row.get('status') not in (None,'all'):line+=' · '+STATUS_LABELS[row['status']]
-            if row.get('note'):line+=' · '+DOCUMENT_TYPE_TITLES.get(row['note'],row['note'])
-        else:
-            line=row['label']
-            if 'received' in row:
-                line+=f' · получено {row["received"]:.2f}; расходы {row["spent"]:.2f}; возвраты {row["returned"]:.2f}; карты {row["card_spent"]:.2f}; ожидает получения {row["pending"]:.2f}; остаток'
-        if 'count' in row:line+=f' ({row["count"]} записей)'
-        amount=row.get('amount')
-        lines.append(f'{line}: {amount:.2f} {row["currency"]}' if amount is not None else line+' — сумма не распознана')
-    if total_count>intent.limit:lines.append(f'Показано {min(intent.limit,len(rows))} из {total_count}; общие суммы посчитаны по всем найденным операциям.')
-    if total_count>5000 and (intent.view=='list' or intent.report=='items'):lines.append('Детализация Excel ограничена 5000 строками; сузь период или фильтры. Итоги охватывают все строки.')
-    if intent.compare_start:
-        lines.append(f'Сравнение UTC: {intent.compare_start:%d.%m.%Y} — {intent.compare_end:%d.%m.%Y}')
-        for currency in sorted(set(totals)|set(previous_totals)):
-            current=totals.get(currency,Decimal(0));prior=previous_totals.get(currency,Decimal(0))
-            lines.append(f'{currency}: сейчас {current:.2f}; сравнение {prior:.2f}; изменение {current-prior:+.2f}')
-        if intent.view=='summary' and intent.report in SOURCES and intent.report!='items':
-            current_groups={(r['label'],r['currency']):r['amount'] for r in rows}
-            prior_groups={(r['label'],r['currency']):r['amount'] for r in previous_rows}
-            changes=[(label,currency,current_groups.get((label,currency),Decimal(0))-prior_groups.get((label,currency),Decimal(0))) for label,currency in set(current_groups)|set(prior_groups)]
-            changes.sort(key=lambda r:abs(r[2]),reverse=True)
-            lines.append('Изменение по группам (по величине вклада):')
-            lines.extend(f'{label}: {change:+.2f} {currency}' for label,currency,change in changes[:intent.limit])
-    if intent.report in ('balance','cash','debt','overview','attention'):
-        lines.append('Деньги — по датам получения/согласования. Остаток на конец периода; неподтверждённые выдачи в него не входят. Карты считаются отдельно.')
-        if intent.group_by=='project' and intent.report in ('cash','debt'):lines.append('Общий итог учитывает взаиморасчёты сотрудника между проектами; сумма проектных остатков может отличаться.')
-    else:
-        lines.append('Статусы — на момент запроса. Документы/товары — по дате загрузки; расходы и возвраты — по дате решения, ожидающие — по дате подачи. Это не банковская выписка.')
-    if intent.report=='items':lines.append('Количество и цены — как распознаны. Одинаковые названия могут означать разные единицы; количества разных строк автоматически не складываются.')
-    return QuestionResult('\n'.join(lines),rows,totals,previous_rows,ctx['company_id'])
+    from app.services.ai_report_formatters import format_answer
+    text=format_answer(intent,ctx,project,employee,rows,totals,total_count,pt,previous_rows,previous_totals)
+    return QuestionResult(text,rows,totals,previous_rows,ctx['company_id'])
