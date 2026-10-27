@@ -28,6 +28,14 @@ def request_key(value: str) -> str:
     return value
 
 
+def optional_purpose(value) -> str:
+    if value is None:
+        return ''
+    if not isinstance(value, str) or len(value.strip()) > 1000:
+        raise AdvanceError('Назначение необязательно, не более 1000 символов.')
+    return value.strip()
+
+
 def decision_reason(value: str) -> str:
     if not isinstance(value, str) or not value.strip() or len(value.strip()) > 1000:
         raise AdvanceError('Укажите причину от 1 до 1000 символов.')
@@ -69,11 +77,10 @@ class AdvanceService:
     async def _event(self, c, aid, actor, kind, **details):
         await c.execute('INSERT INTO advance_events(advance_id,actor_id,kind,details) VALUES($1,$2,$3,$4::jsonb)', aid, actor, kind, json.dumps(details, default=str))
 
-    async def issue(self, actor, employee, project, amount, purpose, key, *, connection=None):
+    async def issue(self, actor, employee, project, amount, purpose=None, key=None, *, connection=None):
         amount = money(amount)
         key = request_key(key)
-        if not isinstance(purpose, str) or not purpose.strip():
-            raise AdvanceError('Укажите назначение и идентификатор операции.')
+        purpose = optional_purpose(purpose)
         async with AsyncExitStack() as stack:
             c = connection if connection is not None else await stack.enter_async_context(get_pool().acquire())
             await stack.enter_async_context(c.transaction())
@@ -115,6 +122,7 @@ class AdvanceService:
             if row['received_at'] is None:
                 await c.execute('UPDATE advances SET received_at=clock_timestamp() WHERE id=$1', aid)
                 await self._event(c, aid, actor, 'received')
+                await c.execute('INSERT INTO advance_receipt_notifications(advance_id) VALUES($1) ON CONFLICT DO NOTHING', aid)
 
     async def attach(self, actor, aid, document):
         """Post the saved document against received cash, atomically and once.

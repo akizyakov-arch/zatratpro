@@ -2,7 +2,7 @@
 import hashlib
 from app.services.database import get_pool
 from app.services.membership import require_member
-from app.services.advances import AdvanceService, AdvanceError, money
+from app.services.advances import AdvanceService, AdvanceError, money, optional_purpose
 
 
 class AdvanceIssueFlow:
@@ -51,10 +51,9 @@ class AdvanceIssueFlow:
                     await c.execute("UPDATE advance_issue_drafts SET project_id=$2,step='amount' WHERE id=$1", row['id'], value)
                 elif action == 'text' and row['step'] == 'amount':
                     await c.execute("UPDATE advance_issue_drafts SET amount=$2,step='purpose' WHERE id=$1", row['id'], money(value))
-                elif action == 'text' and row['step'] == 'purpose':
-                    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 1000:
-                        raise AdvanceError('Назначение: от 1 до 1000 символов.')
-                    await c.execute("UPDATE advance_issue_drafts SET purpose=$2,step='confirm' WHERE id=$1", row['id'], value.strip())
+                elif action in ('text', 'skip_purpose') and row['step'] == 'purpose':
+                    purpose = optional_purpose('' if action == 'skip_purpose' else value)
+                    await c.execute("UPDATE advance_issue_drafts SET purpose=$2,step='confirm' WHERE id=$1", row['id'], purpose)
                 elif action == 'confirm' and row['step'] == 'confirm':
                     aid = await AdvanceService().issue(actor, row['employee_id'], row['project_id'], row['amount'], row['purpose'], f'max-draft:{row["id"]}', connection=c)
                     await c.execute("UPDATE advance_issue_drafts SET advance_id=$2,step='done' WHERE id=$1", row['id'], aid)

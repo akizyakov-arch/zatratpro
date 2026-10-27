@@ -1422,8 +1422,7 @@
           step: "0.01",
           placeholder: "0,00",
         }),
-        field("Назначение", "purpose", {
-          required: true,
+        field("Назначение (необязательно)", "purpose", {
           placeholder: "Например, материалы для объекта",
         }),
       );
@@ -1463,7 +1462,7 @@
               h("span", {}, who(employee)),
               h("span", {}, project.name),
               h("strong", {}, money(values.amount)),
-              h("span", {}, values.purpose),
+              h("span", {}, values.purpose || "Без назначения"),
             );
             summary.hidden = false;
             edit.hidden = false;
@@ -1488,7 +1487,7 @@
         "Продолжить",
         {
           description:
-            "Выберите получателя и проект, укажите сумму и назначение. Получение сотрудник подтвердит сам.",
+            "Выберите получателя и проект, укажите сумму. Назначение необязательно. Получение сотрудник подтвердит сам.",
         },
       );
       form.addEventListener("input", () => {

@@ -27,9 +27,10 @@ class IssueMenu:
                 match = re.fullmatch(pattern, text)
                 if match:
                     action, value, draft = kind, int(match[1]), int(match[2])
-            match = re.fullmatch(r'(Выдать|Отмена) · заявка №([1-9][0-9]{0,17})', text)
+            match = re.fullmatch(r'(Выдать|Отмена|Без назначения) · заявка №([1-9][0-9]{0,17})', text)
             if match:
-                action, draft = ('confirm' if match[1] == 'Выдать' else 'cancel'), int(match[2])
+                action = {'Выдать': 'confirm', 'Отмена': 'cancel', 'Без назначения': 'skip_purpose'}[match[1]]
+                draft = int(match[2])
             match = re.fullmatch(r'Проекты заявки №([1-9][0-9]{0,17}) · страница ([1-9][0-9]{0,5})', text)
             if match:
                 action, draft, page = 'view', int(match[1]), int(match[2])
@@ -74,5 +75,5 @@ class IssueMenu:
         if row['step'] == 'amount':
             return MenuText(summary + '\nВведите сумму в рублях, например 1500,50.', [cancel, HOME])
         if row['step'] == 'purpose':
-            return MenuText(summary + f"\nСумма: {row['amount']} RUB\nВведите назначение закупки.", [cancel, HOME])
-        return MenuText(summary + f"\nСумма: {row['amount']} RUB\nНазначение: {row['purpose']}\nПодтвердить выдачу?", [[f'Выдать · заявка №{did}'], cancel, HOME])
+            return MenuText(summary + f"\nСумма: {row['amount']} RUB\nВведите назначение закупки (необязательно) или нажмите «Без назначения».", [[f'Без назначения · заявка №{did}'], cancel, HOME])
+        return MenuText(summary + f"\nСумма: {row['amount']} RUB\nНазначение: {row['purpose'] or 'не указано'}\nПодтвердить выдачу?", [[f'Выдать · заявка №{did}'], cancel, HOME])
