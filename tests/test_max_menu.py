@@ -34,7 +34,7 @@ class MaxMenuTransportTests(unittest.IsolatedAsyncioTestCase):
         keyboard = bodies[-1]['attachments'][0]
         self.assertEqual(keyboard['type'], 'inline_keyboard')
         self.assertEqual(keyboard['payload']['buttons'][0], [
-            {'type': 'message', 'text': 'Проекты'}, {'type': 'message', 'text': 'Деньги'}])
+            {'type': 'message', 'text': 'Загрузить документ'}])
         self.assertTrue(all(request.url.params['user_id'] == '123' for request in requests))
 
     async def test_unknown_labels_cannot_select_actor_or_inject_multiple_commands(self):

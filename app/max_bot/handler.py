@@ -3,7 +3,9 @@ import re
 
 from app.max_bot.issue import IssueMenu
 from app.max_bot.profile import ProfileMenu
-from app.max_bot.menu import HOME, MAIN, ONBOARDING, PERIODS, MenuText, command_text, money_menu
+from app.max_bot.workspace import WorkspaceMenu
+from app.ui.menu_layout import main_menu_rows
+from app.max_bot.menu import HOME, ONBOARDING, PERIODS, MenuText, command_text, money_menu
 
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
@@ -16,6 +18,9 @@ from app.services.money_reports import format_money_report, get_money_report_for
 from app.services.report_periods import report_period_start
 
 HELP = ('FIINOPS · MAX\n'
+        '/settings — настройки распознавания\n'
+        '/companies — компании (для владельца системы)\n'
+        '/create_company — создать компанию (для владельца системы)\n'
         '/profile — профиль и связанные аккаунты\n'
         '/link_telegram — подключить Telegram к текущему профилю\n'
         '/projects — открытые проекты\n'
@@ -77,6 +82,7 @@ class MaxHandler:
         self.directory = MemberDirectory()
         self.issue_menu = IssueMenu()
         self.profile_menu = ProfileMenu()
+        self.workspace_menu = WorkspaceMenu()
 
     async def handle(self, update):
         event = event_message(update)
@@ -98,7 +104,12 @@ class MaxHandler:
                         if kind:
                             text = f'/{kind} {text}'
             result = None
-            if not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel'):
+            if text.split(maxsplit=1)[:1] not in (['/join'], ['/link']):
+                actor = await self.links.resolve('max', str(sender))
+                if actor is None:
+                    return sender, LINK_HELP
+                result = await self.workspace_menu.handle(actor, text)
+            if result is None and (not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel')):
                 actor = await self.links.resolve('max', str(sender))
                 if actor is not None:
                     body = update.get('message', {}).get('body', {})
@@ -111,17 +122,25 @@ class MaxHandler:
                 result = MenuText(result, [HOME])
             return sender, result
         except (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError, ValueError) as exc:
-            body = str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
+            body = str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError)) else 'Не удалось выполнить действие. Используйте актуальные кнопки меню.'
             if text.split(maxsplit=1)[:1] in (['/link'], ['/join']):
                 body = MenuText(body + '\nКод приглашения выдаёт руководитель или владелец. Код подключения берётся в профиле Telegram, действует 5 минут; новый код заменяет предыдущий.', ONBOARDING)
-            return sender, body
+            return sender, body if isinstance(body, MenuText) else MenuText(body, [HOME])
 
     async def _main_buttons(self, actor):
         try:
-            member = await self.advances.membership(actor)
-        except AdvanceError:
-            return MAIN + [['Вступить по приглашению']]
-        return MAIN + [['Пригласить сотрудника']] if member['role'] == 'manager' else MAIN
+            ctx = await WorkspaceService().context(actor)
+        except WorkspaceError:
+            try:
+                await self.advances.membership(actor)
+            except AdvanceError:
+                return main_menu_rows(has_company=False)
+            return main_menu_rows()
+        if ctx['role'] == 'owner':
+            return main_menu_rows('platform_owner')
+        rows = main_menu_rows('manager')
+        rows.insert(-2, ['Пригласить сотрудника'])
+        return rows
 
     async def _command(self, sender, text, *, profile=None):
         parts = text.split(maxsplit=1)
@@ -173,6 +192,19 @@ class MaxHandler:
             else:
                 await self.links.cancel('max', str(sender), arg)
             return await self.profile_menu.show(sender, actor)
+        if command == '/upload_document':
+            await self.directory.projects(actor)
+            return MenuText('Загрузка фото и PDF в MAX пока не подключена. Отправьте документ через связанный Telegram-аккаунт: компания, затраты и настройка распознавания общие.', [HOME])
+        if command == '/my_documents':
+            rows, total = await self.directory.documents(actor, page=WorkspaceMenu.page(arg or '1'))
+            page = WorkspaceMenu.page(arg or '1')
+            lines = ['Мои документы · страница ' + str(page)]
+            for row in rows:
+                lines.append(f"№{row['id']} · {row['project_name']} · {row['vendor'] or row['document_type']} · {row['total_amount']} {row['currency']} · загружен {row['created_at']:%d.%m.%Y}" + (' · возможный дубль' if row['duplicate_status'] != 'none' else ''))
+            if not rows:
+                lines.append('Документов пока нет.')
+            nav = [f'Мои документы · страница {p}' for p in (page-1, page+1) if 0 < p <= (total+7)//8]
+            return MenuText('\n'.join(lines), ([nav] if nav else []) + [HOME])
         if command in ('/projects', 'проекты'):
             projects = await self.directory.projects(actor)
             return 'Открытые проекты:\n' + ('\n'.join(f"№{p['id']} · {p['name']}" for p in projects) or 'Проектов пока нет.')
