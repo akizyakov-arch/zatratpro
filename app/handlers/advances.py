@@ -61,14 +61,12 @@ async def show_card(message,uid,aid):
 async def money_entry(message):
     try:
         uid = await actor(message.from_user)
-        member = await directory.membership(uid)
+        from app.application.section_menus import SectionMenus
+        view = await SectionMenus().money(uid)
         markup = ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text='Выдача' if member['role'] == 'manager' else 'Мои выдачи')],
-            [KeyboardButton(text='Бизнес-карты')],
-            [KeyboardButton(text='Отчёт по деньгам')],
-            [KeyboardButton(text='Главное меню')],
+            [KeyboardButton(text=str(button)) for button in row] for row in view.buttons
         ], resize_keyboard=True, input_field_placeholder='Выбери действие с деньгами')
-        await message.answer('Деньги', reply_markup=markup)
+        await message.answer(str(view), reply_markup=markup)
     except AdvanceError as exc:
         await message.answer(str(exc))
 

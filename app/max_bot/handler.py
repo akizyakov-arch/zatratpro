@@ -151,6 +151,9 @@ class MaxHandler:
                 if text.startswith(('/ask', '/ai_')) or any(isinstance(a, dict) and a.get('type') == 'audio' for a in (body.get('attachments') or [])):
                     result = await self.ai_menu.handle(actor, text, update)
                 if result is None:
+                    from app.application.card_menus import CardMenus
+                    result = await CardMenus().handle(actor, text)
+                if result is None:
                     result = await self.document_menu.handle(actor, sender, text, update)
                 if result is None:
                     result = await self.workspace_menu.handle(actor, text, event_id)
@@ -216,10 +219,17 @@ class MaxHandler:
             return MenuText('FIINOPS · Главное меню\nВыберите раздел.', await self._main_buttons(actor))
         if command == '/help':
             return MenuText(HELP, await self._main_buttons(actor))
-        if command == '/reports':
-            await self.directory.projects(actor)
-            buttons = [[MenuButton('Панель руководителя', '/panel')], [MenuButton('ИИ-отчёты', '/ai_reports')]] if (await self.advances.membership(actor))['role'] == 'manager' else []
-            return MenuText('Отчёты\nВыберите ИИ-запрос или период денежного отчёта (UTC).', buttons + PERIODS)
+        if command in ('/reports', '/money', '/report_periods', '/section_report'):
+            from app.application.section_menus import SectionMenus
+            menus = SectionMenus()
+            if command == '/reports': return await menus.reports(actor)
+            if command == '/money': return await menus.money(actor)
+            args = arg.split()
+            if command == '/report_periods' and len(args) == 2:
+                return await menus.periods(actor, *args)
+            if command == '/section_report' and len(args) == 3:
+                return await menus.report(actor, *args)
+            raise ValueError('Некорректная кнопка отчёта.')
         if command == '/profile':
             return await self.profile_menu.show(sender, actor)
         if command == '/link_telegram':
@@ -248,7 +258,7 @@ class MaxHandler:
         if command in ('/projects', 'проекты'):
             projects = await self.directory.projects(actor)
             return 'Открытые проекты:\n' + ('\n'.join(f"№{p['id']} · {p['name']}" for p in projects) or 'Проектов пока нет.')
-        if command in ('/money', '/money_page'):
+        if command in ('/advances', '/money_page'):
             page = int(arg) if command == '/money_page' and re.fullmatch('[1-6]', arg) else 1
             result = money_menu(await self.advances.list(actor), page)
             member = await self.advances.membership(actor)

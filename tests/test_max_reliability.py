@@ -154,7 +154,7 @@ class MaxReliabilityTests(DatabaseFixture):
             self.assertEqual(await self.pool.fetchval('SELECT system_role FROM users WHERE telegram_id=$1', self.owner.id), 'owner')
             handler = MaxHandler()
             for command, expected in (('/profile', 'Связанные аккаунты'), ('/projects', self.project.name),
-                                      ('/money', 'Выдачи'), ('/balance', 'Остаток'), ('/report', 'Отчёт')):
+                                      ('/money', 'Деньги'), ('/balance', 'Остаток'), ('/report', 'Отчёт')):
                 self.assertIn(expected, (await handler.handle(message(9001, command)))[1])
 
     async def test_explicit_owner_sync_rotates_and_rejects_missing_configuration(self):

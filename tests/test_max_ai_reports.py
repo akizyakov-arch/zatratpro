@@ -36,7 +36,7 @@ class MaxAIReportTests(DatabaseFixture):
     async def test_reports_menu_and_active_text_questions(self):
         manager=await self.link(self.manager)
         menu=await self.press('Отчёты')
-        self.assertEqual(menu.buttons[0][0].command,'/ai_reports')
+        self.assertTrue(any(getattr(b,'command','') == '/ai_reports' for row in menu.buttons for b in row))
         self.assertIn('ИИ-отчёты',await self.press('ИИ-отчёты'))
         answer=await self.press('Какие проекты сейчас открыты?')
         self.assertIn(self.project.name,answer)

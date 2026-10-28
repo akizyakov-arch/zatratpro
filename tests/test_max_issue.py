@@ -35,7 +35,7 @@ class MaxIssueTests(DatabaseFixture):
 
     async def test_complete_button_flow_does_not_issue_before_confirmation(self):
         manager, employee = await self.setup_manager()
-        self.assertIn(['Выдать деньги'], (await self.press('Деньги')).buttons)
+        self.assertIn(['Выдача'], (await self.press('Деньги')).buttons)
         r = await self.press('Выдать деньги')
         r = await self.press(r.buttons[0][0])
         r = await self.press(r.buttons[0][0])

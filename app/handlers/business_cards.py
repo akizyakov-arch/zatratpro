@@ -21,23 +21,25 @@ directory=FinanceDirectory()
 MENU='Бизнес-карты'
 
 
+async def send_menu(message, view):
+    names = {'/cards': 'bcard:menu', '/card_new': 'bcard:new', '/card_documents': 'bcard:documents',
+             '/card_document': 'bcard:document', '/card_submit': 'bcard:submit', '/card_cancel': 'bcard:cancel', '/money': 'issue:money'}
+    rows = []
+    for row in view.buttons:
+        for button in row:
+            parts = button.command.split()
+            rows.append((str(button), names[parts[0]] + (':' + ':'.join(parts[1:]) if len(parts) > 1 else '')))
+    await send_details(message, str(view), rows)
+
+
 @router.message(Command('cards'))
 @router.message(F.text==MENU)
 async def cards_entry(message):
+    from app.application.card_menus import CardMenus
     try:
-        uid=await actor(message.from_user)
-        cards=await service.cards(uid)
-        member = await directory.membership(uid)
-        lines=['Бизнес-карты компании']+[f"{r['name']} ···· {r['last4']}" for r in cards]
-        rows=[('Указать оплату чека картой','bcard:documents')]
-        if member['role']=='manager': rows.insert(0,('Добавить карту','bcard:new'))
-        expenses=await service.report(uid,datetime(2000,1,1,tzinfo=timezone.utc))
-        lines.append(f'Учтено расходов: {len(expenses)}. Покупки по карте не уменьшают подотчётный остаток.')
-        rejected = await service.ledger(uid, status='rejected', per_page=10)
-        for expense in rejected['items']:
-            lines.append(f"Чек №{expense['document_id']} отклонён: {expense['rejection_reason']}")
-        await send_details(message, '\n'.join(lines), rows)
-    except AdvanceError as exc: await message.answer(str(exc))
+        await send_menu(message, await CardMenus(service).handle(await actor(message.from_user), '/cards'))
+    except AdvanceError as exc:
+        await message.answer(str(exc))
 
 
 @router.callback_query(F.data.startswith('bcard:'))
@@ -48,24 +50,12 @@ async def card_callback(callback):
         uid=await actor(callback.from_user)
         parts=callback.data.split(':');action=parts[1]
         await callback.answer()
-        if action=='new':
-            result=await FinancialInputs(cards=service).start(uid,'card_create')
-            await callback.message.answer(result.text)
-        elif action=='documents':
-            docs=await service.documents(uid)
-            if not docs:
-                await callback.message.answer('Сначала загрузите чек и сохраните его в нужный проект. Уже привязанные к оплате чеки здесь не показываются.')
-                return
-            await callback.message.answer('Выберите чек и проект:',reply_markup=keyboard([(f"№{d['id']} · {d['project_name']} · {d['total_amount']}",f"bcard:document:{d['id']}") for d in docs]))
-        elif action=='document':
-            cards=await service.cards(uid)
-            if not cards:
-                await callback.message.answer('Попросите руководителя добавить бизнес-карту.')
-                return
-            await callback.message.answer('Какой бизнес-картой оплачен чек?',reply_markup=keyboard([(f"{c['name']} ···· {c['last4']}",f"bcard:submit:{parts[2]}:{c['id']}") for c in cards]))
-        elif action=='submit':
-            await service.submit(uid,int(parts[3]),int(parts[2]))
-            await callback.message.answer('Оплата бизнес-картой учтена. Остаток денег у сотрудника не изменился.')
+        if action in ('new', 'documents', 'document', 'submit', 'menu', 'cancel'):
+            from app.application.card_menus import CardMenus
+            names = {'new': '/card_new', 'documents': '/card_documents', 'document': '/card_document',
+                     'submit': '/card_submit', 'menu': '/cards', 'cancel': '/card_cancel'}
+            command = names[action] + (' ' + ' '.join(parts[2:]) if len(parts) > 2 else '')
+            await send_menu(callback.message, await CardMenus(service).handle(uid, command))
         elif action=='approve':
             await service.approve(uid,int(parts[2]))
             await callback.message.answer('Карточный расход уже учтён.')
