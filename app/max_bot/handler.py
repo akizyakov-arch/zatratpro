@@ -3,6 +3,7 @@ import re
 import hashlib
 
 from app.max_bot.issue import IssueMenu
+from app.max_bot.documents import DocumentMenu
 from app.max_bot.profile import ProfileMenu
 from app.max_bot.workspace import WorkspaceMenu
 from app.ui.menu_layout import main_menu_rows
@@ -34,7 +35,7 @@ HELP = ('FIINOPS · MAX\n'
         '/join КОД — вступить в компанию без Telegram\n'
         '/invite — приглашение сотруднику (для руководителя)\n'
         '/link КОД — подключить существующую учётную запись\n'
-        'Загрузка чеков через MAX будет добавлена следующим этапом.')
+        'Отправьте фото или PDF документа (PDF: до 10 МБ, 10 страниц; страницы в подписи: 1-3 или «все»).')
 LINK_HELP = MenuText(
     'Добро пожаловать в FIINOPS!\n'
     'Впервые здесь? Нажмите «Вступить по приглашению» и отправьте код компании.\n'
@@ -93,8 +94,9 @@ def event_message(update):
 
 
 class MaxHandler:
-    def __init__(self):
+    def __init__(self, notify=None):
         self.links = AccountLinkService()
+        self.document_menu = DocumentMenu(notify)
         self.advances = AdvanceService()
         self.directory = MemberDirectory()
         self.issue_menu = IssueMenu()
@@ -128,7 +130,9 @@ class MaxHandler:
                 actor = await self.links.resolve('max', str(sender))
                 if actor is None:
                     return sender, LINK_HELP
-                result = await self.workspace_menu.handle(actor, text, event_id)
+                result = await self.document_menu.handle(actor, sender, text, update)
+                if result is None:
+                    result = await self.workspace_menu.handle(actor, text, event_id)
             if result is None and (not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel') or text.startswith('/issue_')):
                 actor = await self.links.resolve('max', str(sender))
                 if actor is not None:
@@ -210,7 +214,7 @@ class MaxHandler:
             return await self.profile_menu.show(sender, actor)
         if command == '/upload_document':
             await self.directory.projects(actor)
-            return MenuText('Загрузка фото и PDF в MAX пока не подключена. Отправьте документ через связанный Telegram-аккаунт: компания, затраты и настройка распознавания общие.', [HOME])
+            return MenuText('Отправь фото или PDF документа (до 10 МБ, 10 страниц). Для PDF укажи в подписи страницы одного документа: 1-3 или «все». После распознавания я предложу проекты кнопками.', [HOME])
         if command == '/my_documents':
             rows, total = await self.directory.documents(actor, page=WorkspaceMenu.page(arg or '1'))
             page = WorkspaceMenu.page(arg or '1')
@@ -276,4 +280,4 @@ class MaxHandler:
             return MenuText('\n'.join(lines), buttons)
         if command == '/report':
             return MenuText(format_money_report(await get_money_report_for_user(actor, report_period_start(arg or 'month'))), PERIODS)
-        return 'Тестовое подключение MAX: загрузка фото ещё не поддерживается.\n' + HELP
+        return '' + HELP

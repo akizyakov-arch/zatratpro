@@ -153,7 +153,7 @@ class WorkspaceMenu:
         selected = await get_provider_for_user(actor)
         buttons = [[('✓ ' if key == selected else '') + title] for key, title in PROVIDERS.items()]
         return MenuText('Настройки → Распознавание\nСейчас: ' + PROVIDERS[selected] +
-            '\nНастройка общая для вашего профиля в Telegram и MAX. Действует для следующих фото и PDF; сохранённые документы не меняются. Загрузка документов в MAX пока не подключена.', buttons + [HOME])
+            '\nНастройка общая для вашего профиля в Telegram и MAX. Действует для следующих фото и PDF; сохранённые документы не меняются.', buttons + [HOME])
 
     async def listing(self, actor, kind, page=1, archived=False):
         method = getattr(self.service, kind)

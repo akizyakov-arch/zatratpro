@@ -2,7 +2,7 @@ from pathlib import Path
 
 import httpx
 
-from app.config import get_settings
+from app.config import get_recognition_settings as get_settings
 
 
 class OCRSpaceError(RuntimeError):

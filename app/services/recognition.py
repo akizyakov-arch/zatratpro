@@ -10,7 +10,7 @@ from PIL import Image
 
 import httpx
 
-from app.config import get_settings
+from app.config import get_recognition_settings as get_settings
 from app.services.database import get_pool
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 

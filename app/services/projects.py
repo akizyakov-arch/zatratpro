@@ -1,19 +1,9 @@
-from dataclasses import dataclass
 
 from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyService
 from app.services.database import get_pool
 
 
-@dataclass(slots=True)
-class Project:
-    id: int
-    company_id: int
-    name: str
-    status: str
-
-    @property
-    def is_archived(self) -> bool:
-        return self.status == "archived"
+from app.schemas.project import Project
 
 
 class ProjectService:

@@ -90,3 +90,17 @@ def get_database_settings() -> DatabaseSettings:
 def get_settings() -> Settings:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     return Settings()
+
+
+class RecognitionSettings(BaseSettings):
+    """Provider configuration independent of messenger credentials."""
+    model_config = DatabaseSettings.model_config
+    ocr_space_api_key: str = Field(default='', alias='OCR_SPACE_API_KEY')
+    deepseek_api_key: str = Field(default='', alias='DEEPSEEK_API_KEY')
+    deepseek_base_url: str = Field(default='https://api.deepseek.com', alias='DEEPSEEK_BASE_URL')
+    deepseek_model: str = Field(default='deepseek-chat', alias='DEEPSEEK_MODEL')
+    deepseek_vision_model: str = Field(default='deepseek-flash', alias='DEEPSEEK_VISION_MODEL')
+
+
+def get_recognition_settings():
+    return get_settings() if get_settings.cache_info().currsize else RecognitionSettings()
