@@ -112,6 +112,10 @@ class MaxHandler:
             return None
         sender, text = event
         text = command_text(text)
+        if text.split(maxsplit=1)[:1] in (['/web_login'], ['/web_approve'], ['/web_deny']):
+            from app.max_bot.web_login import handle_login
+            return sender, await handle_login(sender, text)
+
         body = update.get('message', {}).get('body', {})
         event_id = ('callback:' + hashlib.sha256(update['callback']['callback_id'].encode()).hexdigest() if update.get('update_type') == 'message_callback'
                     else body.get('mid') if isinstance(body, dict) else None)

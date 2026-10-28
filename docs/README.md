@@ -49,3 +49,5 @@
 [прежний PROJECT_STATE](archive/PROJECT_STATE_INITIAL.txt).
 
 - [ИИ-отчёты MAX](MAX_AI_REPORTS.md): голос, текст, уточнения, ключи и ограничения.
+
+- [Веб-вход через MAX](MAX_WEB_LOGIN.md): подтверждение, права и обновление.

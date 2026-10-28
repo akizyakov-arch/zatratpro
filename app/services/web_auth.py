@@ -1,4 +1,4 @@
-"""Browser-bound, one-use login approved by an existing Telegram account.
+"""Browser-bound, one-use login approved by an existing Telegram or MAX account.
 
 The browser binding and session bearer tokens are stored only as SHA-256 hashes.
 Authenticating never creates a user or changes company/role membership.
@@ -8,7 +8,7 @@ import secrets
 import unicodedata
 from uuid import uuid4
 
-from app.config import get_settings
+from app.config import get_owner_telegram_id
 from app.services.database import get_pool
 
 
@@ -57,11 +57,11 @@ class WebAuthService:
                LEFT JOIN company_members cm ON cm.user_id=u.id AND cm.status='active'
                LEFT JOIN companies co ON co.id=cm.company_id AND co.status='active'
                WHERE u.id=$1''',
-            user_id, str(get_settings().bot_owner_telegram_id), get_settings().bot_owner_telegram_id,
+            user_id, str(get_owner_telegram_id()), get_owner_telegram_id(),
         )
         if row is None or not row['is_active']:
             raise WebAuthError('Учётная запись недоступна или доступ приостановлен.')
-        owner = row['owner'] and bool(get_settings().bot_owner_telegram_id)
+        owner = row['owner'] and bool(get_owner_telegram_id())
         if not owner and (row['role'] != 'manager' or row['company_name'] is None):
             raise WebAuthError('Веб-панель доступна руководителю компании и владельцу системы. Сотрудник может работать через бота.')
         name = ' '.join(filter(None, (row['first_name'], row['last_name']))) or row['username'] or f"Пользователь №{row['id']}"
@@ -71,55 +71,64 @@ class WebAuthService:
             'company_name': None if owner else row['company_name'],
         }
 
-    async def _telegram_user(self, c, external_id):
+    async def _platform_user(self, c, external_id, platform):
         user_id = await c.fetchval(
-            "SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1",
-            str(external_id),
+            "SELECT user_id FROM external_accounts WHERE platform=$2 AND external_id=$1",
+            str(external_id), platform,
         )
         if user_id is None:
             raise WebAuthError('Сначала зарегистрируйтесь в боте и получите доступ к компании.')
         return await self._user(c, user_id)
 
-    async def start(self, browser_token, user_agent='', client_key='local'):
+    async def _telegram_user(self, c, external_id):
+        return await self._platform_user(c, external_id, 'telegram')
+
+    async def start(self, browser_token, user_agent='', client_key='local', *, platform='telegram'):
+        if platform not in ('telegram', 'max'):
+            raise WebAuthError('Выберите Telegram или MAX.')
         binding = token_hash(browser_token)
         await self._rate_limit('start', client_key, 10)
         code, request_id = secrets.token_urlsafe(24), uuid4().hex
         async with get_pool().acquire() as c, c.transaction():
             row = await c.fetchrow(
-                '''INSERT INTO web_login_requests(id,code_hash,browser_hash,browser_description,expires_at)
-                   VALUES($1,$2,$3,$4,clock_timestamp()+interval '5 minutes') RETURNING expires_at''',
-                request_id, token_hash(code), binding, browser_description(user_agent),
+                '''INSERT INTO web_login_requests(id,code_hash,browser_hash,browser_description,platform,expires_at)
+                   VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '5 minutes') RETURNING expires_at''',
+                request_id, token_hash(code), binding, browser_description(user_agent), platform,
             )
             await self._event(c, 'started', request_id=request_id)
         return {'id': request_id, 'code': code, 'expires_at': row['expires_at']}
 
-    async def present(self, telegram_id, code):
-        await self._rate_limit('present', telegram_id, 5)
+    async def present(self, telegram_id, code, *, platform='telegram'):
+        if platform not in ('telegram', 'max'):
+            raise WebAuthError('Недействительный канал входа.')
+        await self._rate_limit('present', platform + ':' + str(telegram_id), 5)
         digest = token_hash(code)
         async with get_pool().acquire() as c, c.transaction():
-            user = await self._telegram_user(c, telegram_id)
+            user = await self._platform_user(c, telegram_id, platform)
             row = await c.fetchrow('SELECT * FROM web_login_requests WHERE code_hash=$1 FOR UPDATE', digest)
-            if row is None or row['status'] != 'waiting' or not await c.fetchval(
+            if row is None or row['platform'] != platform or row['status'] != 'waiting' or not await c.fetchval(
                 'SELECT expires_at>clock_timestamp() FROM web_login_requests WHERE id=$1', row['id'],
             ):
                 raise WebAuthError('Запрос входа недействителен, истёк или уже использован.')
-            if row['user_id'] is not None and (row['user_id'] != user['id'] or row['telegram_external_id'] != str(telegram_id)):
+            if row['user_id'] is not None and (row['user_id'] != user['id'] or row['external_id'] != str(telegram_id)):
                 raise WebAuthError('Запрос уже открыт другим аккаунтом. Начните вход заново.')
             await c.execute(
-                'UPDATE web_login_requests SET user_id=$2,telegram_external_id=$3 WHERE id=$1',
-                row['id'], user['id'], str(telegram_id),
+                'UPDATE web_login_requests SET user_id=$2,external_id=$3,telegram_external_id=$4 WHERE id=$1',
+                row['id'], user['id'], str(telegram_id), str(telegram_id) if platform == 'telegram' else None,
             )
             await self._event(c, 'presented', user_id=user['id'], request_id=row['id'])
             return {'id': row['id'], 'created_at': row['created_at'], 'expires_at': row['expires_at'], 'browser': row['browser_description'], 'user': user}
 
-    async def decide(self, telegram_id, request_id, approve):
+    async def decide(self, telegram_id, request_id, approve, *, platform='telegram'):
+        if platform not in ('telegram', 'max'):
+            raise WebAuthError('Недействительный канал входа.')
         if not isinstance(request_id, str) or len(request_id) != 32:
             raise WebAuthError('Запрос входа недоступен.')
         async with get_pool().acquire() as c, c.transaction():
-            user = await self._telegram_user(c, telegram_id)
+            user = await self._platform_user(c, telegram_id, platform)
             row = await c.fetchrow(
-                'SELECT * FROM web_login_requests WHERE id=$1 AND user_id=$2 AND telegram_external_id=$3 FOR UPDATE',
-                request_id, user['id'], str(telegram_id),
+                'SELECT * FROM web_login_requests WHERE id=$1 AND user_id=$2 AND external_id=$3 AND platform=$4 FOR UPDATE',
+                request_id, user['id'], str(telegram_id), platform,
             )
             if row is None or row['status'] != 'waiting' or not await c.fetchval(
                 'SELECT expires_at>clock_timestamp() FROM web_login_requests WHERE id=$1', request_id,
@@ -142,7 +151,9 @@ class WebAuthService:
                 return {'status': 'pending' if row['status'] == 'waiting' else 'denied'}
             if row['status'] != 'approved':
                 raise WebAuthError('Запрос входа уже использован. Начните вход заново.')
-            user = await self._user(c, row['user_id'])
+            user = await self._platform_user(c, row['external_id'], row['platform'])
+            if user['id'] != row['user_id']:
+                raise WebAuthError('Привязка аккаунта изменилась. Начните вход заново.')
             # One persistent web identity is shared by all this user's sessions.
             await c.execute(
                 "INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'web',$2) ON CONFLICT(user_id,platform) DO NOTHING",
