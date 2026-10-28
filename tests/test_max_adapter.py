@@ -26,6 +26,12 @@ def message(user_id, text, *, chat_type='dialog', is_bot=False):
 
 
 class MaxTransportTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        for method in ('clear_input', 'input_mode', 'code_kind'):
+            patcher = patch('app.services.max_onboarding.MaxOnboardingService.' + method, new=AsyncMock(return_value=None))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     async def test_authorization_uses_header_and_new_official_host(self):
         requests = []
         def handle(request):

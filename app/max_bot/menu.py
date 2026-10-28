@@ -3,6 +3,7 @@ import re
 
 MAIN = [['Проекты', 'Деньги'], ['Отчёты', 'Профиль']]
 HOME = ['Главное меню']
+ONBOARDING = [['Вступить по приглашению'], ['Подключить профиль Telegram'], ['Главное меню']]
 PERIODS = [['За неделю', 'За месяц'], ['За всё время'], HOME]
 PAGE_SIZE = 5
 
@@ -15,7 +16,8 @@ class MenuText(str):
 
 
 def command_text(text):
-    names = {'главное меню': '/start', 'проекты': '/projects', 'деньги': '/money',
+    names = {'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
+             'главное меню': '/start', 'проекты': '/projects', 'деньги': '/money',
              'отчёты': '/reports', 'профиль': '/profile', 'остаток': '/balance',
              'за неделю': '/report week', 'за месяц': '/report month',
              'за всё время': '/report all_time', 'пригласить сотрудника': '/invite',
