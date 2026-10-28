@@ -2,6 +2,7 @@
 import asyncio
 from collections import deque
 import logging
+import time
 
 import asyncpg
 
@@ -24,6 +25,11 @@ async def process_batch(client, handler, updates, *, check_lease=None):
         if check_lease:
             await check_lease()
         update = pending[0]
+        started = time.perf_counter()
+        ack_ms = handle_ms = send_ms = 0.0
+        stamp = update.get('timestamp')
+        # MAX timestamps are epoch milliseconds; local clock skew affects this value.
+        age_ms = max(0, time.time() * 1000 - stamp) if type(stamp) in (int, float) and 0 < stamp < 10**15 else None
         if update.get('update_type') == 'message_callback' and event_message(update) is not None:
             try:
                 await client.answer(update['callback']['callback_id'])
@@ -31,13 +37,17 @@ async def process_batch(client, handler, updates, *, check_lease=None):
                 # Old/already answered callbacks must not block the update queue.
                 if exc.status not in (400, 404, 410):
                     raise
+            ack_ms = (time.perf_counter() - started) * 1000
             if check_lease:
                 await check_lease()
+        handling = time.perf_counter()
         reply = await handler.handle(update)
+        handle_ms = (time.perf_counter() - handling) * 1000
         if reply is not None:
             if check_lease:
                 await check_lease()
             user_id, text = reply
+            sending = time.perf_counter()
             try:
                 await client.send(user_id, text)
             except MaxAPIError as exc:
@@ -46,6 +56,13 @@ async def process_batch(client, handler, updates, *, check_lease=None):
                 if exc.status != 403:
                     raise
                 logger.warning('MAX: ответ недоступному получателю пропущен (HTTP 403).')
+            send_ms = (time.perf_counter() - sending) * 1000
+        # Never log event bodies, names, callbacks, IDs, URLs or query text.
+        kind = update.get('update_type')
+        kind = kind if kind in ('bot_started', 'message_created', 'message_callback') else 'other'
+        logger.info('max_event type=%s age_ms=%s ack_ms=%.0f handle_ms=%.0f send_ms=%.0f total_ms=%.0f pending=%s',
+                    kind, round(age_ms) if age_ms is not None else 'unknown', ack_ms,
+                    handle_ms, send_ms, (time.perf_counter() - started) * 1000, len(pending) - 1)
         pending.popleft()
 
 
