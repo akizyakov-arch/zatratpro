@@ -1,11 +1,12 @@
 """Platform-authenticated MAX events become canonical-user service calls."""
 import re
+import hashlib
 
 from app.max_bot.issue import IssueMenu
 from app.max_bot.profile import ProfileMenu
 from app.max_bot.workspace import WorkspaceMenu
 from app.ui.menu_layout import main_menu_rows
-from app.max_bot.menu import HOME, ONBOARDING, PERIODS, MenuText, command_text, money_menu
+from app.max_bot.menu import HOME, ONBOARDING, PERIODS, CALLBACK_PREFIX, MenuButton, MenuText, command_text, money_menu
 
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
@@ -56,6 +57,22 @@ def event_message(update):
                 text = '/link ' + payload[5:]
             elif re.fullmatch(r'join_(?:[A-Za-z0-9]{10}|[A-Za-z0-9]{12})', payload):
                 text = '/join ' + payload[5:]
+    elif kind == 'message_callback':
+        callback = update.get('callback')
+        message = update.get('message')
+        if (not isinstance(callback, dict) or not isinstance(message, dict)
+                or not isinstance(message.get('recipient'), dict)
+                or message['recipient'].get('chat_type') != 'dialog'
+                or not isinstance(callback.get('callback_id'), str) or not 1 <= len(callback['callback_id']) <= 256):
+            return None
+        sender = callback.get('user')
+        payload = callback.get('payload')
+        if not isinstance(payload, str) or not payload.startswith(CALLBACK_PREFIX + '/') or len(payload) > 1024:
+            return None
+        text = payload[len(CALLBACK_PREFIX):]
+        if (not isinstance(sender, dict)
+                or (message['recipient'].get('user_id') is not None and message['recipient']['user_id'] != sender.get('user_id'))):
+            return None
     elif kind == 'message_created':
         message = update.get('message')
         if not isinstance(message, dict) or not isinstance(message.get('recipient'), dict):
@@ -90,6 +107,9 @@ class MaxHandler:
             return None
         sender, text = event
         text = command_text(text)
+        body = update.get('message', {}).get('body', {})
+        event_id = ('callback:' + hashlib.sha256(update['callback']['callback_id'].encode()).hexdigest() if update.get('update_type') == 'message_callback'
+                    else body.get('mid') if isinstance(body, dict) else None)
         try:
             onboarding = MaxOnboardingService()
             if text.startswith('/'):
@@ -108,12 +128,10 @@ class MaxHandler:
                 actor = await self.links.resolve('max', str(sender))
                 if actor is None:
                     return sender, LINK_HELP
-                result = await self.workspace_menu.handle(actor, text)
-            if result is None and (not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel')):
+                result = await self.workspace_menu.handle(actor, text, event_id)
+            if result is None and (not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel') or text.startswith('/issue_')):
                 actor = await self.links.resolve('max', str(sender))
                 if actor is not None:
-                    body = update.get('message', {}).get('body', {})
-                    event_id = body.get('mid') if isinstance(body, dict) else None
                     result = await self.issue_menu.handle(actor, text, event_id)
             if result is None:
                 profile = update.get('user') if update.get('update_type') == 'bot_started' else update.get('message', {}).get('sender')
@@ -138,9 +156,7 @@ class MaxHandler:
             return main_menu_rows()
         if ctx['role'] == 'owner':
             return main_menu_rows('platform_owner')
-        rows = main_menu_rows('manager')
-        rows.insert(-2, ['Пригласить сотрудника'])
-        return rows
+        return main_menu_rows('manager')
 
     async def _command(self, sender, text, *, profile=None):
         parts = text.split(maxsplit=1)
@@ -236,18 +252,18 @@ class MaxHandler:
                 if row['employee_id'] != actor or row['canceled_at']:
                     raise AdvanceError('Получение этой выдачи недоступно.')
                 if row['received_at']:
-                    return MenuText('Получение этой выдачи уже подтверждено.', [[f'Выдача №{aid}'], HOME])
+                    return MenuText('Получение этой выдачи уже подтверждено.', [[MenuButton('Назад', f'/advance {aid}')], HOME])
                 return MenuText(
                     f"Подтвердить получение {row['amount']} RUB?\nПроект: {row['project_name']}\n"
                     'Нажмите «Да, получил» только после фактической передачи денег.',
-                    [[f'Да, получил №{aid}'], [f'Выдача №{aid}'], HOME],
+                    [[MenuButton('Да, получил', f'/receive {aid}')], [MenuButton('Отмена', f'/advance {aid}')]],
                 )
             state = 'отменена' if row['canceled_at'] else 'получено' if row['received_at'] else 'ожидает получения'
             lines = [f"Выдача №{aid} · {row['project_name']}", row['purpose'], f"Сумма: {row['amount']} RUB", f'Статус: {state}']
             if row['received_at']:
                 lines.append(f"Остаток: {row['balance']:.2f} RUB")
             elif not row['canceled_at'] and row['employee_id'] == actor:
-                lines.append(f'/receive {aid} — подтвердить фактическое получение.')
+                lines.append('Подтвердите получение кнопкой ниже после фактической передачи денег.')
             if row['cancel_reason']:
                 lines.append('Причина отмены: ' + row['cancel_reason'])
             for e in row['expenses']:
@@ -255,7 +271,7 @@ class MaxHandler:
                 lines.append(f"Чек №{e['document_id']}: {e['amount']} RUB — {state}" + (f" · {e['rejection_reason']}" if e['rejected_at'] else ''))
             buttons = []
             if not row['received_at'] and not row['canceled_at'] and row['employee_id'] == actor:
-                buttons.append([f'Подтвердить получение №{aid}'])
+                buttons.append([MenuButton('Подтвердить получение', f'/receive_prompt {aid}')])
             buttons.extend([['Деньги', 'Остаток'], HOME])
             return MenuText('\n'.join(lines), buttons)
         if command == '/report':

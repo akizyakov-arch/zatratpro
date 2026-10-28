@@ -197,3 +197,46 @@ def _owner_user_button_text(user: Any) -> str:
     if company_name:
         return f"{base} [{company_name}]"
     return f"{base} [без компании]"
+
+
+def format_company_card(card) -> str:
+    invite_state = 'есть активный invite' if card.invite is not None else 'invite отсутствует'
+    manager_state = card.manager_name if card.manager_name else 'не назначен'
+    status = 'active' if getattr(card, 'is_active', True) else 'archived'
+    return '\n'.join([
+        f'Компания: {card.name}',
+        f'Статус: {status}',
+        f'Manager: {manager_state}',
+        f'Сотрудников: {card.employee_count}',
+        f'Активных проектов: {card.active_project_count}',
+        f'Архивных проектов: {card.archived_project_count}',
+        f'Документов: {card.document_count}',
+        f'Создана: {card.created_at:%Y-%m-%d %H:%M}',
+        f'Invite manager: {invite_state}',
+    ])
+
+
+def format_project_card(project) -> str:
+    status = 'archived' if project.is_archived else 'active'
+    total_amount = project.total_amount if project.total_amount is not None else 0
+    created_line = f'{project.created_at:%Y-%m-%d %H:%M}' if project.created_at else '—'
+    creator = project.created_by_name or '—'
+    return '\n'.join([
+        f'Проект: {project.name}',
+        f'Статус: {status}',
+        f'Создан: {created_line}',
+        f'Кем создан: {creator}',
+        f'Документов: {project.document_count}',
+        f'Сумма затрат: {total_amount}',
+    ])
+
+
+def format_member_card(member) -> str:
+    joined = member.joined_at.strftime('%Y-%m-%d %H:%M') if member.joined_at else '—'
+    username = f'@{member.username}' if member.username else '—'
+    return '\n'.join([
+        f'Сотрудник: {member.full_name or username}',
+        f'Username: {username}',
+        f'Дата вступления: {joined}',
+        f'Загружено документов: {member.document_count}',
+    ])

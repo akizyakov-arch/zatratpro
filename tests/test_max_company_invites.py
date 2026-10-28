@@ -46,7 +46,7 @@ class MaxCompanyInviteTests(DatabaseFixture):
         code = await self.service.create_initial_manager_invite(self.owner, company.id)
         reply = (await MaxHandler().handle(message(9001, '/join ' + code)))[1]
         self.assertIn('руководитель', reply)
-        self.assertIn(['Пригласить сотрудника'], reply.buttons)
+        self.assertIn(['Проекты', 'Сотрудники'], reply.buttons)
         manager = await self.max_actor()
         self.assertEqual(await self.pool.fetchval('SELECT manager_user_id FROM companies WHERE id=$1', company.id), manager)
         self.assertIsNone(await self.pool.fetchval('SELECT telegram_id FROM users WHERE id=$1', manager))

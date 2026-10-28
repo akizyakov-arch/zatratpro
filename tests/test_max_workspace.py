@@ -2,6 +2,7 @@
 import asyncio
 import os
 import unittest
+from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
 from db_fixture import DatabaseFixture
@@ -22,13 +23,14 @@ class MaxWorkspaceTests(DatabaseFixture):
         await links.claim('max', str(sender), request['code'])
         return await links.confirm('telegram', str(user.id), request['id'])
 
-    async def press(self, text, sender=9001):
-        return (await MaxHandler().handle(message(sender, text)))[1]
+    async def press(self, text, sender=9001, mid=None):
+        event = message(sender, text)
+        event['message']['body']['mid'] = mid or uuid4().hex
+        return (await MaxHandler().handle(event))[1]
 
     async def create_company(self, name='MAX demo'):
         await self.press('Создать компанию')
-        confirmation = await self.press(name)
-        return await self.press(confirmation.buttons[0][0])
+        return await self.press(name)
 
     async def test_owner_menu_matches_telegram_and_help_is_last(self):
         await self.link(self.owner, 9001)
@@ -44,9 +46,7 @@ class MaxWorkspaceTests(DatabaseFixture):
         before = await self.pool.fetchval('SELECT count(*) FROM companies')
         await self.press('Создать компанию')
         self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM companies'), before)
-        reply = await self.press('MAX demo')
-        button = reply.buttons[0][0]
-        results = await asyncio.gather(self.press(button), self.press(button))
+        results = await asyncio.gather(self.press('MAX demo', mid='same-name-message'), self.press('MAX demo', mid='same-name-message'))
         self.assertTrue(all('Компания создана' in r for r in results))
         self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM companies'), before+1)
         company = await self.pool.fetchrow("SELECT * FROM companies WHERE name='MAX demo'")
@@ -57,7 +57,7 @@ class MaxWorkspaceTests(DatabaseFixture):
         code = await self.pool.fetchval('SELECT code FROM company_invites WHERE company_id=$1', company['id'])
         await self.press('Вступить по приглашению', 9002)
         self.assertIn('руководитель', await self.press(code, 9002))
-        self.assertIn(['Сотрудники', 'Проекты'], (await self.press('Моя компания', 9002)).buttons)
+        self.assertIn(['Проекты', 'Сотрудники'], (await self.press('Моя компания', 9002)).buttons)
 
     async def test_manager_and_employee_cannot_create_company_or_use_owner_buttons(self):
         await self.link(self.manager, 9001)
@@ -146,17 +146,15 @@ class MaxWorkspaceTests(DatabaseFixture):
         self.assertEqual(main.buttons[-1], ['Помощь'])
         self.assertIn(['Создать проект'], (await self.press('Проекты')).buttons)
         await self.press('Создать проект')
-        prompt = await self.press('MAX project')
-        await self.press(prompt.buttons[0][0])
+        await self.press('MAX project')
         pid = await self.pool.fetchval("SELECT id FROM projects WHERE name='MAX project'")
         await self.press(f'Переименовать проект №{pid}')
-        prompt = await self.press('MAX renamed')
-        await self.press(prompt.buttons[0][0])
+        await self.press('MAX renamed')
         await self.press(f'Архивировать проект №{pid}')
         self.assertEqual(await self.pool.fetchval('SELECT status FROM projects WHERE id=$1', pid), 'active')
         await self.press(f'Да, архивировать проект №{pid}')
         self.assertEqual(await self.pool.fetchval('SELECT status FROM projects WHERE id=$1', pid), 'archived')
-        self.assertIn('MAX renamed', await self.press('Архив проектов'))
+        self.assertIn(['MAX renamed'], (await self.press('Архив проектов')).buttons)
         await self.press(f'Восстановить проект №{pid}')
         self.assertEqual(await self.pool.fetchval('SELECT status FROM projects WHERE id=$1', pid), 'active')
 
@@ -174,8 +172,8 @@ class MaxWorkspaceTests(DatabaseFixture):
         await self.link(self.owner, 9001)
         uid = await self.pool.fetchval("INSERT INTO users(first_name) VALUES('New employee') RETURNING id")
         card = await self.press(f'Пользователь №{uid}')
-        self.assertIn([f'Назначить сотрудником №{uid}'], card.buttons)
-        self.assertIn(self.company.name, await self.press(f'Назначить сотрудником №{uid}'))
+        self.assertIn(['Назначить employee'], card.buttons)
+        self.assertIn([self.company.name], (await self.press(f'Назначить сотрудником №{uid}')).buttons)
         await self.press(f'Назначить №{uid} · employee · компания №{self.company.id}')
         self.assertEqual(await self.pool.fetchval("SELECT role FROM company_members WHERE user_id=$1 AND status='active'", uid), 'employee')
         await self.press(f'Да, исключить пользователя №{uid}')

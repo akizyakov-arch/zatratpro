@@ -1,4 +1,4 @@
-"""Native MAX message buttons; every action is reauthorized like typed text."""
+"""Visible labels are separate from private callback actions."""
 import re
 
 from app.ui.menu_layout import main_menu_rows
@@ -8,6 +8,18 @@ HOME = ['Главное меню']
 ONBOARDING = [['Вступить по приглашению'], ['Подключить профиль Telegram'], ['Главное меню']]
 PERIODS = [['За неделю', 'За месяц'], ['За всё время'], HOME]
 PAGE_SIZE = 5
+
+
+CALLBACK_PREFIX = 'fiinops:'
+
+
+class MenuButton(str):
+    def __new__(cls, label, command):
+        result = super().__new__(cls, label)
+        if not isinstance(command, str) or not command.startswith('/') or len(command) > 1000:
+            raise ValueError('Некорректная команда кнопки.')
+        result.command = command
+        return result
 
 
 class MenuText(str):
@@ -91,14 +103,14 @@ def money_menu(rows, page=1):
     for row in selected:
         state = 'отменена' if row['canceled_at'] else 'получено' if row['received_at'] else 'ожидает получения'
         lines.append(f"№{row['id']} · {row['employee_name'] or ''} · {row['project_name']} · {row['amount']} RUB · {state}")
-        buttons.append([f"Выдача №{row['id']}"])
+        buttons.append([MenuButton(f"{row['employee_name'] or 'Сотрудник'} · {row['project_name']} · {row['amount']} ₽", f"/advance {row['id']}")])
     if not selected:
         lines.append('Выдач пока нет.')
     navigation = []
     if page > 1:
-        navigation.append(f'Выдачи · страница {page - 1}')
+        navigation.append(MenuButton('←', f'/money_page {page-1}'))
     if page < pages:
-        navigation.append(f'Выдачи · страница {page + 1}')
+        navigation.append(MenuButton('→', f'/money_page {page+1}'))
     if navigation:
         buttons.append(navigation)
     buttons.extend([['Остаток'], HOME])

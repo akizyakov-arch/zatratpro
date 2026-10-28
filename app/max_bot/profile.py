@@ -1,7 +1,7 @@
 """MAX controls for linking a second messenger to the same canonical profile."""
 import os
 import re
-from app.max_bot.menu import HOME, MenuText
+from app.max_bot.menu import HOME, MenuButton, MenuText
 from app.services.account_links import AccountLinkService
 
 
@@ -12,15 +12,15 @@ class ProfileMenu:
     async def show(self, sender, actor):
         accounts = await self.links.accounts('max', str(sender))
         pending = await self.links.pending('max', str(sender))
-        text = [f'Профиль FIINOPS №{actor}', 'Связанные аккаунты:']
+        text = ['Мой профиль', 'Связанные аккаунты:']
         text.extend(f"{row['platform']}: {row['external_id']}" for row in accounts)
         buttons = []
         if 'telegram' not in {row['platform'] for row in accounts}:
             buttons.append(['Подключить Telegram'])
         for request in pending:
             text.append(f"Запрос подключения {request['target_platform']}: {request['target_external_id']}. Подтверждайте только свой аккаунт.")
-            buttons.append([f"Подтвердить Telegram · {request['id']}"])
-            buttons.append([f"Отменить привязку · {request['id']}"])
+            buttons.append([MenuButton("Подтвердить подключение", f"/link_confirm {request['id']}")])
+            buttons.append([MenuButton("Отклонить", f"/link_cancel {request['id']}")])
         buttons.extend([['Обновить профиль'], HOME])
         return MenuText('\n'.join(text), buttons)
 
@@ -34,4 +34,4 @@ class ProfileMenu:
         else:
             text.append(f"В нашем Telegram-боте отправьте /start link_{request['code']} или /link {request['code']}. Не регистрируйте отдельный профиль через обычный /start перед привязкой.")
         text.append('Затем вернитесь сюда, нажмите «Обновить профиль» и подтвердите свой Telegram-аккаунт. До подтверждения доступ не выдаётся.')
-        return MenuText('\n'.join(text), [['Обновить профиль'], [f"Отменить привязку · {request['id']}"], HOME])
+        return MenuText('\n'.join(text), [['Обновить профиль'], [MenuButton("Отклонить", f"/link_cancel {request['id']}")], HOME])

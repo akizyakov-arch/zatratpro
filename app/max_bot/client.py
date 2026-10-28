@@ -5,10 +5,11 @@ import time
 from pathlib import Path
 
 import httpx
+from app.max_bot.menu import CALLBACK_PREFIX, MenuButton
 
 API_URL = 'https://platform-api2.max.ru'
 ROOT_CA = Path(__file__).with_name('certs') / 'russian_trusted_root_ca.pem'
-UPDATE_TYPES = 'bot_started,message_created'
+UPDATE_TYPES = 'bot_started,message_created,message_callback'
 
 
 class MaxAPIError(RuntimeError):
@@ -86,19 +87,27 @@ class MaxClient:
             raise MaxAPIError('MAX вернул некорректную страницу событий.')
         return updates, marker
 
+    async def _throttle(self):
+        wait = self.rate_interval - (time.monotonic() - self.last_send)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self.last_send = time.monotonic()
+
+    async def answer(self, callback_id):
+        await self._throttle()
+        await self._request('POST', '/answers', params={'callback_id': callback_id}, json={})
+
     async def send(self, user_id, text):
         if type(user_id) is not int or user_id <= 0 or not isinstance(text, str) or not text:
             raise ValueError('Некорректный получатель или текст MAX.')
         buttons = getattr(text, 'buttons', None)
         for start in range(0, len(text), 3500):
-            wait = self.rate_interval - (time.monotonic() - self.last_send)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self.last_send = time.monotonic()
+            await self._throttle()
             body = {'text': str(text[start:start + 3500])}
             if buttons and start + 3500 >= len(text):
                 body['attachments'] = [{'type': 'inline_keyboard', 'payload': {'buttons': [
-                    [{'type': 'message', 'text': label} for label in row] for row in buttons
+                    [({'type': 'callback', 'text': str(label)[:128], 'payload': CALLBACK_PREFIX + label.command}
+                      if isinstance(label, MenuButton) else {'type': 'message', 'text': str(label)[:128]}) for label in row] for row in buttons
                 ]}}]
             await self._request('POST', '/messages', params={'user_id': user_id, 'disable_link_preview': 'true'},
                 json=body)

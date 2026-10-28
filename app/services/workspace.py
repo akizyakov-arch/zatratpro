@@ -133,8 +133,16 @@ class WorkspaceService:
             result = dict(row)
             result['document_count'] = await c.fetchval('SELECT count(*) FROM documents WHERE project_id=$1', project_id)
             result['total_amount'] = await c.fetchval("SELECT COALESCE(sum(total_amount),0) FROM documents WHERE project_id=$1 AND currency='RUB'", project_id)
+            result['created_by_name'] = await c.fetchval("SELECT COALESCE(NULLIF(concat_ws(' ',first_name,last_name),''),username) FROM users WHERE id=$1", row['created_by_user_id'])
             result['has_open_settlements'] = await c.fetchval('SELECT workspace_has_open_settlements($1,NULL,$2)', ctx['company_id'], project_id)
             return result
+
+    async def project_documents(self, actor, project_id):
+        async with get_pool().acquire() as c:
+            ctx = await self._manager(c, actor)
+            if not await c.fetchval('SELECT 1 FROM projects WHERE id=$1 AND company_id=$2', project_id, ctx['company_id']):
+                raise WorkspaceError('Проект недоступен.')
+            return await c.fetch('SELECT vendor,total_amount,currency FROM documents WHERE project_id=$1 AND company_id=$2 ORDER BY created_at DESC,id DESC', project_id, ctx['company_id'])
 
     async def create_project(self, actor, name, *, connection=None):
         name = _name(name)
@@ -265,6 +273,7 @@ class WorkspaceService:
         row = await c.fetchrow('''SELECT c.*,u.first_name AS manager_first_name,u.last_name AS manager_last_name,
             (SELECT count(*) FROM company_members cm WHERE cm.company_id=c.id AND cm.role='employee' AND cm.status='active') AS employee_count,
             (SELECT count(*) FROM projects p WHERE p.company_id=c.id AND p.status='active') AS project_count,
+            (SELECT count(*) FROM projects p WHERE p.company_id=c.id AND p.status='archived') AS archived_project_count,
             (SELECT count(*) FROM documents d WHERE d.company_id=c.id) AS document_count
             FROM companies c LEFT JOIN users u ON u.id=c.manager_user_id WHERE c.id=$1''', company_id)
         if row is None:
