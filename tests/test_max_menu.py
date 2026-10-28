@@ -26,7 +26,7 @@ class MaxMenuTransportTests(unittest.IsolatedAsyncioTestCase):
         def transport(request):
             requests.append(request)
             return httpx.Response(200, json={'message': {}})
-        async with MaxClient('test', transport=httpx.MockTransport(transport), rate_interval=0) as client:
+        async with MaxClient('test', transport=httpx.MockTransport(transport)) as client:
             await client.send(123, MenuText('А' * 7001, MAIN))
         bodies = [json.loads(request.content) for request in requests]
         self.assertEqual(''.join(body['text'] for body in bodies), 'А' * 7001)

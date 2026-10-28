@@ -96,7 +96,7 @@ class MaxTransportTests(unittest.IsolatedAsyncioTestCase):
             requests.append(request)
             return httpx.Response(200, json={'message': {}})
         text = '<not-markup>' + 'Д' * 7000
-        async with MaxClient('token', transport=httpx.MockTransport(handle), rate_interval=0) as client:
+        async with MaxClient('token', transport=httpx.MockTransport(handle)) as client:
             await client.send(321, text)
         import json
         bodies = [json.loads(request.content) for request in requests]

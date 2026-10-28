@@ -30,7 +30,7 @@ class CallbackTransportTests(unittest.IsolatedAsyncioTestCase):
         def transport(request):
             requests.append(request)
             return httpx.Response(200, json={})
-        async with MaxClient('test', transport=httpx.MockTransport(transport), rate_interval=0) as client:
+        async with MaxClient('test', transport=httpx.MockTransport(transport)) as client:
             await client.send(55, MenuText('Активные проекты:', [[MenuButton('Ривер Дон', '/project 17')]]))
             await client.answer('callback-id')
         button = json.loads(requests[0].content)['attachments'][0]['payload']['buttons'][0][0]
@@ -44,7 +44,7 @@ class CallbackTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0][0], rows[1][0])
         self.assertNotEqual(rows[0][0].command, rows[1][0].command)
         sent = []
-        async with MaxClient('test', transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200, json={})), rate_interval=0) as client:
+        async with MaxClient('test', transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200, json={}))) as client:
             await client.send(55, MenuText('Проекты', [[MenuButton('Я'*200, '/project 11')]]))
         self.assertEqual(len(json.loads(sent[0].content)['attachments'][0]['payload']['buttons'][0][0]['text']), 128)
 
