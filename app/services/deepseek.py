@@ -3,7 +3,7 @@ import re
 
 import httpx
 
-from app.config import get_settings
+from app.config import get_recognition_settings as get_settings
 from app.prompts.cleanup_prompt import CLEANUP_PROMPT
 from app.prompts.extraction_prompt import EXTRACTION_PROMPT
 

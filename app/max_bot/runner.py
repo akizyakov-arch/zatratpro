@@ -56,7 +56,7 @@ async def _poll_locked(client, bot_id, lease, *, timeout, once):
         except Exception:
             raise PollingLeaseLost() from None
 
-    handler = MaxHandler()
+    handler = MaxHandler(notify=client.send)
     marker = await lease.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=$1', bot_id)
     pending = None
     failures = 0

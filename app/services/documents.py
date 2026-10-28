@@ -3,12 +3,13 @@ from datetime import date, datetime, time, timezone
 from decimal import Decimal
 import re
 
-from aiogram.types import User
 
 from app.schemas.document import ALLOWED_DOCUMENT_TYPES, DocumentItem, DocumentSchema
-from app.services.companies import ADMIN_ROLES, CompanyAccessError, CompanyService, WORKER_ROLES
+from app.services.company_policy import ADMIN_ROLES, CompanyAccessError, WORKER_ROLES
 from app.services.database import get_pool
-from app.services.projects import Project
+from app.services.membership import require_member, MembershipError
+from app.services.workspace import workspace_transaction
+from app.schemas.project import Project
 
 
 DUPLICATE_STATUS_NONE = "none"
@@ -73,12 +74,15 @@ class DuplicateDocumentInfo:
 
 
 class DocumentService:
-    def __init__(self) -> None:
-        self.company_service = CompanyService()
+    @property
+    def company_service(self):
+        # Legacy Telegram entry points resolve identities at their boundary.
+        from app.services.companies import CompanyService
+        return CompanyService()
 
     async def save_document(
         self,
-        telegram_user: User,
+        telegram_user,
         project: Project,
         normalized_text: str,
         document: DocumentSchema,
@@ -86,155 +90,151 @@ class DocumentService:
         source_type: str = "photo",
         upload_id: str | None = None,
     ) -> int:
-        member_role = await self.company_service.ensure_member_role(telegram_user.id)
-        if member_role not in ADMIN_ROLES | WORKER_ROLES:
-            raise CompanyAccessError("Недостаточно прав для сохранения документа.")
+        actor = await self.company_service._workspace_actor(telegram_user.id)
+        return await self.save_for_user(actor, project.id, normalized_text, document,
+                                        source_type=source_type, upload_id=upload_id)
 
-        active_company = await self.company_service.get_active_company_for_user(telegram_user.id)
-        if active_company.id != project.company_id:
-            raise CompanyAccessError("Нельзя сохранить документ в проект другой компании.")
-        if project.is_archived:
-            raise CompanyAccessError("Нельзя сохранить документ в архивный проект.")
+    async def _member(self, connection, actor):
+        try:
+            return await require_member(connection, actor)
+        except MembershipError as exc:
+            raise CompanyAccessError(str(exc)) from exc
+
+    async def save_for_user(self, actor, project_id, normalized_text, document, *,
+                            source_type='photo', upload_id=None, provider='deepseek', connection=None):
         self._ensure_expense_document(document)
-
-        if duplicate_check is None:
-            duplicate_check = await self.find_company_duplicate_document(
-                telegram_user=telegram_user,
-                project=project,
-                document=document,
-                normalized_text=normalized_text,
-            )
-
-        pool = get_pool()
-        document_date = duplicate_check.fields.document_date
-        items = [item for item in document.items if _item_has_value(item)]
-
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                user_id = await connection.fetchval(
-                    """
-                    INSERT INTO users (telegram_id, username, first_name, last_name)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (telegram_id) DO UPDATE
-                    SET username = EXCLUDED.username,
-                        first_name = EXCLUDED.first_name,
-                        last_name = EXCLUDED.last_name,
-                        updated_at = NOW()
-                    RETURNING id
-                    """,
-                    telegram_user.id,
-                    telegram_user.username,
-                    telegram_user.first_name,
-                    telegram_user.last_name,
-                )
-                document_id = await connection.fetchval(
-                    """
-                    INSERT INTO documents (
-                        company_id,
-                        project_id,
-                        uploaded_by_user_id,
-                        document_type,
-                        source_type,
-                        external_document_number,
-                        incoming_number,
-                        vendor,
-                        vendor_inn,
-                        vendor_kpp,
-                        document_date,
-                        currency,
-                        total_amount,
-                        raw_text,
-                        preview_text,
-                        duplicate_status,
-                        duplicate_of_document_id,
-                        duplicate_checked_at,
-                        ocr_provider,
-                        llm_provider,
-                        source_file_path,
-                        source_file_id,
-                        upload_id
-                    )
-                    VALUES (
-                        $1, $2, $3, $4, $5, $6, $7, $8,
-                        $9, $10, $11, $12, $13, $14, $15,
-                        $16, $17, NOW(), 'ocr_space', 'deepseek', NULL, NULL, $18
-                    )
-                    ON CONFLICT (upload_id) WHERE upload_id IS NOT NULL DO NOTHING
-                    RETURNING id
-                    """,
-                    project.company_id,
-                    project.id,
-                    user_id,
-                    document.document_type,
-                    source_type,
-                    duplicate_check.fields.document_number,
-                    document.incoming_number,
-                    duplicate_check.fields.vendor_name,
-                    duplicate_check.fields.vendor_inn,
-                    document.vendor_kpp,
-                    document_date,
-                    document.currency,
-                    duplicate_check.fields.total_amount,
-                    document.raw_text,
-                    normalized_text,
-                    duplicate_check.status,
-                    duplicate_check.duplicate_document_id,
-                    upload_id,
-                )
-                if document_id is None:
-                    # Retry of this upload, not a ban on intentionally duplicated receipts.
-                    existing_id = await connection.fetchval(
-                        'SELECT id FROM documents WHERE upload_id=$1 AND company_id=$2 AND uploaded_by_user_id=$3 AND project_id=$4',
-                        upload_id, project.company_id, user_id, project.id,
-                    )
-                    if existing_id is None:
+        if source_type not in ('photo', 'pdf') or provider not in ('deepseek', 'ocr_space'):
+            raise DocumentValidationError('Некорректный источник документа.')
+        async with workspace_transaction(connection) as connection:
+            member = await self._member(connection, actor)
+            await connection.fetchval('SELECT id FROM companies WHERE id=$1 FOR UPDATE', member['company_id'])
+            await connection.fetchval('SELECT id FROM users WHERE id=$1 AND is_active FOR NO KEY UPDATE', actor)
+            current = await self._member(connection, actor)
+            if current['company_id'] != member['company_id']:
+                raise CompanyAccessError('Компания изменилась. Повторите загрузку.')
+            row = await connection.fetchrow("SELECT id,company_id,name,status FROM projects WHERE id=$1 AND company_id=$2 AND status='active' FOR UPDATE", project_id, member['company_id'])
+            if row is None:
+                raise CompanyAccessError('Проект недоступен или архивирован.')
+            project = Project(**dict(row))
+            user_id = actor
+            if upload_id:
+                existing = await connection.fetchrow('SELECT id,company_id,project_id,uploaded_by_user_id FROM documents WHERE upload_id=$1', upload_id)
+                if existing:
+                    if (existing['company_id'], existing['project_id'], existing['uploaded_by_user_id']) != (member['company_id'], project_id, actor):
                         raise DocumentValidationError('Идентификатор загрузки уже использован.')
-                    return existing_id
-                if items:
-                    await connection.executemany(
-                        """
-                        INSERT INTO document_items (
-                            document_id,
-                            line_no,
-                            name,
-                            quantity,
-                            price,
-                            line_total
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        """,
-                        [
-                            (
-                                document_id,
-                                index,
-                                item.name,
-                                _as_decimal(item.quantity, "0.001"),
-                                _as_decimal(item.price, "0.01"),
-                                _as_decimal(item.line_total, "0.01"),
-                            )
-                            for index, item in enumerate(items, start=1)
-                        ],
+                    return existing['id']
+            duplicate_check = await self.find_duplicate_for_user(actor, project_id, document, normalized_text, connection=connection)
+            document_date = duplicate_check.fields.document_date
+            items = [item for item in document.items if _item_has_value(item)]
+            document_id = await connection.fetchval(
+                """
+                INSERT INTO documents (
+                    company_id,
+                    project_id,
+                    uploaded_by_user_id,
+                    document_type,
+                    source_type,
+                    external_document_number,
+                    incoming_number,
+                    vendor,
+                    vendor_inn,
+                    vendor_kpp,
+                    document_date,
+                    currency,
+                    total_amount,
+                    raw_text,
+                    preview_text,
+                    duplicate_status,
+                    duplicate_of_document_id,
+                    duplicate_checked_at,
+                    ocr_provider,
+                    llm_provider,
+                    source_file_path,
+                    source_file_id,
+                    upload_id
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8,
+                    $9, $10, $11, $12, $13, $14, $15,
+                    $16, $17, NOW(), $19, 'deepseek', NULL, NULL, $18
+                )
+                ON CONFLICT (upload_id) WHERE upload_id IS NOT NULL DO NOTHING
+                RETURNING id
+                """,
+                project.company_id,
+                project.id,
+                user_id,
+                document.document_type,
+                source_type,
+                duplicate_check.fields.document_number,
+                document.incoming_number,
+                duplicate_check.fields.vendor_name,
+                duplicate_check.fields.vendor_inn,
+                document.vendor_kpp,
+                document_date,
+                document.currency,
+                duplicate_check.fields.total_amount,
+                document.raw_text,
+                normalized_text,
+                duplicate_check.status,
+                duplicate_check.duplicate_document_id,
+                upload_id,
+                provider,
+            )
+            if document_id is None:
+                # Retry of this upload, not a ban on intentionally duplicated receipts.
+                existing_id = await connection.fetchval(
+                    'SELECT id FROM documents WHERE upload_id=$1 AND company_id=$2 AND uploaded_by_user_id=$3 AND project_id=$4',
+                    upload_id, project.company_id, user_id, project.id,
+                )
+                if existing_id is None:
+                    raise DocumentValidationError('Идентификатор загрузки уже использован.')
+                return existing_id
+            if items:
+                await connection.executemany(
+                    """
+                    INSERT INTO document_items (
+                        document_id,
+                        line_no,
+                        name,
+                        quantity,
+                        price,
+                        line_total
                     )
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    [
+                        (
+                            document_id,
+                            index,
+                            item.name,
+                            _as_decimal(item.quantity, "0.001"),
+                            _as_decimal(item.price, "0.01"),
+                            _as_decimal(item.line_total, "0.01"),
+                        )
+                        for index, item in enumerate(items, start=1)
+                    ],
+                )
         return document_id
 
     async def find_company_duplicate_document(
         self,
-        telegram_user: User,
+        telegram_user,
         project: Project,
         document: DocumentSchema,
         normalized_text: str | None = None,
     ) -> DuplicateCheckResult:
-        member_role = await self.company_service.ensure_member_role(telegram_user.id)
-        if member_role not in ADMIN_ROLES | WORKER_ROLES:
-            raise CompanyAccessError("Недостаточно прав для проверки документа.")
+        actor = await self.company_service._workspace_actor(telegram_user.id)
+        return await self.find_duplicate_for_user(actor, project.id, document, normalized_text)
 
-        active_company = await self.company_service.get_active_company_for_user(telegram_user.id)
-        if active_company.id != project.company_id:
-            raise CompanyAccessError("Нельзя проверять документ в проекте другой компании.")
-
+    async def find_duplicate_for_user(self, actor, project_id, document, normalized_text=None, *, connection=None):
         fields = _resolve_document_fields(document, normalized_text)
-        pool = get_pool()
-        async with pool.acquire() as connection:
+        async with workspace_transaction(connection) as connection:
+            member = await self._member(connection, actor)
+            row = await connection.fetchrow('SELECT id,company_id FROM projects WHERE id=$1 AND company_id=$2', project_id, member['company_id'])
+            if row is None:
+                raise CompanyAccessError('Проект другой компании недоступен.')
+            project = Project(row['id'], row['company_id'], '', 'active')
             if all(value is not None for value in (fields.document_number, fields.document_date, fields.total_amount, fields.vendor_key)):
                 duplicate_document_id = await self._find_exact_duplicate_document(
                     connection=connection,

@@ -3,7 +3,6 @@ from uuid import uuid4
 
 from aiogram import Bot
 from aiogram.types import PhotoSize
-from PIL import Image, ImageOps
 
 from app.config import TMP_DIR
 
@@ -27,16 +26,5 @@ class TelegramFileService:
             original_path.unlink(missing_ok=True)
 
     def _prepare_image_for_ocr(self, source_path: Path) -> Path:
-        prepared_path = TMP_DIR / f"{uuid4()}.jpg"
-        try:
-            with Image.open(source_path) as image:
-                image = ImageOps.exif_transpose(image).convert("RGB")
-                width, height = image.size
-                if width > OCR_MAX_WIDTH:
-                    resized_height = int(height * (OCR_MAX_WIDTH / width))
-                    image = image.resize((OCR_MAX_WIDTH, resized_height), Image.Resampling.LANCZOS)
-                image.save(prepared_path, format="JPEG", quality=OCR_JPEG_QUALITY, optimize=True)
-        except BaseException:
-            prepared_path.unlink(missing_ok=True)
-            raise
-        return prepared_path
+        from app.services.image_files import prepare_image
+        return prepare_image(source_path, TMP_DIR)

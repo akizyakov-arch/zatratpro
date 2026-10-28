@@ -1250,6 +1250,9 @@ async def handle_pending_text(message: Message) -> None:
     if message.from_user is None or not message.text:
         await message.answer('Поддерживаются кнопки главного меню, /start, /help, /join и фото/PDF документов.', reply_markup=await _main_menu_markup(message))
         return
+    from app.handlers.documents import handle_project_name
+    if await handle_project_name(message):
+        return
     pending_action = await pop_pending_action(message.from_user.id)
     if pending_action is None:
         await message.answer('Используй кнопки главного меню или отправь фото/PDF документа.', reply_markup=await _main_menu_markup(message))

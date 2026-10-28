@@ -10,18 +10,10 @@ from app.config import get_owner_telegram_id, get_settings
 from app.services.database import get_pool
 
 
-MANAGER_ROLE = "manager"
-EMPLOYEE_ROLE = "employee"
-MASTER_ROLE = "master"
-ADMIN_ROLES = {MANAGER_ROLE}
-WORKER_ROLES = {EMPLOYEE_ROLE}
-VALID_MEMBER_ROLES = {MANAGER_ROLE, EMPLOYEE_ROLE, MASTER_ROLE}
-EMPLOYEE_LIMIT = 10
-INVITE_TTL_HOURS = 72
-
-
-class CompanyAccessError(RuntimeError):
-    pass
+from app.services.company_policy import (
+    MANAGER_ROLE, EMPLOYEE_ROLE, MASTER_ROLE, ADMIN_ROLES, WORKER_ROLES,
+    VALID_MEMBER_ROLES, EMPLOYEE_LIMIT, INVITE_TTL_HOURS, CompanyAccessError,
+)
 
 
 @dataclass(slots=True)
