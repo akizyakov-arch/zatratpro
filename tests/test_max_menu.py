@@ -2,7 +2,7 @@
 import json
 import os
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -16,6 +16,11 @@ from app.services.advances import AdvanceService
 
 
 class MaxMenuTransportTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = patch('app.services.max_onboarding.MaxOnboardingService.clear_input', new=AsyncMock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def test_keyboard_uses_native_message_buttons_only_on_last_chunk(self):
         requests = []
         def transport(request):
@@ -45,7 +50,8 @@ class MaxMenuTransportTests(unittest.IsolatedAsyncioTestCase):
         for label in ('Главное меню', 'Деньги', 'Да, получил №1'):
             reply = (await handler.handle(message(123, label)))[1]
             self.assertEqual(reply, LINK_HELP)
-            self.assertFalse(hasattr(reply, 'buttons'))
+            self.assertIn(['Вступить по приглашению'], reply.buttons)
+            self.assertNotIn(['Деньги'], reply.buttons)
         handler.advances.receive.assert_not_called()
 
 

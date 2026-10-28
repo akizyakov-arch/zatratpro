@@ -1,6 +1,6 @@
 """Telegram profile adapter: account linking is available only in private chats."""
 from aiogram import F, Router
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command, CommandObject, CommandStart
 
 from app.ui.money import keyboard
 from app.services.account_links import AccountLinkService, AccountLinkError
@@ -101,5 +101,18 @@ async def claim_link(message, command: CommandObject):
         # to its existing internal user rather than create a duplicate person.
         await service.claim('telegram', str(message.from_user.id), command.args)
         await message.answer('Заявка создана. Подтвердите её в исходном аккаунте. До подтверждения доступ не выдан.')
+    except AccountLinkError as exc:
+        await message.answer(str(exc))
+
+
+@router.message(CommandStart(deep_link=True, magic=F.args.startswith('link_')))
+async def claim_link_start(message, command: CommandObject):
+    """Handle the link before generic /start can create a second person."""
+    if not await private(message):
+        return
+    try:
+        code = (command.args or '').removeprefix('link_')
+        await service.claim('telegram', str(message.from_user.id), code)
+        await message.answer('Запрос подключения Telegram создан. Вернитесь в исходный MAX-профиль, обновите его и подтвердите свой Telegram-аккаунт. После подтверждения отправьте здесь /start.')
     except AccountLinkError as exc:
         await message.answer(str(exc))

@@ -1,5 +1,5 @@
 """Accept company invitations from an authenticated MAX sender, without Telegram."""
-from app.services.account_links import identity
+from app.services.account_links import digest, identity
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.database import get_pool
 
@@ -11,6 +11,28 @@ def profile_text(value):
 
 
 class MaxOnboardingService:
+    async def code_kind(self, code):
+        if not isinstance(code, str) or not 1 <= len(code) <= 128:
+            return None
+        async with get_pool().acquire() as c:
+            invitation = await c.fetchval('SELECT 1 FROM company_invites WHERE code=$1', code.strip().upper())
+            link = await c.fetchval("SELECT 1 FROM account_link_requests WHERE code_hash=$1 AND target_platform='max'", digest(code))
+        # An ambiguous collision must be handled by the user's explicit choice.
+        return 'join' if invitation and not link else 'link' if link and not invitation else None
+
+    async def await_input(self, sender_id, mode):
+        if mode not in ('join', 'link') or type(sender_id) is not int or not 0 < sender_id < 2**63:
+            raise CompanyAccessError('Не удалось начать ввод кода.')
+        await get_pool().execute("""INSERT INTO max_onboarding_inputs(external_id,mode,expires_at)
+            VALUES($1,$2,clock_timestamp()+interval '15 minutes')
+            ON CONFLICT(external_id) DO UPDATE SET mode=EXCLUDED.mode,expires_at=EXCLUDED.expires_at""", str(sender_id), mode)
+
+    async def input_mode(self, sender_id):
+        return await get_pool().fetchval("SELECT mode FROM max_onboarding_inputs WHERE external_id=$1 AND expires_at>clock_timestamp()", str(sender_id))
+
+    async def clear_input(self, sender_id):
+        await get_pool().execute('DELETE FROM max_onboarding_inputs WHERE external_id=$1', str(sender_id))
+
     async def _attempt(self, external_id):
         # Invalid codes consume attempts too; the transaction survives join rollback.
         async with get_pool().acquire() as c, c.transaction():

@@ -2,7 +2,8 @@
 import re
 
 from app.max_bot.issue import IssueMenu
-from app.max_bot.menu import HOME, MAIN, PERIODS, MenuText, command_text, money_menu
+from app.max_bot.profile import ProfileMenu
+from app.max_bot.menu import HOME, MAIN, ONBOARDING, PERIODS, MenuText, command_text, money_menu
 
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
@@ -16,6 +17,7 @@ from app.services.report_periods import report_period_start
 
 HELP = ('FIINOPS · MAX\n'
         '/profile — профиль и связанные аккаунты\n'
+        '/link_telegram — подключить Telegram к текущему профилю\n'
         '/projects — открытые проекты\n'
         '/money — выдачи на закупки\n'
         '/balance — деньги у сотрудников и долги компании\n'
@@ -27,10 +29,12 @@ HELP = ('FIINOPS · MAX\n'
         '/invite — приглашение сотруднику (для руководителя)\n'
         '/link КОД — подключить существующую учётную запись\n'
         'Загрузка чеков через MAX будет добавлена следующим этапом.')
-LINK_HELP = ('Можно вступить в компанию без Telegram: отправьте /join КОД приглашения.\n'
-             'Если профиль FIINOPS уже есть в Telegram, подключите его: в Telegram откройте «Мой профиль», '
-             'получите код для MAX и отправьте сюда /link КОД. Затем подтвердите аккаунт '
-             'в Telegram. Компания, роль и история останутся прежними.')
+LINK_HELP = MenuText(
+    'Добро пожаловать в FIINOPS!\n'
+    'Впервые здесь? Нажмите «Вступить по приглашению» и отправьте код компании.\n'
+    'Уже работаете в Telegram? Нажмите «Подключить профиль Telegram» и отправьте код '
+    'из раздела «Мой профиль» в Telegram. Затем подтвердите подключение там же.\n'
+    'Компания, роль и история будут общими для обоих мессенджеров.', ONBOARDING)
 
 
 def event_message(update):
@@ -41,7 +45,12 @@ def event_message(update):
     if kind == 'bot_started':
         sender = update.get('user')
         payload = update.get('payload')
-        text = '/link ' + payload[5:] if isinstance(payload, str) and re.fullmatch(r'link_[A-Za-z0-9]{12}', payload) else '/start'
+        text = '/start'
+        if isinstance(payload, str):
+            if re.fullmatch(r'link_[A-Za-z0-9]{12}', payload):
+                text = '/link ' + payload[5:]
+            elif re.fullmatch(r'join_(?:[A-Za-z0-9]{10}|[A-Za-z0-9]{12})', payload):
+                text = '/join ' + payload[5:]
     elif kind == 'message_created':
         message = update.get('message')
         if not isinstance(message, dict) or not isinstance(message.get('recipient'), dict):
@@ -67,6 +76,7 @@ class MaxHandler:
         self.advances = AdvanceService()
         self.directory = MemberDirectory()
         self.issue_menu = IssueMenu()
+        self.profile_menu = ProfileMenu()
 
     async def handle(self, update):
         event = event_message(update)
@@ -75,6 +85,18 @@ class MaxHandler:
         sender, text = event
         text = command_text(text)
         try:
+            onboarding = MaxOnboardingService()
+            if text.startswith('/'):
+                await onboarding.clear_input(sender)
+            else:
+                mode = await onboarding.input_mode(sender)
+                if mode:
+                    text = f'/{mode} {text}'
+                elif await self.links.resolve('max', str(sender)) is None:
+                    if re.fullmatch(r'[A-Za-z0-9]{10,12}', text):
+                        kind = await onboarding.code_kind(text)
+                        if kind:
+                            text = f'/{kind} {text}'
             result = None
             if not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel'):
                 actor = await self.links.resolve('max', str(sender))
@@ -89,27 +111,40 @@ class MaxHandler:
                 result = MenuText(result, [HOME])
             return sender, result
         except (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError, ValueError) as exc:
-            return sender, str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
+            body = str(exc) if isinstance(exc, (AccountLinkError, AdvanceError, MembershipError, CompanyAccessError, WorkspaceError)) else 'Проверьте команду и номер выдачи. /help — помощь.'
+            if text.split(maxsplit=1)[:1] in (['/link'], ['/join']):
+                body = MenuText(body + '\nКод приглашения выдаёт руководитель или владелец. Код подключения берётся в профиле Telegram, действует 5 минут; новый код заменяет предыдущий.', ONBOARDING)
+            return sender, body
 
     async def _main_buttons(self, actor):
         try:
             member = await self.advances.membership(actor)
         except AdvanceError:
-            return MAIN
+            return MAIN + [['Вступить по приглашению']]
         return MAIN + [['Пригласить сотрудника']] if member['role'] == 'manager' else MAIN
 
     async def _command(self, sender, text, *, profile=None):
         parts = text.split(maxsplit=1)
         command, arg = (parts[0].lower(), parts[1].strip() if len(parts) > 1 else '') if parts else ('', '')
+        if command in ('/join', '/link') and not arg:
+            await MaxOnboardingService().await_input(sender, command[1:])
+            prompt = ('Отправьте код приглашения в компанию отдельным сообщением. Его выдаёт руководитель или владелец.'
+                      if command == '/join' else
+                      'В Telegram откройте «Мой профиль» → «Код для подключения MAX». Отправьте сюда свежий код отдельным сообщением. После этого подтвердите подключение в Telegram.')
+            return MenuText(prompt, ONBOARDING)
+        if command == '/link' and await MaxOnboardingService().code_kind(arg) == 'join':
+            return MenuText('Это код приглашения в компанию. Нажмите «Вступить по приглашению» и отправьте код ещё раз. Если профиль уже есть в Telegram, получите код подключения в «Мой профиль».', ONBOARDING)
+        if command == '/join' and await MaxOnboardingService().code_kind(arg) == 'link':
+            return MenuText('Это код подключения профиля. Нажмите «Подключить профиль Telegram» и отправьте код ещё раз.', ONBOARDING)
         if command == '/join':
             result = await MaxOnboardingService().join(sender, arg, profile=profile)
+            await MaxOnboardingService().clear_input(sender)
             role = {'manager': 'руководитель', 'employee': 'сотрудник'}[result['role']]
             return MenuText(f"Вы в компании «{result['company'].name}». Роль: {role}.\nВыберите раздел.", await self._main_buttons(result['user_id']))
         if command == '/link':
-            if not arg:
-                return LINK_HELP
             await self.links.claim('max', str(sender), arg)
-            return 'Заявка создана или уже принята ранее. Если ещё не подтвердили этот MAX-аккаунт, откройте исходный Telegram-профиль. До подтверждения доступ не выдан. После подтверждения: /profile.'
+            await MaxOnboardingService().clear_input(sender)
+            return MenuText('Заявка создана или уже принята ранее. Если ещё не подтвердили этот MAX-аккаунт, откройте исходный Telegram-профиль. До подтверждения доступ не выдан. После подтверждения нажмите «Главное меню».', [HOME])
         actor = await self.links.resolve('max', str(sender))
         if actor is None:
             return LINK_HELP
@@ -118,7 +153,7 @@ class MaxHandler:
             if member['role'] != 'manager':
                 raise AdvanceError('Приглашать сотрудников может только руководитель компании.')
             invite = await WorkspaceService().invite_employee(actor)
-            return MenuText(f"Приглашение сотруднику действует 72 часа и используется один раз.\nОтправьте человеку команду для нашего MAX-бота:\n/join {invite['code']}\nНовый код заменяет предыдущее неиспользованное приглашение сотрудника.", [HOME])
+            return MenuText(f"Приглашение сотруднику действует 72 часа и используется один раз.\nМожно выбрать Telegram или MAX.\nКод: {invite['code']}\nВ MAX нажмите «Вступить по приглашению» и отправьте код отдельным сообщением.\nМожно выбрать Telegram и отправить /join {invite['code']}\nНовый код заменяет предыдущее неиспользованное приглашение сотрудника.", [HOME])
         if command == '/start':
             return MenuText('FIINOPS · Главное меню\nВыберите раздел.', await self._main_buttons(actor))
         if command == '/help':
@@ -127,8 +162,17 @@ class MaxHandler:
             await self.directory.projects(actor)
             return MenuText('Отчёты по деньгам\nВыберите период (UTC).', PERIODS)
         if command == '/profile':
-            accounts = await self.links.accounts('max', str(sender))
-            return f'Профиль FIINOPS №{actor}\nСвязанные аккаунты:\n' + '\n'.join(f"{a['platform']}: {a['external_id']}" for a in accounts)
+            return await self.profile_menu.show(sender, actor)
+        if command == '/link_telegram':
+            return await self.profile_menu.issue_telegram(sender)
+        if command in ('/link_confirm', '/link_cancel'):
+            if not re.fullmatch(r'[a-f0-9]{32}', arg):
+                raise AccountLinkError('Откройте профиль и используйте актуальную кнопку привязки.')
+            if command == '/link_confirm':
+                await self.links.confirm('max', str(sender), arg)
+            else:
+                await self.links.cancel('max', str(sender), arg)
+            return await self.profile_menu.show(sender, actor)
         if command in ('/projects', 'проекты'):
             projects = await self.directory.projects(actor)
             return 'Открытые проекты:\n' + ('\n'.join(f"№{p['id']} · {p['name']}" for p in projects) or 'Проектов пока нет.')
