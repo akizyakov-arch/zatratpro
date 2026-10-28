@@ -10,7 +10,7 @@ from app.services.ai_report_catalog import REPORTS
 from app.services.name_matching import normalized,similar_names
 import re
 import hashlib
-from app.config import get_settings
+from app.config import get_recognition_settings as get_settings
 from app.services.database import get_pool
 from app.services.workspace import WorkspaceService, WorkspaceError
 

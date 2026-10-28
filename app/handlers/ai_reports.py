@@ -5,7 +5,7 @@ from aiogram import F,Router
 from aiogram.filters import Command,BaseFilter
 from aiogram.types import BufferedInputFile,InlineKeyboardMarkup,InlineKeyboardButton
 from app.services.ai_reports import report_actor,parse_question,ReportIntent,ReportQuestionError,NameChoiceRequired,intent_key
-from app.services.ai_report_engine import build_report
+from app.application.ai_reports import AIReportCommands
 from app.services.ai_report_sessions import session,remember,exit_mode
 from app.services.speech import transcribe_voice,SpeechError,MAX_VOICE_BYTES,MAX_VOICE_SECONDS
 from app.services.web_auth import WebAuthService,WebAuthError
@@ -89,10 +89,8 @@ async def ask_report(message):
         else:
             text=message.text.split(maxsplit=1)[1] if message.text.startswith('/ask') else message.text
         actor=await report_actor(message.from_user.id)
-        saved=await session(actor)
-        previous=ReportIntent.model_validate_json(saved['intent']) if saved and saved['intent'] else None
-        intent=await parse_question(text,previous)
-        await deliver_report(message,actor,intent)
+        reply=await AIReportCommands().question(actor,text,limited=True)
+        await render_reply(message,actor,reply,reply.excel)
     except NameChoiceRequired as exc:
         await show_name_choices(message,actor,exc)
     except (ReportQuestionError,SpeechError,WebAuthError,WorkspaceError,AdvanceError) as exc:
@@ -113,19 +111,25 @@ async def show_name_choices(message,actor,error):
     await message.answer(f'Для «{error.query}» есть похожие или совпадающие названия. Выбери '+('проект' if error.kind=='project' else 'сотрудника')+':',reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
-async def deliver_report(message,actor,intent):
-    await remember(actor,intent)
-    result=await build_report(actor,intent)
-    current=await WorkspaceService().context(actor)
-    if current['role']!='manager' or current['company_id']!=result.company_id:
-        raise ReportQuestionError('Доступ к компании изменился. Повтори запрос.')
-    for chunk in chunk_message(result.text):await message.answer(chunk)
-    if intent.excel:
-        current=await WorkspaceService().context(actor)
-        if current['role']!='manager' or current['company_id']!=result.company_id:
-            raise ReportQuestionError('Доступ к компании изменился. Повтори запрос.')
-        await message.answer_document(BufferedInputFile(result.workbook(),filename='ai-report.xlsx'))
+async def render_reply(message, actor, reply, excel=False):
+    if reply.choices:
+        buttons = [[InlineKeyboardButton(text=r['name'][:100]+' · №'+str(r['id']),
+                    callback_data=f'ai:select:{reply.kind}:{r["id"]}:{reply.key}')] for r in reply.choices]
+        buttons.append([InlineKeyboardButton(text='Отмена',callback_data='ai:exit')])
+        await message.answer(reply.text,reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        return
+    for chunk in chunk_message(reply.text):
+        await message.answer(chunk)
+    if excel and reply.result:
+        ctx=await AIReportCommands().authorize(actor)
+        if ctx['company_id']!=reply.result.company_id:
+            raise ReportQuestionError('Доступ к компании изменился.')
+        await message.answer_document(BufferedInputFile(reply.result.workbook(),filename='ai-report.xlsx'))
     await message.answer('Можно уточнить вопрос текстом или голосом.',reply_markup=EXIT)
+
+
+async def deliver_report(message,actor,intent):
+    await render_reply(message,actor,await AIReportCommands().run(actor,intent),intent.excel)
 
 
 class ReportTextFilter(BaseFilter):
@@ -154,22 +158,9 @@ async def choose_report_name(callback):
     await callback.answer()
     try:
         actor=await report_actor(callback.from_user.id)
-        saved=await session(actor)
-        if not saved or not saved['enabled'] or not saved['intent']:
-            raise ReportQuestionError('Этот запрос истёк. Повтори вопрос.')
         _,_,kind,raw_id,key=callback.data.split(':')
-        intent=ReportIntent.model_validate_json(saved['intent'])
-        if key!=intent_key(intent):raise ReportQuestionError('Это кнопка от предыдущего запроса. Повтори вопрос.')
-        selected=int(raw_id)
-        if kind not in ('project','employee') or selected<=0:raise ReportQuestionError('Некорректный выбор.')
-        current=await WorkspaceService().context(actor)
-        if kind=='project':
-            name=await get_pool().fetchval('SELECT name FROM projects WHERE id=$1 AND company_id=$2',selected,current['company_id'])
-        else:
-            name=await get_pool().fetchval("SELECT COALESCE(NULLIF(trim(concat_ws(' ',u.first_name,u.last_name)),''),u.username,'Пользователь №'||u.id) FROM users u JOIN company_members cm ON cm.user_id=u.id WHERE u.id=$1 AND cm.company_id=$2",selected,current['company_id'])
-        if name is None:raise ReportQuestionError('Этот вариант больше недоступен.')
-        setattr(intent,kind,name);setattr(intent,kind+'_id',selected)
-        await deliver_report(callback.message,actor,intent)
+        reply=await AIReportCommands().choose(actor,kind,int(raw_id),key)
+        await render_reply(callback.message,actor,reply,reply.excel)
     except NameChoiceRequired as exc:
         await show_name_choices(callback.message,actor,exc)
     except (ReportQuestionError,WorkspaceError,AdvanceError,ValueError) as exc:

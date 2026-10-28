@@ -104,3 +104,12 @@ class RecognitionSettings(BaseSettings):
 
 def get_recognition_settings():
     return get_settings() if get_settings.cache_info().currsize else RecognitionSettings()
+
+
+class SpeechSettings(BaseSettings):
+    model_config = DatabaseSettings.model_config
+    assemblyai_api_key: str = Field(default='', validation_alias=AliasChoices('ASSEMBLYAI_API_KEY', 'ASSAMBLY'))
+
+
+def get_speech_settings():
+    return get_settings() if get_settings.cache_info().currsize else SpeechSettings()

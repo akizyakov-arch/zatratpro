@@ -40,7 +40,7 @@ flowchart LR
 | Денежные отчёты | `services/money_reports.py` | Telegram/MAX, панель и выгрузки |
 | Вступление по коду | `services/company_invitations.py`: `CompanyInvitations` | Telegram и MAX onboarding |
 | Привязка аккаунтов | `services/account_links.py`: `AccountLinkService` | Telegram и MAX |
-| ИИ-отчёты | `services/ai_reports.py`, `ai_report_engine.py` | Сейчас Telegram; других экранов пока нет |
+| ИИ-отчёты | `services/ai_reports.py`, `ai_report_engine.py` | Telegram и MAX; общий диалог `application/ai_reports.py` |
 
 Готовая веб-форма передаёт поля сразу в общий сервис операции. Мессенджер получает
 поля последовательно через общий сценарий. Оба пути заканчиваются одними

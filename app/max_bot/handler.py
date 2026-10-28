@@ -3,6 +3,7 @@ import re
 import hashlib
 
 from app.max_bot.issue import IssueMenu
+from app.max_bot.ai_reports import AIReportMenu
 from app.max_bot.documents import DocumentMenu
 from app.max_bot.profile import ProfileMenu
 from app.max_bot.workspace import WorkspaceMenu
@@ -30,7 +31,8 @@ HELP = ('FIINOPS · MAX\n'
         '/balance — деньги у сотрудников и долги компании\n'
         '/advance ID — карточка выдачи\n'
         '/receive ID — подтвердить фактическое получение денег\n'
-        '/reports — выбрать период отчёта\n'
+        '/reports — отчёты и ИИ-запросы\n'
+        '/ask ВОПРОС — ИИ-отчёт текстом или голосовым сообщением\n'
         '/report [month|week|all_time] — денежный отчёт\n'
         '/join КОД — вступить в компанию без Telegram\n'
         '/invite — приглашение сотруднику (для руководителя)\n'
@@ -100,6 +102,7 @@ class MaxHandler:
         self.advances = AdvanceService()
         self.directory = MemberDirectory()
         self.issue_menu = IssueMenu()
+        self.ai_menu = AIReportMenu()
         self.profile_menu = ProfileMenu()
         self.workspace_menu = WorkspaceMenu()
 
@@ -130,13 +133,24 @@ class MaxHandler:
                 actor = await self.links.resolve('max', str(sender))
                 if actor is None:
                     return sender, LINK_HELP
-                result = await self.document_menu.handle(actor, sender, text, update)
+                if text.startswith('/') and not text.startswith(('/ask', '/ai_')):
+                    from app.services.ai_report_sessions import exit_mode
+                    await exit_mode(actor)
+                # Audio and explicit AI commands bypass document/name/amount inputs.
+                if text.startswith(('/ask', '/ai_')) or any(isinstance(a, dict) and a.get('type') == 'audio' for a in (body.get('attachments') or [])):
+                    result = await self.ai_menu.handle(actor, text, update)
+                if result is None:
+                    result = await self.document_menu.handle(actor, sender, text, update)
                 if result is None:
                     result = await self.workspace_menu.handle(actor, text, event_id)
             if result is None and (not text.startswith('/') or text in ('/issue', '/issue_resume', '/cancel') or text.startswith('/issue_')):
                 actor = await self.links.resolve('max', str(sender))
                 if actor is not None:
                     result = await self.issue_menu.handle(actor, text, event_id)
+            if result is None and text.split(maxsplit=1)[:1] not in (['/join'], ['/link']):
+                actor = await self.links.resolve('max', str(sender))
+                if actor is not None:
+                    result = await self.ai_menu.handle(actor, text, update, plain=True)
             if result is None:
                 profile = update.get('user') if update.get('update_type') == 'bot_started' else update.get('message', {}).get('sender')
                 result = await self._command(sender, text, profile=profile)
@@ -193,7 +207,8 @@ class MaxHandler:
             return MenuText(HELP, await self._main_buttons(actor))
         if command == '/reports':
             await self.directory.projects(actor)
-            return MenuText('Отчёты по деньгам\nВыберите период (UTC).', PERIODS)
+            buttons = [[MenuButton('ИИ-отчёты', '/ai_reports')]] if (await self.advances.membership(actor))['role'] == 'manager' else []
+            return MenuText('Отчёты\nВыберите ИИ-запрос или период денежного отчёта (UTC).', buttons + PERIODS)
         if command == '/profile':
             return await self.profile_menu.show(sender, actor)
         if command == '/link_telegram':
