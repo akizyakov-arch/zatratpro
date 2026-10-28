@@ -5,17 +5,18 @@ from datetime import datetime,timezone
 
 from app.services.advances import AdvanceService,AdvanceError,money,decision_reason
 from app.services.database import get_pool
+from app.services.workspace import workspace_transaction
 
 
 class BusinessCardService:
     def __init__(self):
         self.access=AdvanceService()
 
-    async def register(self,actor,name,last4):
+    async def register(self,actor,name,last4,*,connection=None):
         name=name.strip()
         if not name or len(name)>80 or not re.fullmatch(r'[0-9]{4}',last4) or re.search(r'(?:[0-9][ -]?){13,19}',name):
             raise AdvanceError('Укажите название карты и только последние 4 цифры. Полный номер не нужен.')
-        async with get_pool().acquire() as c,c.transaction():
+        async with workspace_transaction(connection) as c:
             member=await self.access._lock_member(c,actor)
             if member['role']!='manager': raise AdvanceError('Карты добавляет руководитель.')
             return await c.fetchval('INSERT INTO business_cards(company_id,name,last4,created_by) VALUES($1,$2,$3,$4) ON CONFLICT(company_id,name,last4) DO UPDATE SET name=EXCLUDED.name RETURNING id',member['company_id'],name,last4,actor)
@@ -63,9 +64,9 @@ class BusinessCardService:
             if row['rejected_at'] is not None: raise AdvanceError('Расход уже отклонён. Нужна исправленная заявка.')
             await c.execute('UPDATE card_expenses SET approved_by=$2,approved_at=clock_timestamp() WHERE id=$1 AND approved_at IS NULL',eid,actor)
 
-    async def reject(self, actor, eid, reason):
+    async def reject(self, actor, eid, reason, *, connection=None):
         reason = decision_reason(reason)
-        async with get_pool().acquire() as c, c.transaction():
+        async with workspace_transaction(connection) as c:
             member = await self.access._lock_member(c, actor)
             if member['role'] != 'manager':
                 raise AdvanceError('Расходы проверяет руководитель.')

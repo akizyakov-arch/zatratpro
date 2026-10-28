@@ -12,7 +12,7 @@ from app.handlers.profile import claim_link_start, claim_link
 from app.handlers.start import start_command
 from app.max_bot.handler import MaxHandler
 from app.services.account_links import AccountLinkService, AccountLinkError
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 from app.services.max_onboarding import MaxOnboardingService
 from app.services.workspace import WorkspaceService
 

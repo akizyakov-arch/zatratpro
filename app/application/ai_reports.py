@@ -4,6 +4,7 @@ from app.services.ai_reports import ReportIntent, ReportQuestionError, NameChoic
 from app.services.ai_report_engine import build_report
 from app.services.ai_report_sessions import context, session, remember, exit_mode
 from app.services.database import get_pool
+from app.services.workspace import WorkspaceError
 from app.services.speech import transcribe_voice, MAX_VOICE_BYTES, SpeechError
 from app.services.web_auth import WebAuthService, WebAuthError
 
@@ -27,20 +28,27 @@ class AIReply:
 
 class AIReportCommands:
     async def authorize(self, actor):
-        return await context(actor)
+        try:
+            return await context(actor)
+        except WorkspaceError as exc:
+            raise ReportQuestionError(str(exc)) from exc
+
+    async def busy(self, actor):
+        return await get_pool().fetchval("""SELECT EXISTS(SELECT 1 FROM workspace_flows WHERE actor=$1
+            AND step IN ('name','confirm') AND expires_at>clock_timestamp()) OR
+            EXISTS(SELECT 1 FROM advance_issue_drafts WHERE actor=$1 AND step NOT IN ('done','cancelled')
+            AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM pending_actions pa WHERE pa.actor_id=$1 AND pa.expires_at>clock_timestamp())""", actor)
 
     async def enter(self, actor):
         await self.authorize(actor)
-        busy = await get_pool().fetchval("""SELECT EXISTS(SELECT 1 FROM workspace_flows WHERE actor=$1
-            AND step IN ('name','confirm') AND expires_at>clock_timestamp()) OR
-            EXISTS(SELECT 1 FROM advance_issue_drafts WHERE actor=$1 AND step NOT IN ('done','cancelled')
-            AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM pending_actions pa JOIN external_accounts a
-            ON a.platform='telegram' AND a.external_id=pa.telegram_user_id::text
-            WHERE a.user_id=$1 AND pa.expires_at>clock_timestamp())""", actor)
+        busy = await self.busy(actor)
         if busy:
             raise ReportQuestionError('Сначала завершите текущее действие или отмените ввод.')
         await remember(actor)
         return AIReply(EXAMPLES)
+
+    async def navigate(self, actor):
+        await exit_mode(actor)
 
     async def exit(self, actor):
         await self.authorize(actor)

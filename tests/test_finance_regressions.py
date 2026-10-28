@@ -7,7 +7,7 @@ from datetime import timedelta
 from db_fixture import DatabaseFixture
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.business_cards import BusinessCardService
-from app.services.documents import DocumentService
+from app.adapters.telegram.documents import DocumentService
 
 
 @unittest.skipUnless(os.environ.get('RUN_DATABASE_TESTS') == '1', 'PostgreSQL integration tests disabled')

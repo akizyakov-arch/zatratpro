@@ -15,10 +15,10 @@ from app.config import get_settings
 from app.handlers import documents as handlers
 from app.handlers.start import start_command
 from app.schemas.document import DocumentSchema
-from app.services.companies import CompanyAccessError, CompanyService
+from app.adapters.telegram.companies import CompanyAccessError, CompanyService
 from app.services.database import init_db, close_db
-from app.services.documents import DocumentService
-from app.services.projects import ProjectService
+from app.adapters.telegram.documents import DocumentService
+from app.adapters.telegram.projects import ProjectService
 from app.state.pending_actions import set_pending_action, pop_pending_action
 from app.state.pending_documents import (
     PendingDocument, begin_document_flow, get_pending_document,

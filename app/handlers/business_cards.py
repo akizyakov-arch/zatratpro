@@ -8,11 +8,14 @@ from app.ui.money import keyboard, send_details
 from app.services.finance_directory import FinanceDirectory
 from app.services.advances import AdvanceError
 from app.services.business_cards import BusinessCardService
-from app.state.pending_actions import get_pending_action,pop_pending_action,set_pending_action
+from app.state.pending_actions import get_pending_action
+from app.application.financial_inputs import FinancialInputs
 from app.ui.main_menu import MENU_BUTTONS
 from app.state.locks import serialize_user
 
 router=Router()
+router.message.filter(F.chat.type == 'private')
+router.callback_query.filter(F.message.chat.type == 'private')
 service=BusinessCardService()
 directory=FinanceDirectory()
 MENU='Бизнес-карты'
@@ -46,10 +49,8 @@ async def card_callback(callback):
         parts=callback.data.split(':');action=parts[1]
         await callback.answer()
         if action=='new':
-            member = await directory.membership(uid)
-            if member['role']!='manager': raise AdvanceError('Карты добавляет руководитель.')
-            await set_pending_action(callback.from_user.id,'card_create')
-            await callback.message.answer('Введите название и последние 4 цифры, например: Основная 1234. Полный номер, срок и CVV не отправляйте. /cancel — отмена.')
+            result=await FinancialInputs(cards=service).start(uid,'card_create')
+            await callback.message.answer(result.text)
         elif action=='documents':
             docs=await service.documents(uid)
             if not docs:
@@ -69,10 +70,8 @@ async def card_callback(callback):
             await service.approve(uid,int(parts[2]))
             await callback.message.answer('Карточный расход уже учтён.')
         elif action=='reject':
-            member = await directory.membership(uid)
-            if member['role'] != 'manager': raise AdvanceError('Расходы проверяет руководитель.')
-            await set_pending_action(callback.from_user.id,'card_reject',{'expense':int(parts[2])})
-            await callback.message.answer('Укажите причину отклонения (до 1000 символов). /cancel — отмена ввода.')
+            result=await FinancialInputs(cards=service).start(uid,'card_reject',{'expense':int(parts[2])})
+            await callback.message.answer(result.text)
     except (AdvanceError,ValueError,IndexError) as exc:
         await callback.message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Откройте раздел заново.')
 
@@ -89,19 +88,8 @@ async def create_card(message, pending_action=None):
     state = pending_action or await get_pending_action(message.from_user.id)
     if state is None or state.action not in ('card_create','card_reject'):
         return
-    current = await get_pending_action(message.from_user.id)
-    if current is None or current.revision != state.revision:
-        await message.answer('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
-        return
     try:
-        if state.action == 'card_reject':
-            await service.reject(await actor(message.from_user), state.payload['expense'], message.text)
-            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
-            await message.answer('Расход отклонён. Причина доступна сотруднику в разделе «Бизнес-карты»; чек можно привязать заново.')
-            return
-        name,last4=message.text.strip().rsplit(maxsplit=1)
-        await service.register(await actor(message.from_user),name,last4)
-        await pop_pending_action(message.from_user.id, expected_revision=state.revision)
-        await message.answer('Карта добавлена. Храним только название и последние 4 цифры.')
-    except (AdvanceError,ValueError) as exc:
-        await message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Формат: Основная 1234. /cancel — отмена.')
+        result=await FinancialInputs(cards=service).submit(await actor(message.from_user),message.text,state.revision)
+        await message.answer(result.text)
+    except AdvanceError as exc:
+        await message.answer(str(exc))

@@ -7,7 +7,7 @@ import asyncpg
 
 from app.max_bot.client import MaxAPIError
 from app.max_bot.handler import MaxHandler, event_message
-from app.services.database import get_pool
+from app.services import max_delivery as store
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,12 @@ async def process_batch(client, handler, updates, *, check_lease=None):
 async def _poll_locked(client, bot_id, lease, *, timeout, once):
     async def check_lease():
         try:
-            await lease.fetchval('SELECT 1')
+            await store.check(lease)
         except Exception:
             raise PollingLeaseLost() from None
 
     handler = MaxHandler(notify=client.send)
-    marker = await lease.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=$1', bot_id)
+    marker = await store.marker(lease,bot_id)
     pending = None
     failures = 0
     while True:
@@ -70,8 +70,7 @@ async def _poll_locked(client, bot_id, lease, *, timeout, once):
             # marker is initially None. Recheck authorization on each retry.
             await process_batch(client, handler, pending, check_lease=check_lease)
             if next_marker is not None:
-                await lease.execute('''INSERT INTO max_poll_offsets(bot_id,marker) VALUES($1,$2)
-                    ON CONFLICT(bot_id) DO UPDATE SET marker=EXCLUDED.marker,updated_at=clock_timestamp()''', bot_id, next_marker)
+                await store.checkpoint(lease,bot_id,next_marker)
                 marker = next_marker
             pending = None
             failures = 0
@@ -90,9 +89,9 @@ async def _poll_locked(client, bot_id, lease, *, timeout, once):
 
 
 async def poll(client, bot_id, *, timeout=30, once=False):
-    async with get_pool().acquire() as lease:
+    async with store.acquire_lease() as lease:
         key = f'fiinops:max-poll:{bot_id}'
-        if not await lease.fetchval('SELECT pg_try_advisory_lock(hashtextextended($1,0))', key):
+        if not await store.lock(lease,key):
             raise RuntimeError('Для этого бота MAX уже работает другой polling-процесс.')
         lost = asyncio.Event()
         worker = None
@@ -120,7 +119,7 @@ async def poll(client, bot_id, *, timeout=30, once=False):
             if not lost.is_set():
                 try:
                     lease.remove_termination_listener(disconnected)
-                    await lease.execute('SELECT pg_advisory_unlock(hashtextextended($1,0))', key)
+                    await store.unlock(lease,key)
                 except Exception:
                     # A failed unlock must not leave a pooled session locked.
                     try:

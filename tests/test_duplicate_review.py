@@ -4,9 +4,9 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from db_fixture import DatabaseFixture
-from app.services.documents import DocumentService
-from app.services.projects import ProjectService
-from app.services.views import ViewService
+from app.adapters.telegram.documents import DocumentService
+from app.adapters.telegram.projects import ProjectService
+from app.adapters.telegram.views import ViewService
 from app.services.web_reports import WebReportService
 
 

@@ -23,9 +23,9 @@ from app.services.advances import AdvanceError, AdvanceService
 from app.services.workspace import WorkspaceService
 from app.services.workspace_flow import WorkspaceFlow
 from app.services.advance_issue_flow import AdvanceIssueFlow
-from app.services.documents import DocumentService
+from app.adapters.telegram.documents import DocumentService
 from app.services.reporting import ReportService
-from app.services.views import ViewService
+from app.adapters.telegram.views import ViewService
 from test_max_adapter import message as max_message
 
 
@@ -254,6 +254,7 @@ class ApplicationCoreTests(DatabaseFixture):
         owner = await AccountLinkService().resolve('telegram', str(self.owner.id))
         admin = await WorkspaceFlow().start(owner, 'create_company')
         await set_pending_action(self.manager.id, 'advance_issue', {'employee':employee, 'project':self.project.id, 'key':'old-telegram'})
+        await self.pool.execute("UPDATE pending_actions p SET telegram_user_id=a.external_id::bigint FROM external_accounts a WHERE a.platform='telegram' AND a.user_id=p.actor_id")
         await self.pool.execute('DROP VIEW max_workspace_flows; ALTER TABLE workspace_flows RENAME TO max_workspace_flows; DROP INDEX advance_issue_drafts_current')
         migration = (Path(__file__).parents[1] / 'db/migrations/023_shared_application_flows.sql').read_text()
         async with self.pool.acquire() as c, c.transaction():
@@ -301,6 +302,7 @@ class ApplicationCoreTests(DatabaseFixture):
         await set_pending_action(self.owner.id, 'create_company')
         await set_pending_action(self.manager.id, 'create_project')
         await self.pool.execute("UPDATE pending_actions SET revision='legacy'")
+        await self.pool.execute("UPDATE pending_actions p SET telegram_user_id=a.external_id::bigint FROM external_accounts a WHERE a.platform='telegram' AND a.user_id=p.actor_id")
         await self.pool.execute('DROP VIEW max_workspace_flows; ALTER TABLE workspace_flows RENAME TO max_workspace_flows; DROP INDEX advance_issue_drafts_current')
         async with self.pool.acquire() as c, c.transaction():
             await c.execute((Path(__file__).parents[1] / 'db/migrations/023_shared_application_flows.sql').read_text())

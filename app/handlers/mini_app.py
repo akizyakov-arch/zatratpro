@@ -2,7 +2,7 @@
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from app.services.companies import CompanyService
+from app.adapters.telegram.companies import CompanyService
 from app.web.config import mini_app_url
 
 router = Router()

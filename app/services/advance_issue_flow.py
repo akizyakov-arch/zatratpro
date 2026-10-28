@@ -28,6 +28,7 @@ class AdvanceIssueFlow:
                 return dict(row)
             row = await c.fetchrow('SELECT * FROM advance_issue_drafts WHERE actor=$1 ORDER BY id DESC LIMIT 1 FOR UPDATE', actor)
             if action == 'start':
+                await c.execute('DELETE FROM pending_actions WHERE actor_id=$1',actor)
                 await c.execute("UPDATE workspace_flows SET step='cancelled' WHERE actor=$1 AND step IN ('name','confirm')", actor)
                 await c.execute("UPDATE advance_issue_drafts SET step='cancelled' WHERE actor=$1 AND step NOT IN ('done','cancelled')", actor)
                 row = await c.fetchrow("INSERT INTO advance_issue_drafts(actor,platform,company_id,step) VALUES($1,$2,$3,'employee') RETURNING *", actor, platform, member['company_id'])

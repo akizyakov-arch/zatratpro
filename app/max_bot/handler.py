@@ -13,7 +13,7 @@ from app.max_bot.menu import HOME, ONBOARDING, PERIODS, CALLBACK_PREFIX, MenuBut
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.member_directory import MemberDirectory
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 from app.services.max_onboarding import MaxOnboardingService
 from app.services.workspace import WorkspaceError, WorkspaceService
 from app.services.membership import MembershipError
@@ -247,12 +247,8 @@ class MaxHandler:
                     result.buttons.insert(1, ['Продолжить выдачу'])
             return result
         if command == '/balance':
-            rows = await self.advances.balances(actor)
-            lines = ['Деньги: получено − учтённые расходы − подтверждённые возвраты.']
-            for row in rows:
-                name = ' '.join(p for p in (row['first_name'], row['last_name']) if p) or f"Сотрудник №{row['employee_id']}"
-                lines.append(f"{name}: у сотрудника {max(row['balance'], 0):.2f} RUB; компания должна {max(-row['balance'], 0):.2f} RUB; ожидает получения {row['pending']:.2f} RUB.")
-            return '\n'.join(lines) if rows else 'Выдач пока нет. Остаток: 0.00 RUB.'
+            from app.services.finance_formatters import balance_text
+            return balance_text(await self.advances.balances(actor))
         if command in ('/advance', '/receive', '/receive_prompt'):
             if not re.fullmatch(r'[1-9][0-9]{0,17}', arg):
                 return 'Формат: /advance ID или /receive ID. Получение подтверждайте только после фактической передачи денег.'

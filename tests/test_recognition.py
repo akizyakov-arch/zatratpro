@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from db_fixture import DatabaseFixture
-from app.services.recognition import DeepSeekVisionService, create_recognizer, get_provider_name, set_provider
+from app.services.recognition import DeepSeekVisionService, create_recognizer
+from app.adapters.telegram.recognition import get_provider_name, set_provider
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 
 

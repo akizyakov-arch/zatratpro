@@ -15,10 +15,10 @@ from app.config import get_settings
 from app.handlers import documents as handlers
 from app.handlers.start import start_command
 from app.schemas.document import DocumentSchema
-from app.services.companies import CompanyAccessError, CompanyService
+from app.adapters.telegram.companies import CompanyAccessError, CompanyService
 from app.services.database import init_db, close_db
-from app.services.documents import DocumentService
-from app.services.projects import ProjectService
+from app.adapters.telegram.documents import DocumentService
+from app.adapters.telegram.projects import ProjectService
 from app.state.pending_actions import set_pending_action, pop_pending_action
 from app.state.pending_documents import (
     PendingDocument, begin_document_flow, get_pending_document,
@@ -178,7 +178,7 @@ class DatabaseTests(DatabaseFixture):
         async with self.pool.acquire() as c:
             pid = await c.fetchval('INSERT INTO projects(company_id,name,created_by_user_id) SELECT $1,$2,id FROM users WHERE telegram_id=$3 RETURNING id', company.id, 'Other project', self.owner.id)
         self.assertIsNone(await ProjectService().get_active_project(self.employee.id, pid))
-        from app.services.projects import Project
+        from app.adapters.telegram.projects import Project
         with self.assertRaises(CompanyAccessError):
             await DocumentService().save_document(self.employee, Project(pid, company.id, 'Other project', 'active'), 'preview', self.document, upload_id='denied')
 
@@ -278,7 +278,7 @@ class DatabaseTests(DatabaseFixture):
         await bot.session.close()
 
     async def test_upload_id_cannot_be_reused_for_a_different_project(self):
-        from app.services.documents import DocumentValidationError
+        from app.adapters.telegram.documents import DocumentValidationError
         service = DocumentService()
         await service.save_document(self.employee, self.project, 'preview', self.document, upload_id='one-project')
         other = await ProjectService().create_project(self.manager.id, 'Different project')

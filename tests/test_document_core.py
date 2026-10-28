@@ -299,7 +299,7 @@ class SharedDocumentTests(DatabaseFixture):
 
     async def test_migration_preserves_live_telegram_draft_and_existing_costs(self):
         actor = await self.link(self.employee)
-        from app.services.documents import DocumentService
+        from app.adapters.telegram.documents import DocumentService
         await DocumentService().save_document(self.employee,self.project,'preview',self.document,upload_id='before-migration')
         pending = drafts.PendingDocument('text','preview',extracted_document=self.document,upload_id='old-live-upload')
         await self.pool.execute('DROP TABLE pending_document_flows')

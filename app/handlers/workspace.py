@@ -26,7 +26,7 @@ def event_id(message):
 
 
 async def run(message, sender, text, input_event=None):
-    from app.services.companies import CompanyService
+    from app.adapters.telegram.companies import CompanyService
     try:
         uid = await CompanyService().ensure_platform_user(sender)
         view = await commands.handle(uid, text, input_event, platform='telegram')

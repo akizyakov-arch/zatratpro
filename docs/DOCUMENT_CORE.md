@@ -30,7 +30,8 @@ flowchart LR
   JPEG с длинной стороной 1800 px и качеством 88, максимум 10 МБ/10 страниц.
   Фото/скан — JPEG/PNG/WebP, максимум 20 МБ; подготовка изображения как ранее.
 - `services/documents.py`: канонические `save_for_user` и `find_duplicate_for_user`
-  принимают внутренний ID. Старые Telegram-методы остались совместимым фасадом:
+  принимают внутренний ID. Старые Telegram-методы находятся в `app/adapters/telegram/documents.py`
+  как совместимый фасад:
   они разрешают внешнюю идентичность и делегируют этим же методам.
 - `services/document_drafts.py`: PostgreSQL-черновики по внутреннему ID. Старый
   `state/pending_documents.py` — только Telegram-адаптер к этому хранилищу.

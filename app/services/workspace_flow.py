@@ -26,6 +26,7 @@ class WorkspaceFlow:
             ctx = await self._authorize(c, actor, action)
             if action == 'rename_project' and not await c.fetchval("SELECT 1 FROM projects WHERE id=$1 AND company_id=$2 AND status='active'", target, ctx['company_id']):
                 raise WorkspaceError('Проект недоступен.')
+            await c.execute('DELETE FROM pending_actions WHERE actor_id=$1',actor)
             await self.cancel(actor, connection=c)
             await c.execute("UPDATE advance_issue_drafts SET step='cancelled' WHERE actor=$1 AND step NOT IN ('done','cancelled')", actor)
             return await c.fetchrow("""INSERT INTO workspace_flows(id,actor,company_id,action,target,step)

@@ -81,7 +81,7 @@ class MaxAIReportTests(DatabaseFixture):
 
     async def test_oversized_download_and_network_errors_do_not_call_speech(self):
         await self.link(self.manager)
-        from app.services.documents import DocumentValidationError
+        from app.adapters.telegram.documents import DocumentValidationError
         for result in (b'', b'x'*(MAX_VOICE_BYTES+1), DocumentValidationError('MAX не отдал файл.')):
             download=AsyncMock(side_effect=result) if isinstance(result,Exception) else AsyncMock(return_value=result)
             with patch('app.max_bot.files.download',download),patch('app.application.ai_reports.transcribe_voice',AsyncMock()) as speech:

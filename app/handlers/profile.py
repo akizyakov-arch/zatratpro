@@ -4,7 +4,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 
 from app.ui.money import keyboard
 from app.services.account_links import AccountLinkService, AccountLinkError
-from app.services.companies import CompanyAccessError, CompanyService
+from app.adapters.telegram.companies import CompanyAccessError, CompanyService
 
 router = Router()
 service = AccountLinkService()

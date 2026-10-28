@@ -14,7 +14,7 @@ from openpyxl import load_workbook
 
 from app.logging_utils import RedactingFormatter
 from app.services.report_exports import build_manager_report_workbook
-from app.services.telegram_files import TelegramFileService
+from app.adapters.telegram.files import TelegramFileService
 from app.state.locks import _locks, serialize_document_user
 from app.ui.projects import build_projects_keyboard, build_duplicate_confirmation_keyboard
 
@@ -82,7 +82,7 @@ class UnitTests(unittest.TestCase):
 
 class AsyncUnitTests(unittest.IsolatedAsyncioTestCase):
     async def test_image_download_removes_raw_and_handler_can_remove_prepared(self):
-        with tempfile.TemporaryDirectory() as folder, patch('app.services.telegram_files.TMP_DIR', Path(folder)):
+        with tempfile.TemporaryDirectory() as folder, patch('app.adapters.telegram.files.TMP_DIR', Path(folder)):
             async def download(_, destination):
                 Image.new('RGB', (2500, 100)).save(destination, format='JPEG')
             bot = SimpleNamespace(get_file=AsyncMock(return_value=SimpleNamespace(file_path='image')), download_file=AsyncMock(side_effect=download))
@@ -94,7 +94,7 @@ class AsyncUnitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(Path(folder).iterdir()), [])
 
     async def test_corrupt_image_cleans_download(self):
-        with tempfile.TemporaryDirectory() as folder, patch('app.services.telegram_files.TMP_DIR', Path(folder)):
+        with tempfile.TemporaryDirectory() as folder, patch('app.adapters.telegram.files.TMP_DIR', Path(folder)):
             async def download(_, destination):
                 destination.write_bytes(b'not an image')
             bot = SimpleNamespace(get_file=AsyncMock(return_value=SimpleNamespace(file_path='image')), download_file=AsyncMock(side_effect=download))
@@ -103,7 +103,7 @@ class AsyncUnitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(Path(folder).iterdir()), [])
 
     async def test_partial_download_cancellation_cleans_file(self):
-        with tempfile.TemporaryDirectory() as folder, patch('app.services.telegram_files.TMP_DIR', Path(folder)):
+        with tempfile.TemporaryDirectory() as folder, patch('app.adapters.telegram.files.TMP_DIR', Path(folder)):
             async def download(_, destination):
                 destination.write_bytes(b'partial')
                 raise asyncio.CancelledError()

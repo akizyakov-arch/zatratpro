@@ -2,9 +2,9 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboardMarkup
 
-from app.services.companies import CompanyAccessError, CompanyService
-from app.services.documents import DocumentService
-from app.services.projects import ProjectService
+from app.adapters.telegram.companies import CompanyAccessError, CompanyService
+from app.adapters.telegram.documents import DocumentService
+from app.adapters.telegram.projects import ProjectService
 from app.services.report_formatters import (
     format_duplicate_report,
     format_project_report,
@@ -12,7 +12,7 @@ from app.services.report_formatters import (
     format_report_documents,
     report_period_label,
 )
-from app.services.views import ViewService
+from app.adapters.telegram.views import ViewService
 from app.handlers.money_reports import send_money_report
 from app.services.advances import AdvanceError
 from app.state.pending_actions import pop_pending_action, set_pending_action

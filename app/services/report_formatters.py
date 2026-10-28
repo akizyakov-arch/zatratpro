@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.ui.reports import REPORT_PERIOD_LABELS
+from app.services.report_periods import REPORT_PERIOD_LABELS
 
 NL = chr(10)
 

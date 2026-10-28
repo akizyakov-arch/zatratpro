@@ -8,8 +8,8 @@ import asyncpg
 
 from db_fixture import DatabaseFixture
 from app.services.advances import AdvanceService
-from app.services.companies import CompanyAccessError
-from app.services.documents import DocumentService
+from app.services.company_policy import CompanyAccessError
+from app.adapters.telegram.documents import DocumentService
 from app.services.workspace import WorkspaceError, WorkspaceService
 from app.services.web_auth import WebAuthError, WebAuthService
 

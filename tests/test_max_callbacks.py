@@ -173,7 +173,7 @@ class CallbackInterfaceTests(DatabaseFixture):
         self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM advances'), 1)
 
     async def test_project_documents_are_available_and_scoped(self):
-        from app.services.documents import DocumentService
+        from app.adapters.telegram.documents import DocumentService
         await self.link(self.manager)
         await DocumentService().save_document(self.employee, self.project, 'text', self.document, upload_id='callback-project-doc')
         active = await self.press('/admin_projects')

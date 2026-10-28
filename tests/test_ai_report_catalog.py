@@ -11,7 +11,7 @@ from app.services.ai_report_engine import build_report
 from app.services.ai_report_sessions import remember,session,exit_mode
 from app.services.advances import AdvanceService
 from app.services.business_cards import BusinessCardService
-from app.services.documents import DocumentService
+from app.adapters.telegram.documents import DocumentService
 
 
 @unittest.skipUnless(os.environ.get('RUN_DATABASE_TESTS')=='1','PostgreSQL tests disabled')

@@ -9,7 +9,7 @@ from test_max_adapter import message
 from app.max_bot.handler import MaxHandler
 from app.services.account_links import AccountLinkService, AccountLinkError
 from app.services.company_invitations import CompanyInvitations
-from app.services.companies import CompanyAccessError, CompanyService
+from app.adapters.telegram.companies import CompanyAccessError, CompanyService
 from app.services.max_onboarding import MaxOnboardingService
 
 

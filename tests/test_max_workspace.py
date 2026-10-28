@@ -11,7 +11,8 @@ from app.max_bot.handler import MaxHandler
 from app.services.account_links import AccountLinkService
 from app.services.workspace import WorkspaceService, WorkspaceError
 from app.services.workspace_flow import WorkspaceFlow
-from app.services.recognition import get_provider_name, get_provider_for_user
+from app.services.recognition import get_provider_for_user
+from app.adapters.telegram.recognition import get_provider_name
 from app.ui.menu_layout import main_menu_rows
 
 
@@ -135,7 +136,7 @@ class MaxWorkspaceTests(DatabaseFixture):
         self.assertEqual(await get_provider_name(self.employee.id), 'ocr_space')
         self.assertEqual(await get_provider_for_user(employee), 'ocr_space')
         self.assertEqual(await get_provider_for_user(manager), 'deepseek')
-        from app.services.recognition import set_provider
+        from app.adapters.telegram.recognition import set_provider
         await set_provider(self.employee.id, 'deepseek')
         self.assertIn('Сейчас: DeepSeek Vision', await self.press('Настройки'))
 
@@ -215,7 +216,7 @@ class MaxWorkspaceTests(DatabaseFixture):
         self.assertIsNone(await self.pool.fetchval("SELECT id FROM projects WHERE name='Wrong company'"))
 
     async def test_my_documents_show_only_own_documents_and_recheck_access(self):
-        from app.services.documents import DocumentService
+        from app.adapters.telegram.documents import DocumentService
         from app.services.member_directory import MemberDirectory
         from app.services.membership import MembershipError
         employee = await self.link(self.employee, 9001)

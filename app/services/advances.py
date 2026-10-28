@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from app.services.database import get_pool
+from app.services.workspace import workspace_transaction
 from app.services.membership import MembershipError, require_member
 
 
@@ -166,10 +167,10 @@ class AdvanceService:
     async def _balance(self,c,aid):
         return await c.fetchval('SELECT CASE WHEN canceled_at IS NOT NULL THEN 0 ELSE amount-COALESCE((SELECT SUM(amount) FROM advance_expenses WHERE advance_id=a.id AND approved_at IS NOT NULL),0)-COALESCE((SELECT SUM(amount) FROM advance_returns WHERE advance_id=a.id AND approved_at IS NOT NULL),0) END FROM advances a WHERE id=$1',aid)
 
-    async def request_return(self,actor,aid,amount,key):
+    async def request_return(self,actor,aid,amount,key,*,connection=None):
         amount=money(amount)
         key=request_key(key)
-        async with get_pool().acquire() as c,c.transaction():
+        async with workspace_transaction(connection) as c:
             row=await self._access(c,actor,aid)
             self._not_canceled(row)
             if row['employee_id'] != actor or row['received_at'] is None:
@@ -202,9 +203,9 @@ class AdvanceService:
         if row['canceled_at'] is not None:
             raise AdvanceError('Выдача отменена.')
 
-    async def cancel(self, actor, aid, reason):
+    async def cancel(self, actor, aid, reason, *, connection=None):
         reason = decision_reason(reason)
-        async with get_pool().acquire() as c, c.transaction():
+        async with workspace_transaction(connection) as c:
             row = await self._access(c, actor, aid, manager=True)
             if row['canceled_at'] is not None:
                 if row['cancel_reason'] != reason:
@@ -215,11 +216,11 @@ class AdvanceService:
             await c.execute('UPDATE advances SET canceled_at=clock_timestamp(),canceled_by=$2,cancel_reason=$3 WHERE id=$1', aid, actor, reason)
             await self._event(c, aid, actor, 'canceled', reason=reason)
 
-    async def _reject(self, actor, aid, item_id, reason, *, kind):
+    async def _reject(self, actor, aid, item_id, reason, *, kind, connection=None):
         reason = decision_reason(reason)
         # Table and event are selected from constants, never user input.
         table = 'advance_expenses' if kind == 'expense' else 'advance_returns'
-        async with get_pool().acquire() as c, c.transaction():
+        async with workspace_transaction(connection) as c:
             self._not_canceled(await self._access(c, actor, aid, manager=True))
             row = await c.fetchrow(f'SELECT * FROM {table} WHERE id=$1 AND advance_id=$2', item_id, aid)
             if row is None:
@@ -233,11 +234,11 @@ class AdvanceService:
             await c.execute(f'UPDATE {table} SET rejected_at=clock_timestamp(),rejected_by=$2,rejection_reason=$3 WHERE id=$1', item_id, actor, reason)
             await self._event(c, aid, actor, f'{kind}_rejected', operation_id=item_id, reason=reason, amount=row['amount'])
 
-    async def reject_expense(self, actor, aid, eid, reason):
-        await self._reject(actor, aid, eid, reason, kind='expense')
+    async def reject_expense(self, actor, aid, eid, reason, *, connection=None):
+        await self._reject(actor, aid, eid, reason, kind='expense', connection=connection)
 
-    async def reject_return(self, actor, aid, rid, reason):
-        await self._reject(actor, aid, rid, reason, kind='return')
+    async def reject_return(self, actor, aid, rid, reason, *, connection=None):
+        await self._reject(actor, aid, rid, reason, kind='return', connection=connection)
 
     async def list(self,actor):
         async with get_pool().acquire() as c:

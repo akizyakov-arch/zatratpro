@@ -181,12 +181,12 @@ def build_confirm_keyboard(confirm_callback: str, cancel_callback: str) -> Inlin
 def _member_button_text(member: Any) -> str:
     full_name = getattr(member, "full_name", None)
     username = getattr(member, "username", None)
-    telegram_id = getattr(member, "telegram_id", None)
+    user_id = getattr(member, "user_id", None)
     if full_name:
         return full_name
     if username:
         return f"@{username}"
-    return str(telegram_id)
+    return f"Пользователь №{user_id}"
 
 
 def _owner_user_button_text(user: Any) -> str:

@@ -207,7 +207,7 @@ class WorkspaceCommands:
     def person(row):
         full_name = ' '.join(filter(None, (row.get('first_name'), row.get('last_name')))) or row.get('name')
         return SimpleNamespace(user_id=row['id'], full_name=full_name, username=row.get('username'),
-                               telegram_id=row['id'], company_name=row.get('company_name'))
+                               company_name=row.get('company_name'))
 
     @staticmethod
     def company_text(row):

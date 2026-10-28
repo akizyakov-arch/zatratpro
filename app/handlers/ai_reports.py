@@ -4,18 +4,16 @@ from io import BytesIO
 from aiogram import F,Router
 from aiogram.filters import Command,BaseFilter
 from aiogram.types import BufferedInputFile,InlineKeyboardMarkup,InlineKeyboardButton
-from app.services.ai_reports import report_actor,parse_question,ReportIntent,ReportQuestionError,NameChoiceRequired,intent_key
+from app.services.ai_reports import ReportIntent, ReportQuestionError, NameChoiceRequired, intent_key
 from app.application.ai_reports import AIReportCommands
-from app.services.ai_report_sessions import session,remember,exit_mode
-from app.services.speech import transcribe_voice,SpeechError,MAX_VOICE_BYTES,MAX_VOICE_SECONDS
-from app.services.web_auth import WebAuthService,WebAuthError
-from app.services.workspace import WorkspaceError,WorkspaceService
+from app.services.ai_report_sessions import session
+from app.services.speech import SpeechError, MAX_VOICE_BYTES, MAX_VOICE_SECONDS
+from app.services.web_auth import WebAuthError
+from app.services.workspace import WorkspaceError
 from app.services.advances import AdvanceError
 from app.services.json_formatter import chunk_message
-from app.services.database import get_pool
-from app.state.pending_actions import get_pending_action
-from app.services.workspace_flow import WorkspaceFlow
-from app.services.advance_issue_flow import AdvanceIssueFlow
+from app.adapters.telegram.ai_reports import report_actor
+from app.handlers.telegram_identity import actor as telegram_actor
 from app.state.locks import serialize_user
 from app.ui.main_menu import MENU_BUTTONS
 
@@ -45,9 +43,7 @@ async def enter_reports(callback):
     if callback.from_user is None or callback.message is None:return
     try:
         actor=await report_actor(callback.from_user.id)
-        if await get_pending_action(callback.from_user.id) or await WorkspaceFlow().current(actor) or await AdvanceIssueFlow().current(actor):
-            await callback.answer('Сначала заверши текущее действие или вернись в главное меню.',show_alert=True);return
-        await remember(actor)
+        await AIReportCommands().enter(actor)
         await callback.answer()
         await callback.message.answer(EXAMPLES,reply_markup=EXIT)
     except (ReportQuestionError,WorkspaceError) as exc:await callback.answer(str(exc),show_alert=True)
@@ -58,7 +54,7 @@ async def leave_reports(callback):
     if callback.from_user is None or callback.message is None:return
     try:
         actor=await report_actor(callback.from_user.id)
-        await exit_mode(actor)
+        await AIReportCommands().exit(actor)
         await callback.answer()
         from app.ui.reports import build_reports_menu_keyboard
         await callback.message.answer('Раздел отчётов. Текстовый режим ИИ завершён.',reply_markup=build_reports_menu_keyboard())
@@ -74,22 +70,20 @@ async def ask_report(message):
     try:
         actor=await report_actor(message.from_user.id)
         if message.text=='ИИ-отчёты' or (message.text and message.text.startswith('/ask') and len(message.text.split(maxsplit=1))==1):
-            if await get_pending_action(message.from_user.id) or await WorkspaceFlow().current(actor) or await AdvanceIssueFlow().current(actor):raise ReportQuestionError('Сначала заверши текущее действие.')
-            await remember(actor)
+            await AIReportCommands().enter(actor)
             await message.answer(EXAMPLES,reply_markup=EXIT);return
-        await WebAuthService()._rate_limit('start','ai-report:'+str(actor),5)
         if message.voice:
             if message.voice.duration>MAX_VOICE_SECONDS or (message.voice.file_size and message.voice.file_size>MAX_VOICE_BYTES):
                 raise SpeechError('Голосовое должно быть не больше 2 минут и 10 МБ.')
             await message.answer('Распознаю голосовой запрос…')
-            with VoiceBuffer() as destination:
-                await message.bot.download(message.voice,destination=destination)
-                text=await transcribe_voice(destination.getvalue())
-            await message.answer('Распознано: '+text)
+            async def download():
+                with VoiceBuffer() as destination:
+                    await message.bot.download(message.voice,destination=destination)
+                    return destination.getvalue()
+            reply=await AIReportCommands().voice(actor,download)
         else:
             text=message.text.split(maxsplit=1)[1] if message.text.startswith('/ask') else message.text
-        actor=await report_actor(message.from_user.id)
-        reply=await AIReportCommands().question(actor,text,limited=True)
+            reply=await AIReportCommands().question(actor,text)
         await render_reply(message,actor,reply,reply.excel)
     except NameChoiceRequired as exc:
         await show_name_choices(message,actor,exc)
@@ -137,14 +131,13 @@ class ReportTextFilter(BaseFilter):
         if not message.from_user or not message.text:return False
         # Menu and commands end the mode rather than becoming financial questions.
         if message.text in set(MENU_BUTTONS.values())|{'Главное меню','Панель руководителя'} or message.text.startswith('/'):
-            await get_pool().execute("UPDATE ai_report_sessions SET enabled=false WHERE user_id IN (SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1)",str(message.from_user.id))
+            try:await AIReportCommands().navigate(await telegram_actor(message.from_user))
+            except AdvanceError:pass
             return False
-        if await get_pending_action(message.from_user.id):return False
         try:
             actor=await report_actor(message.from_user.id)
-            if await WorkspaceFlow().current(actor) or await AdvanceIssueFlow().current(actor):return False
-            saved=await session(actor)
-            return bool(saved and saved['enabled'])
+            if await AIReportCommands().busy(actor):return False
+            return await AIReportCommands().active(actor)
         except (ReportQuestionError,WorkspaceError):return False
 
 
@@ -173,7 +166,8 @@ async def choose_report_name(callback):
 class ExitOnNavigationFilter(BaseFilter):
     async def __call__(self,callback):
         if callback.from_user:
-            await get_pool().execute("UPDATE ai_report_sessions SET enabled=false WHERE user_id IN (SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1)",str(callback.from_user.id))
+            try:await AIReportCommands().navigate(await telegram_actor(callback.from_user))
+            except AdvanceError:pass
         # Continue routing the original callback to its normal handler.
         return False
 

@@ -381,3 +381,6 @@ Telegram для нового участника не обязателен: в MA
 
 Общие команды Telegram/MAX и подключение будущего приложения:
 [прикладное ядро](docs/APPLICATION_CORE.md).
+
+[Обязательные требования к ядру и фронтам](docs/CORE_BOUNDARY_REQUIREMENTS.md)
+проверяются `tests/test_core_boundaries.py`; инструкции для разработчиков — в `AGENTS.md`.

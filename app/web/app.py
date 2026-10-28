@@ -17,7 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.business_cards import BusinessCardService
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 from app.services.database import close_db, init_db
 from app.services.report_periods import report_period_start
 from app.services.money_reports import get_money_report_for_user, cash_and_employee_debt

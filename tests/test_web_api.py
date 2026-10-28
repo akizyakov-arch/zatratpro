@@ -12,8 +12,8 @@ from openpyxl import load_workbook
 from db_fixture import DatabaseFixture
 from app.services.advances import AdvanceService
 from app.services.business_cards import BusinessCardService
-from app.services.documents import DocumentService
-from app.services.projects import ProjectService
+from app.adapters.telegram.documents import DocumentService
+from app.adapters.telegram.projects import ProjectService
 from app.services.web_auth import WebAuthService
 from app.web.app import create_app
 

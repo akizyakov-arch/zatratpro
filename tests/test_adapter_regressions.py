@@ -29,13 +29,15 @@ class AdapterRegressions(DatabaseFixture):
             await flow.apply(manager, 'telegram', event, action, value, draft['id'])
         original = AdvanceService.issue
 
+        deferred=[]
         async def change_prompt(service, *args, **kwargs):
             result = await original(service, *args, **kwargs)
-            await set_pending_action(self.manager.id, 'card_create')
+            deferred.append(asyncio.create_task(set_pending_action(self.manager.id, 'card_create')))
             return result
 
         with patch.object(AdvanceService, 'issue', change_prompt):
             await flow.apply(manager, 'telegram', 'confirm', 'confirm', draft_id=draft['id'])
+        await asyncio.gather(*deferred)
         current=await get_pending_action(self.manager.id)
         self.assertEqual(current.action, 'card_create')
         self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM advances'), 1)
@@ -45,14 +47,16 @@ class AdapterRegressions(DatabaseFixture):
         previous = await get_pending_action(self.manager.id)
         original = card_ui.service.register
 
+        deferred=[]
         async def change_prompt(*args, **kwargs):
             result = await original(*args, **kwargs)
-            await set_pending_action(self.manager.id, 'advance_return', {'key':'new'})
+            deferred.append(asyncio.create_task(set_pending_action(self.manager.id, 'advance_return', {'key':'new'})))
             return result
 
         message=SimpleNamespace(from_user=self.manager,text='Test card 1234',answer=AsyncMock())
         with patch.object(card_ui.service, 'register', change_prompt):
             await card_ui.create_card(message, pending_action=previous)
+        await asyncio.gather(*deferred)
         self.assertEqual((await get_pending_action(self.manager.id)).action, 'advance_return')
 
     async def test_compare_and_delete_rejects_expired_revision(self):
@@ -103,8 +107,8 @@ class AdapterRegressions(DatabaseFixture):
         self.assertEqual((await get_pending_action(self.manager.id)).action,'card_create')
 
     async def test_disabled_manager_cannot_use_legacy_project_services(self):
-        from app.services.projects import ProjectService
-        from app.services.companies import CompanyAccessError
+        from app.adapters.telegram.projects import ProjectService
+        from app.adapters.telegram.companies import CompanyAccessError
         async with self.pool.acquire() as c:
             await c.execute('UPDATE users SET is_active=FALSE WHERE telegram_id=$1',self.manager.id)
         with self.assertRaises(CompanyAccessError):

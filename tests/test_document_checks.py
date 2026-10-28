@@ -87,7 +87,7 @@ class ReviewFlowTests(DatabaseFixture):
         self.assertIsNone((await get_pending_document(self.employee.id)).reviewed_fingerprint)
 
     async def test_arithmetic_review_cannot_bypass_duplicate_confirmation(self):
-        await handlers.document_service.save_document(self.employee,self.project,'preview',self.document,upload_id='first')
+        await handlers.document_service.save_for_user((await self.finance_ids())[1],self.project.id,'preview',self.document,upload_id='first')
         draft=await self.wrong_draft()
         await handlers.process_project_selection(self.callback(f'{PROJECT_CALLBACK_PREFIX}{self.project.id}:{draft.upload_id}'))
         await handlers.review_document_callback(self.callback('document:review:'+draft.upload_id))
