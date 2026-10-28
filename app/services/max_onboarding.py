@@ -1,6 +1,7 @@
 """Accept company invitations from an authenticated MAX sender, without Telegram."""
 from app.services.account_links import digest, identity
-from app.services.companies import CompanyAccessError, CompanyService
+from app.services.company_policy import CompanyAccessError
+from app.services.company_invitations import CompanyInvitations
 from app.services.database import get_pool
 
 ATTEMPT_LIMIT = 5
@@ -72,6 +73,6 @@ class MaxOnboardingService:
                     VALUES($1,'max',$2) ON CONFLICT DO NOTHING RETURNING id""", user_id, external_id)
                 if created is None:
                     raise CompanyAccessError('Аккаунт MAX уже зарегистрирован. Повторите /join; профили автоматически не объединяются.')
-            company = await CompanyService().join_company_by_user_id(user_id, code, connection=c, allow_retry=True)
+            company = await CompanyInvitations().join_company_by_user_id(user_id, code, connection=c, allow_retry=True)
             role = await c.fetchval("SELECT role FROM company_members WHERE company_id=$1 AND user_id=$2 AND status='active'", company.id, user_id)
             return {'user_id': user_id, 'company': company, 'role': role}

@@ -10,6 +10,8 @@ from app.handlers.ai_reports import router as ai_reports_router
 from app.handlers.settings import router as settings_router
 from app.handlers.documents import router as documents_router
 from app.handlers.start import router as start_router
+from app.handlers.workspace import router as workspace_router
+from app.handlers.issue import router as issue_router
 from app.handlers.advances import router as advances_router
 from app.handlers.business_cards import router as business_cards_router
 from app.handlers.profile import router as profile_router
@@ -67,6 +69,8 @@ async def main() -> None:
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
 
+    dispatcher.include_router(workspace_router)
+    dispatcher.include_router(issue_router)
     dispatcher.include_router(ai_reports_router)
     dispatcher.include_router(settings_router)
     dispatcher.include_router(mini_app_router)

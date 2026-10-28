@@ -30,14 +30,22 @@ class ReceiptNotificationTests(DatabaseFixture):
             with self.assertRaises(AdvanceError):
                 await AdvanceService().issue(manager, employee, self.project.id, 100, purpose, 'invalid-purpose')
 
-    async def test_telegram_amount_only_creates_advance(self):
-        _, employee = await self.finance_ids()
-        callback = SimpleNamespace(id='optional-ui', from_user=self.manager,
-            data=f'cash:project:{employee}:{self.project.id}', answer=AsyncMock(),
-            message=SimpleNamespace(answer=AsyncMock()))
-        await telegram.cash_callback(callback)
-        message = SimpleNamespace(from_user=self.manager, text='250,50', answer=AsyncMock())
-        await telegram.amount_input(message)
+    async def test_telegram_amount_and_skip_purpose_create_advance_after_confirmation(self):
+        from app.handlers import issue as shared_ui
+        from app.services.advance_issue_flow import AdvanceIssueFlow
+        manager, employee = await self.finance_ids()
+        def button(data, event):
+            return SimpleNamespace(id=event, from_user=self.manager, data=data,
+                answer=AsyncMock(), message=SimpleNamespace(answer=AsyncMock()))
+        await shared_ui.action(button('cash:issue', 'begin'))
+        await shared_ui.action(button(f'cash:employee:{employee}', 'employee'))
+        await shared_ui.action(button(f'cash:project:{employee}:{self.project.id}', 'project'))
+        draft = await AdvanceIssueFlow().current(manager)
+        message = SimpleNamespace(from_user=self.manager, text='250,50', chat=SimpleNamespace(id=self.manager.id), message_id=10, answer=AsyncMock())
+        await shared_ui.input_text(message, draft)
+        self.assertIsNone(await self.pool.fetchval('SELECT id FROM advances'))
+        await shared_ui.action(button(f"issue:skip_purpose:{draft['id']}", 'purpose'))
+        await shared_ui.action(button(f"issue:confirm:{draft['id']}", 'confirm'))
         row = await self.pool.fetchrow('SELECT amount,purpose FROM advances')
         self.assertIsNotNone(row)
         self.assertEqual(str(row['amount']), '250.50')

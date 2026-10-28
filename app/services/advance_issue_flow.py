@@ -1,4 +1,4 @@
-"""Durable, platform-scoped advance drafts using canonical identities."""
+"""Durable advance issue commands using one draft per canonical user."""
 import hashlib
 from app.services.database import get_pool
 from app.services.membership import require_member
@@ -7,11 +7,11 @@ from app.services.advances import AdvanceService, AdvanceError, money, optional_
 
 class AdvanceIssueFlow:
     async def apply(self, actor, platform, event_id, action, value=None, draft_id=None):
-        if platform != 'max' or not isinstance(event_id, str) or not 1 <= len(event_id) <= 256:
+        if platform not in ('telegram', 'max', 'web') or not isinstance(event_id, str) or not 1 <= len(event_id) <= 256:
             raise AdvanceError('Не удалось определить сообщение. Отправьте команду заново.')
         event_hash = hashlib.sha256(event_id.encode()).hexdigest()
         async with get_pool().acquire() as c, c.transaction():
-            await c.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', f'issue:{platform}:{actor}')
+            await c.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', f'conversation:{actor}')
             member = await require_member(c, actor)
             await c.fetchval('SELECT id FROM companies WHERE id=$1 FOR UPDATE', member['company_id'])
             current = await require_member(c, actor)
@@ -26,9 +26,10 @@ class AdvanceIssueFlow:
                 if row['company_id'] != member['company_id']:
                     raise AdvanceError('Компания изменилась. Начните выдачу заново.')
                 return dict(row)
-            row = await c.fetchrow('SELECT * FROM advance_issue_drafts WHERE actor=$1 AND platform=$2 ORDER BY id DESC LIMIT 1 FOR UPDATE', actor, platform)
+            row = await c.fetchrow('SELECT * FROM advance_issue_drafts WHERE actor=$1 ORDER BY id DESC LIMIT 1 FOR UPDATE', actor)
             if action == 'start':
-                await c.execute("UPDATE advance_issue_drafts SET step='cancelled' WHERE actor=$1 AND platform=$2 AND step NOT IN ('done','cancelled')", actor, platform)
+                await c.execute("UPDATE workspace_flows SET step='cancelled' WHERE actor=$1 AND step IN ('name','confirm')", actor)
+                await c.execute("UPDATE advance_issue_drafts SET step='cancelled' WHERE actor=$1 AND step NOT IN ('done','cancelled')", actor)
                 row = await c.fetchrow("INSERT INTO advance_issue_drafts(actor,platform,company_id,step) VALUES($1,$2,$3,'employee') RETURNING *", actor, platform, member['company_id'])
             else:
                 if row is None or (draft_id is not None and row['id'] != draft_id):
@@ -55,7 +56,7 @@ class AdvanceIssueFlow:
                     purpose = optional_purpose('' if action == 'skip_purpose' else value)
                     await c.execute("UPDATE advance_issue_drafts SET purpose=$2,step='confirm' WHERE id=$1", row['id'], purpose)
                 elif action == 'confirm' and row['step'] == 'confirm':
-                    aid = await AdvanceService().issue(actor, row['employee_id'], row['project_id'], row['amount'], row['purpose'], f'max-draft:{row["id"]}', connection=c)
+                    aid = await AdvanceService().issue(actor, row['employee_id'], row['project_id'], row['amount'], row['purpose'], f'issue-draft:{row["id"]}', connection=c)
                     await c.execute("UPDATE advance_issue_drafts SET advance_id=$2,step='done' WHERE id=$1", row['id'], aid)
                 elif action != 'view':
                     raise AdvanceError('Этот шаг уже завершён. Продолжите текущую заявку.')
@@ -65,4 +66,9 @@ class AdvanceIssueFlow:
 
     async def current(self, actor):
         async with get_pool().acquire() as c:
-            return await c.fetchrow("SELECT * FROM advance_issue_drafts WHERE actor=$1 AND platform='max' AND step NOT IN ('done','cancelled') AND expires_at>clock_timestamp() ORDER BY id DESC LIMIT 1", actor)
+            return await c.fetchrow("SELECT * FROM advance_issue_drafts WHERE actor=$1 AND step NOT IN ('done','cancelled') AND expires_at>clock_timestamp() ORDER BY id DESC LIMIT 1", actor)
+
+    async def cancel(self, actor):
+        async with get_pool().acquire() as c, c.transaction():
+            await c.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', f'conversation:{actor}')
+            await c.execute("UPDATE advance_issue_drafts SET step='cancelled' WHERE actor=$1 AND step NOT IN ('done','cancelled')", actor)

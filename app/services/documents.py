@@ -320,111 +320,31 @@ class DocumentService:
         )
 
     async def resolve_duplicate_keep_separate(self, telegram_user_id: int, document_id: int) -> None:
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        member_role = await self.company_service.ensure_member_role(telegram_user_id)
-        if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError('Действие доступно только manager.')
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                UPDATE documents
-                SET duplicate_status = 'none',
-                    duplicate_of_document_id = NULL,
-                    duplicate_checked_at = NOW(),
-                    updated_at = NOW()
-                WHERE company_id = $1
-                  AND id = $2
-                RETURNING id
-                """,
-                company.id,
-                document_id,
-            )
-        if row is None:
-            raise CompanyAccessError('Документ не найден.')
+        from app.services.reporting import ReportService
+        from app.services.advances import AdvanceError
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            await ReportService().duplicate_keep(actor, document_id)
+        except AdvanceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
 
     async def delete_source_duplicate_document(self, telegram_user_id: int, duplicate_document_id: int) -> None:
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        member_role = await self.company_service.ensure_member_role(telegram_user_id)
-        if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError('Действие доступно только manager.')
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                source_document_id = await connection.fetchval(
-                    """
-                    SELECT duplicate_of_document_id
-                    FROM documents
-                    WHERE company_id = $1
-                      AND id = $2
-                      AND duplicate_of_document_id IS NOT NULL
-                    LIMIT 1
-                    """,
-                    company.id,
-                    duplicate_document_id,
-                )
-                if source_document_id is None:
-                    raise CompanyAccessError('Исходная запись для дубля не найдена.')
-                deleted = await connection.fetchrow(
-                    """
-                    DELETE FROM documents
-                    WHERE company_id = $1
-                      AND id = $2
-                    RETURNING id
-                    """,
-                    company.id,
-                    source_document_id,
-                )
-                if deleted is None:
-                    raise CompanyAccessError('Исходная запись уже удалена.')
-                await connection.execute(
-                    """
-                    UPDATE documents
-                    SET duplicate_status = 'none',
-                        duplicate_of_document_id = NULL,
-                        duplicate_checked_at = NOW(),
-                        updated_at = NOW()
-                    WHERE company_id = $1
-                      AND (id = $2 OR duplicate_of_document_id = $2)
-                    """,
-                    company.id,
-                    source_document_id,
-                )
+        from app.services.reporting import ReportService
+        from app.services.advances import AdvanceError
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            await ReportService().duplicate_delete(actor, duplicate_document_id, source=True)
+        except AdvanceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
 
     async def delete_duplicate_document(self, telegram_user_id: int, document_id: int) -> None:
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        member_role = await self.company_service.ensure_member_role(telegram_user_id)
-        if member_role not in ADMIN_ROLES:
-            raise CompanyAccessError('Действие доступно только manager.')
-        pool = get_pool()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                row = await connection.fetchrow(
-                    """
-                    DELETE FROM documents
-                    WHERE company_id = $1
-                      AND id = $2
-                      AND duplicate_status IN ('exact', 'probable')
-                    RETURNING id
-                    """,
-                    company.id,
-                    document_id,
-                )
-                if row is None:
-                    raise CompanyAccessError('Дубликат не найден или уже удален.')
-                await connection.execute(
-                    """
-                    UPDATE documents
-                    SET duplicate_status = 'none',
-                        duplicate_of_document_id = NULL,
-                        duplicate_checked_at = NOW(),
-                        updated_at = NOW()
-                    WHERE company_id = $1
-                      AND duplicate_of_document_id = $2
-                    """,
-                    company.id,
-                    document_id,
-                )
+        from app.services.reporting import ReportService
+        from app.services.advances import AdvanceError
+        actor = await self.company_service._workspace_actor(telegram_user_id)
+        try:
+            await ReportService().duplicate_delete(actor, document_id)
+        except AdvanceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
 
     async def cleanup_broken_duplicate_links(self, telegram_user_id: int) -> int:
         company = await self.company_service.get_active_company_for_user(telegram_user_id)

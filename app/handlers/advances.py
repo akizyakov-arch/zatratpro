@@ -12,6 +12,8 @@ from app.state.locks import serialize_user
 from app.state.pending_actions import get_pending_action, pop_pending_action, set_pending_action
 
 router = Router()
+router.message.filter(F.chat.type == 'private')
+router.callback_query.filter(F.message.chat.type == 'private')
 service = AdvanceService()
 directory = FinanceDirectory()
 MENU = 'Деньги на закупки'
@@ -51,22 +53,6 @@ async def show_card(message,uid,aid):
             rows.append((f"Отклонить возврат {ret['amount']}",f"cash:reject_return:{aid}:{ret['id']}"))
     rows.append(('Обновить',f'cash:card:{aid}'))
     await send_details(message, text, rows)
-
-
-async def select_employee(message, uid):
-    people = await directory.employees(uid)
-    if not people:
-        await message.answer('В компании пока нет активных сотрудников. Откройте «Сотрудники» и создайте приглашение. Сотрудник должен отправить боту /start и войти по invite-коду. Руководитель не включается в список получателей.')
-        return
-    await message.answer('Выберите сотрудника:',reply_markup=keyboard([(f"{p['first_name'] or ''} {p['last_name'] or ''}",f"cash:employee:{p['id']}") for p in people]))
-
-
-@router.message(F.text == 'Выдача')
-async def issue_entry(message):
-    try:
-        await select_employee(message, await actor(message.from_user))
-    except AdvanceError as exc:
-        await message.answer(str(exc))
 
 
 @router.message(Command('money'))
@@ -162,20 +148,9 @@ async def cash_callback(callback):
             from app.ui.reports import build_report_period_keyboard
             await callback.message.answer('Период отчёта по деньгам:', reply_markup=build_report_period_keyboard('money'))
             return
-        if action=='issue':
-            await select_employee(callback.message, uid)
-        elif action=='employee':
-            employee = int(parts[2])
-            projects = await directory.projects_for_employee(uid, employee)
-            if not projects:
-                await callback.message.answer('В компании нет активных проектов. Сначала создайте проект в разделе «Проекты».')
-                return
-            await callback.message.answer('Выберите проект:',reply_markup=keyboard([(p['name'],f"cash:project:{parts[2]}:{p['id']}") for p in projects]))
-        elif action=='project':
-            employee, project = int(parts[2]), int(parts[3])
-            await directory.validate_issue(uid, employee, project)
-            await set_pending_action(callback.from_user.id,'advance_issue',{'employee':int(parts[2]),'project':int(parts[3]),'key':callback.id})
-            await callback.message.answer('Отправьте сумму, например: 15000. Назначение необязательно, его можно дописать после суммы. /cancel — отмена.')
+        if action in ('issue', 'employee', 'project'):
+            await callback.message.answer('Начните выдачу кнопкой «Выдача» в разделе «Деньги». Старые кнопки выбора больше не действуют.')
+            return
         else:
             aid=int(parts[2])
             if action in ('cancel_issue', 'reject_expense', 'reject_return'):
@@ -220,6 +195,11 @@ async def finance_input(message):
 @router.message(Command('cancel'))
 @serialize_user
 async def cancel(message):
+    from app.services.advance_issue_flow import AdvanceIssueFlow
+    from app.services.workspace_flow import WorkspaceFlow
+    uid = await actor(message.from_user)
+    await AdvanceIssueFlow().cancel(uid)
+    await WorkspaceFlow().cancel(uid)
     await pop_pending_action(message.from_user.id)
     await message.answer('Ввод отменён.')
 
@@ -228,21 +208,14 @@ async def cancel(message):
 @serialize_user
 async def amount_input(message, pending_action=None):
     state=pending_action or await get_pending_action(message.from_user.id)
-    if state is None or state.action not in ('advance_issue','advance_return','advance_cancel_issue','advance_reject_expense','advance_reject_return'): return
+    if state is None or state.action not in ('advance_return','advance_cancel_issue','advance_reject_expense','advance_reject_return'): return
     current = await get_pending_action(message.from_user.id)
     if current is None or current.revision != state.revision:
         await message.answer('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
         return
     try:
         uid=await actor(message.from_user)
-        if state.action=='advance_issue':
-            parts = message.text.strip().split(maxsplit=1)
-            amount = parts[0] if parts else ''
-            purpose = parts[1] if len(parts) > 1 else ''
-            aid=await service.issue(uid,state.payload['employee'],state.payload['project'],amount,purpose,state.payload['key'])
-            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
-            await message.answer('Выдача зарегистрирована. Сотрудник подтвердит получение в разделе «Деньги на закупки».')
-        elif state.action == 'advance_return':
+        if state.action == 'advance_return':
             aid=state.payload['advance']
             await service.request_return(uid,aid,message.text.strip(),state.payload['key'])
             await pop_pending_action(message.from_user.id, expected_revision=state.revision)

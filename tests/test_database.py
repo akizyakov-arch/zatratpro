@@ -350,22 +350,28 @@ class DatabaseTests(DatabaseFixture):
         with self.assertRaises(AdvanceError): await s.issue(manager,employee,self.project.id,11,'x','key')
 
     async def test_finance_telegram_flow_selects_employee_project_and_amount(self):
-        from app.handlers import advances as ui
+        from app.handlers import advances as ui, issue as issue_ui
+        from app.services.advance_issue_flow import AdvanceIssueFlow
         manager,employee=await self.finance_ids()
         def cb(user,data):
-            return SimpleNamespace(id='unique-ui-request',from_user=user,data=data,answer=AsyncMock(),message=SimpleNamespace(answer=AsyncMock()))
-        await ui.cash_callback(cb(self.manager,'cash:issue'))
-        await ui.cash_callback(cb(self.manager,f'cash:employee:{employee}'))
-        await ui.cash_callback(cb(self.manager,f'cash:project:{employee}:{self.project.id}'))
-        message=SimpleNamespace(from_user=self.manager,text='500 Закупка краски',answer=AsyncMock())
-        self.assertTrue(await ui.finance_input(message))
-        await ui.amount_input(message)
+            return SimpleNamespace(id=data,from_user=user,data=data,answer=AsyncMock(),message=SimpleNamespace(answer=AsyncMock()))
+        await issue_ui.action(cb(self.manager,'cash:issue'))
+        await issue_ui.action(cb(self.manager,f'cash:employee:{employee}'))
+        await issue_ui.action(cb(self.manager,f'cash:project:{employee}:{self.project.id}'))
+        draft=await AdvanceIssueFlow().current(manager)
+        message=SimpleNamespace(from_user=self.manager,text='500',chat=SimpleNamespace(id=self.manager.id),message_id=1,answer=AsyncMock())
+        self.assertTrue(await issue_ui.has_input(message))
+        await issue_ui.input_text(message,draft)
+        self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM advances'),0)
+        message.text='Закупка краски';message.message_id=2
+        await issue_ui.input_text(message,await AdvanceIssueFlow().current(manager))
+        await issue_ui.action(cb(self.manager,f"issue:confirm:{draft['id']}"))
         aid=(await ui.service.list(manager))[0]['id']
         await ui.cash_callback(cb(self.employee,f'cash:receive:{aid}'))
         self.assertIsNotNone((await ui.service.card(employee,aid))['received_at'])
         await ui.list_advances(SimpleNamespace(from_user=self.employee,answer=AsyncMock()))
         message.text='Проекты'
-        self.assertFalse(await ui.finance_input(message))
+        self.assertFalse(await issue_ui.has_input(message))
 
     async def test_advance_cannot_issue_against_foreign_company_project(self):
         from app.services.advances import AdvanceService,AdvanceError
@@ -377,13 +383,13 @@ class DatabaseTests(DatabaseFixture):
             await AdvanceService().issue(manager,employee,pid,100,'x','foreign')
 
     async def test_issue_explains_empty_employee_list(self):
-        from app.handlers import advances as ui
-        async with self.pool.acquire() as c:
-            await c.execute("UPDATE company_members SET status='removed' WHERE role='employee'")
+        from app.handlers import issue as ui
+        await self.pool.execute("UPDATE company_members SET status='removed' WHERE role='employee'")
         callback=SimpleNamespace(id='empty',from_user=self.manager,data='cash:issue',answer=AsyncMock(),message=SimpleNamespace(answer=AsyncMock()))
-        await ui.cash_callback(callback)
-        self.assertIn('нет активных сотрудников',callback.message.answer.call_args.args[0])
-        self.assertNotIn('reply_markup',callback.message.answer.call_args.kwargs)
+        await ui.action(callback)
+        self.assertIn('нет активных сотрудников',callback.message.answer.call_args.args[0].lower())
+        markup=callback.message.answer.call_args.kwargs['reply_markup']
+        self.assertFalse(any(button.callback_data.startswith('issue:employee') for row in markup.inline_keyboard for button in row))
 
     async def test_money_on_hand_posts_expenses_but_waits_for_cash_confirmation(self):
         from app.services.advances import AdvanceService

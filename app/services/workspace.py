@@ -79,7 +79,7 @@ class WorkspaceService:
         if row['owner']:
             result.update(role='owner', company_id=None, company_name=None)
         elif row['role'] != 'manager' or row['company_status'] != 'active':
-            raise WorkspaceError('Действие доступно руководителю активной компании и владельцу системы.')
+            raise WorkspaceError('Действие выполняет только руководитель активной компании или владелец системы.')
         return {key: result[key] for key in ('id', 'name', 'role', 'company_id', 'company_name')}
 
     async def context(self, actor):

@@ -1,8 +1,10 @@
 # FIINOPS: архитектура и карта кода
 
-Версия 1.0 · 28.10.2026 · срез реализации `69c2842`.
+Версия 1.1 · 28.10.2026 · исходный срез `69c2842` + `refactor/shared-application-core`.
 Описание продукта — [PRODUCT.md](PRODUCT.md), требования —
 [TECHNICAL_SPECIFICATION.md](TECHNICAL_SPECIFICATION.md).
+
+Контракты команд и миграция 023 — [APPLICATION_CORE.md](APPLICATION_CORE.md).
 
 ## 1. Архитектурная модель
 
@@ -31,7 +33,8 @@ flowchart LR
 `ProjectService`, `DocumentService` и части старых интерфейсов остаются совместимые
 Telegram-фасады. Их наличие не следует считать основанием передавать Telegram
 User в новый общий сценарий. Весь репозиторий не объявляется полностью свободным
-от зависимостей SDK: это проверяется для ядра документов отдельно.
+от зависимостей SDK. Независимость общих команд, сценариев документов, отчётов
+и вступления проверяет `test_application_core.py`.
 
 ## 2. Точки запуска и процессы
 
@@ -64,8 +67,9 @@ MAX poller хранит курсор в БД и берёт блокировку 
 | Администрирование | `services/workspace.py`, `workspace_flow.py` | Компании, проекты, сотрудники, аудит, ввод названий |
 | Документы | `document_flow.py`, `document_drafts.py`, `documents.py` | Сценарий, состояние, проверки и запись |
 | Распознавание | `document_processing.py`, `recognition.py`, `pdf_files.py`, `image_files.py`, `deepseek.py`, `ocr_space.py` | Подготовка, OCR/LLM, ограничения и очистка |
+| Команды | `app/application/workspace.py`, `issue.py`, `views.py` | Общие сценарии, результаты и действия без SDK |
 | Деньги | `advances.py`, `advance_issue_flow.py`, `business_cards.py` | Выдачи, получение, расходы, возвраты, карты |
-| Отчёты | `money_reports.py`, `web_reports.py`, `views.py`, `report_exports.py`, `report_formatters.py` | Выборки, сводки, формат и XLSX |
+| Отчёты | `money_reports.py`, `reporting.py`, `views.py`, `report_exports.py`, `report_formatters.py` | Выборки, сводки, формат и XLSX |
 | ИИ-вопросы | `ai_reports.py`, `ai_report_engine.py`, `ai_report_catalog.py`, `ai_report_sessions.py`, `speech.py` | Разбор, разрешённые операции, контекст и STT |
 | Доступ веба | `web_auth.py`, `telegram_mini_auth.py` | Одноразовое подтверждение, сессии, проверка initData |
 | Состояние/совместимость | `app/state/` | Telegram-обёртки, pending actions, локальная сериализация |
@@ -170,7 +174,8 @@ erDiagram
 | Привязки | account_link_requests, account_link_attempts, account_link_events | Коды, лимиты и журнал привязок |
 | Web | web_login_requests, web_sessions, web_auth_attempts, web_auth_events, telegram_mini_logins | Вход и сессии |
 | Прочее состояние | pending_actions, recognition_settings, ai_report_sessions, max_poll_offsets | Ввод, провайдер, ИИ-контекст и polling |
-| Durable UI MAX | advance_issue_drafts, advance_issue_inputs, max_onboarding_inputs, max_company_invite_attempts, max_workspace_flows | Многошаговые формы и повторы |
+| Общие диалоги | advance_issue_drafts, advance_issue_inputs, workspace_flows | Канонический пользователь, Telegram/MAX, многошаговые команды |
+| MAX onboarding | max_onboarding_inputs, max_company_invite_attempts | Вступление и защита попыток |
 | Системное | workspace_events, advance_receipt_notifications, schema_migrations | Аудит, доставка уведомлений, версия схемы |
 
 Ключевые ограничения обеспечиваются не только видимостью кнопок:
