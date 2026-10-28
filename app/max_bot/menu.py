@@ -18,7 +18,7 @@ from app.application.views import Action as MenuButton, View as MenuText
 
 
 def command_text(text):
-    names = {'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
+    names = {'ии-отчёты': '/ai_reports', 'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
              'ввести invite-код': '/join', 'настройки': '/settings', 'мой профиль': '/profile',
              'компании': '/companies', 'пользователи': '/users', 'создать компанию': '/create_company',
              'статус системы': '/system_status', 'сотрудники': '/employees', 'моя компания': '/my_company',

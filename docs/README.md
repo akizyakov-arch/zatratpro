@@ -45,3 +45,5 @@
 Источники прежних постановок сохранены отдельно, без статуса действующего ТЗ:
 [исходное ТЗ](archive/TZ_INITIAL.txt),
 [прежний PROJECT_STATE](archive/PROJECT_STATE_INITIAL.txt).
+
+- [ИИ-отчёты MAX](MAX_AI_REPORTS.md): голос, текст, уточнения, ключи и ограничения.

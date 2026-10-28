@@ -1,9 +1,10 @@
 """Bounded AssemblyAI transcription, with no audio or transcript in logs."""
 import asyncio
 import logging
+import math
 import re
 import httpx
-from app.config import get_settings
+from app.config import get_speech_settings as get_settings
 
 logger = logging.getLogger(__name__)
 MAX_VOICE_BYTES = 10 * 1024 * 1024
@@ -39,6 +40,9 @@ async def transcribe_voice(data):
                     payload = response.json()
                     status = payload.get('status')
                     if status == 'completed':
+                        duration = payload.get('audio_duration')
+                        if duration is not None and (type(duration) not in (int, float) or not math.isfinite(duration) or duration > MAX_VOICE_SECONDS or duration <= 0):
+                            raise SpeechError('Голосовое должно быть не больше 2 минут.')
                         text = payload.get('text')
                         if not isinstance(text,str) or not text.strip():
                             raise SpeechError('Речь не удалось разобрать. Повтори голосом или отправь /ask с текстом вопроса.')
