@@ -8,6 +8,7 @@ from db_fixture import DatabaseFixture
 from test_max_adapter import message
 from app.max_bot.handler import MaxHandler
 from app.services.account_links import AccountLinkService, AccountLinkError
+from app.services.company_invitations import CompanyInvitations
 from app.services.companies import CompanyAccessError, CompanyService
 from app.services.max_onboarding import MaxOnboardingService
 
@@ -205,7 +206,7 @@ class MaxCompanyInviteTests(DatabaseFixture):
     async def test_failure_after_registration_rolls_back_account_and_user(self):
         before = await self.pool.fetchval('SELECT count(*) FROM users')
         code = await self.employee_code()
-        with patch.object(CompanyService, 'join_company_by_user_id', new=AsyncMock(side_effect=RuntimeError('Rollback'))):
+        with patch.object(CompanyInvitations, 'join_company_by_user_id', new=AsyncMock(side_effect=RuntimeError('Rollback'))):
             with self.assertRaises(RuntimeError):
                 await MaxOnboardingService().join(9001, code)
         self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM users'), before)

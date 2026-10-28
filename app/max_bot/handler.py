@@ -187,12 +187,6 @@ class MaxHandler:
         actor = await self.links.resolve('max', str(sender))
         if actor is None:
             return LINK_HELP
-        if command == '/invite':
-            member = await self.advances.membership(actor)
-            if member['role'] != 'manager':
-                raise AdvanceError('Приглашать сотрудников может только руководитель компании.')
-            invite = await WorkspaceService().invite_employee(actor)
-            return MenuText(f"Приглашение сотруднику действует 72 часа и используется один раз.\nМожно выбрать Telegram или MAX.\nКод: {invite['code']}\nВ MAX нажмите «Вступить по приглашению» и отправьте код отдельным сообщением.\nМожно выбрать Telegram и отправить /join {invite['code']}\nНовый код заменяет предыдущее неиспользованное приглашение сотрудника.", [HOME])
         if command == '/start':
             return MenuText('FIINOPS · Главное меню\nВыберите раздел.', await self._main_buttons(actor))
         if command == '/help':

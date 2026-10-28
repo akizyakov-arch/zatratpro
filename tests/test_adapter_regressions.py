@@ -21,21 +21,24 @@ from app.state.pending_actions import get_pending_action, pop_pending_action, se
 class AdapterRegressions(DatabaseFixture):
     async def test_late_save_does_not_consume_newer_money_prompt(self):
         manager, employee = await self.finance_ids()
-        await set_pending_action(self.manager.id, 'advance_issue', {'employee':employee,'project':self.project.id,'key':'previous-prompt'})
-        previous = await get_pending_action(self.manager.id)
-        original = finance_ui.service.issue
+        from app.services.advance_issue_flow import AdvanceIssueFlow
+        from app.services.advances import AdvanceService
+        flow = AdvanceIssueFlow()
+        draft = await flow.apply(manager, 'telegram', 'start', 'start')
+        for event, action, value in [('e','employee',employee),('p','project',self.project.id),('a','text','100'),('purpose','skip_purpose',None)]:
+            await flow.apply(manager, 'telegram', event, action, value, draft['id'])
+        original = AdvanceService.issue
 
-        async def change_prompt(*args, **kwargs):
-            result = await original(*args, **kwargs)
+        async def change_prompt(service, *args, **kwargs):
+            result = await original(service, *args, **kwargs)
             await set_pending_action(self.manager.id, 'card_create')
             return result
 
-        message=SimpleNamespace(from_user=self.manager,text='100 Materials',answer=AsyncMock())
-        with patch.object(finance_ui.service, 'issue', change_prompt):
-            await finance_ui.amount_input(message, pending_action=previous)
+        with patch.object(AdvanceService, 'issue', change_prompt):
+            await flow.apply(manager, 'telegram', 'confirm', 'confirm', draft_id=draft['id'])
         current=await get_pending_action(self.manager.id)
         self.assertEqual(current.action, 'card_create')
-        self.assertNotEqual(current.revision, previous.revision)
+        self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM advances'), 1)
 
     async def test_old_card_input_does_not_consume_new_prompt(self):
         await set_pending_action(self.manager.id, 'card_create')
@@ -44,13 +47,13 @@ class AdapterRegressions(DatabaseFixture):
 
         async def change_prompt(*args, **kwargs):
             result = await original(*args, **kwargs)
-            await set_pending_action(self.manager.id, 'advance_issue', {'key':'new'})
+            await set_pending_action(self.manager.id, 'advance_return', {'key':'new'})
             return result
 
         message=SimpleNamespace(from_user=self.manager,text='Test card 1234',answer=AsyncMock())
         with patch.object(card_ui.service, 'register', change_prompt):
             await card_ui.create_card(message, pending_action=previous)
-        self.assertEqual((await get_pending_action(self.manager.id)).action, 'advance_issue')
+        self.assertEqual((await get_pending_action(self.manager.id)).action, 'advance_return')
 
     async def test_compare_and_delete_rejects_expired_revision(self):
         await set_pending_action(self.manager.id,'card_create')
@@ -91,7 +94,7 @@ class AdapterRegressions(DatabaseFixture):
 
     async def test_outdated_filter_snapshot_cannot_execute_new_issue(self):
         manager, employee = await self.finance_ids()
-        await set_pending_action(self.manager.id,'advance_issue',{'employee':employee,'project':self.project.id,'key':'obsolete'})
+        await set_pending_action(self.manager.id,'advance_return',{'employee':employee,'project':self.project.id,'key':'obsolete'})
         old=await get_pending_action(self.manager.id)
         await set_pending_action(self.manager.id,'card_create')
         message=SimpleNamespace(from_user=self.manager,text='100 Materials',answer=AsyncMock())

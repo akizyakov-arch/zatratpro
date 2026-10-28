@@ -22,7 +22,7 @@ from app.services.database import close_db, init_db
 from app.services.report_periods import report_period_start
 from app.services.money_reports import get_money_report_for_user, cash_and_employee_debt
 from app.services.web_finance_directory import WebFinanceDirectory
-from app.services.web_reports import WebReportService
+from app.services.reporting import ReportService
 from app.services.workspace import WorkspaceError, WorkspaceService
 from app.web.auth import current_user, require_csrf, router as auth_router
 from app.web.config import get_web_settings, mini_app_url
@@ -32,7 +32,7 @@ STATIC = Path(__file__).parent / 'static'
 workspace = WorkspaceService()
 advances = AdvanceService()
 cards = BusinessCardService()
-reports = WebReportService()
+reports = ReportService()
 finance_directory = WebFinanceDirectory()
 
 

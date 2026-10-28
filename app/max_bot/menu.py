@@ -13,20 +13,8 @@ PAGE_SIZE = 5
 CALLBACK_PREFIX = 'fiinops:'
 
 
-class MenuButton(str):
-    def __new__(cls, label, command):
-        result = super().__new__(cls, label)
-        if not isinstance(command, str) or not command.startswith('/') or len(command) > 1000:
-            raise ValueError('Некорректная команда кнопки.')
-        result.command = command
-        return result
-
-
-class MenuText(str):
-    def __new__(cls, text, buttons):
-        result = super().__new__(cls, text)
-        result.buttons = buttons
-        return result
+# Adapter compatibility aliases; the contracts belong to the application.
+from app.application.views import Action as MenuButton, View as MenuText
 
 
 def command_text(text):

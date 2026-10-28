@@ -14,6 +14,8 @@ from app.services.advances import AdvanceError
 from app.services.json_formatter import chunk_message
 from app.services.database import get_pool
 from app.state.pending_actions import get_pending_action
+from app.services.workspace_flow import WorkspaceFlow
+from app.services.advance_issue_flow import AdvanceIssueFlow
 from app.state.locks import serialize_user
 from app.ui.main_menu import MENU_BUTTONS
 
@@ -43,7 +45,7 @@ async def enter_reports(callback):
     if callback.from_user is None or callback.message is None:return
     try:
         actor=await report_actor(callback.from_user.id)
-        if await get_pending_action(callback.from_user.id):
+        if await get_pending_action(callback.from_user.id) or await WorkspaceFlow().current(actor) or await AdvanceIssueFlow().current(actor):
             await callback.answer('Сначала заверши текущее действие или вернись в главное меню.',show_alert=True);return
         await remember(actor)
         await callback.answer()
@@ -72,7 +74,7 @@ async def ask_report(message):
     try:
         actor=await report_actor(message.from_user.id)
         if message.text=='ИИ-отчёты' or (message.text and message.text.startswith('/ask') and len(message.text.split(maxsplit=1))==1):
-            if await get_pending_action(message.from_user.id):raise ReportQuestionError('Сначала заверши текущее действие.')
+            if await get_pending_action(message.from_user.id) or await WorkspaceFlow().current(actor) or await AdvanceIssueFlow().current(actor):raise ReportQuestionError('Сначала заверши текущее действие.')
             await remember(actor)
             await message.answer(EXAMPLES,reply_markup=EXIT);return
         await WebAuthService()._rate_limit('start','ai-report:'+str(actor),5)
@@ -136,6 +138,7 @@ class ReportTextFilter(BaseFilter):
         if await get_pending_action(message.from_user.id):return False
         try:
             actor=await report_actor(message.from_user.id)
+            if await WorkspaceFlow().current(actor) or await AdvanceIssueFlow().current(actor):return False
             saved=await session(actor)
             return bool(saved and saved['enabled'])
         except (ReportQuestionError,WorkspaceError):return False
