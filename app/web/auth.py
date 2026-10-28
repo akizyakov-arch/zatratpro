@@ -75,7 +75,9 @@ async def start(request: Request, response: Response, platform: Literal['telegra
         raise HTTPException(429, str(exc)) from None
     if platform == 'max':
         set_cookie(response, PENDING_COOKIE, browser_token, 300)
-        return {'id': result['id'], 'command': '/web_login ' + result['code'], 'expires_at': result['expires_at']}
+        from app.web.max_login import login_link
+        url = await login_link(result['code'])
+        return {'id': result['id'], 'command': '/web_login ' + result['code'], 'bot_url': url, 'expires_at': result['expires_at']}
     username = get_web_settings().bot_username.lstrip('@')
     if not re.fullmatch(r'[A-Za-z0-9_]{5,32}', username):
         raise HTTPException(503, 'Не настроено имя Telegram-бота.')

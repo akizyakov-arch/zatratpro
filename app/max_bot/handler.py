@@ -59,6 +59,8 @@ def event_message(update):
         if isinstance(payload, str):
             if re.fullmatch(r'link_[A-Za-z0-9]{12}', payload):
                 text = '/link ' + payload[5:]
+            elif re.fullmatch(r'web_[A-Za-z0-9_-]{32}', payload):
+                text = '/web_login ' + payload[4:]
             elif re.fullmatch(r'join_(?:[A-Za-z0-9]{10}|[A-Za-z0-9]{12})', payload):
                 text = '/join ' + payload[5:]
     elif kind == 'message_callback':

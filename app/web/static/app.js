@@ -3292,10 +3292,10 @@
       );
     }
   }
-  function safeBotUrl(value) {
+  function safeBotUrl(value, platform = "telegram") {
     try {
       const url = new URL(value);
-      return url.protocol === "https:" && url.hostname === "t.me"
+      return url.protocol === "https:" && url.hostname === (platform === "max" ? "max.ru" : "t.me")
         ? url.href
         : "#";
     } catch {
@@ -3359,12 +3359,14 @@
                 h(
                   "span",
                   {},
-                  platform === "max"
+                  platform === "max" && !data.bot_url
                   ? "Шаг 1: скопируйте команду ниже и отправьте её боту FIINOPS в MAX. Шаг 2: нажмите в боте «Подтвердить вход». Шаг 3: вернитесь в этот браузер."
-                  : "Ожидаем подтверждение в боте. После подтверждения панель откроется автоматически.",
+                  : platform === "max"
+                    ? "Нажмите «Открыть MAX», подтвердите вход в боте и вернитесь в этот браузер."
+                    : "Ожидаем подтверждение в боте. После подтверждения панель откроется автоматически.",
                 ),
               ),
-              platform === "max" ? h("div", {class: "notice"},
+              platform === "max" && !data.bot_url ? h("div", {class: "notice"},
                 h("p", {}, "Откройте вашего бота FIINOPS в MAX, отправьте команду ниже и подтвердите вход. Затем вернитесь в этот браузер."),
                 h("pre", {}, data.command),
                 button("Скопировать команду", async () => {
@@ -3378,12 +3380,12 @@
                 "a",
                 {
                   class: "button primary full",
-                  href: safeBotUrl(data.bot_url),
+                  href: safeBotUrl(data.bot_url, platform),
                   target: "_blank",
                   rel: "noopener noreferrer",
                 },
-                icon("telegram"),
-                "Открыть Telegram",
+                icon(platform === "max" ? "shield" : "telegram"),
+                platform === "max" ? "Открыть MAX" : "Открыть Telegram",
               ),
             );
             loginAction.textContent = platform === "max" ? "Новый запрос через MAX" : "Новый запрос через Telegram";

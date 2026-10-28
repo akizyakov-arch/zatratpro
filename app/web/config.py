@@ -14,6 +14,7 @@ class WebSettings(BaseSettings):
     allowed_hosts: str = ''
     cookie_secure: bool = True
     bot_username: str = 'prozatrat_bot'
+    max_bot_username: str = ''
     trusted_proxies: str = '127.0.0.1'
 
     model_config = SettingsConfigDict(

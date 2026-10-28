@@ -298,10 +298,11 @@ class WebAPITests(DatabaseFixture):
     async def test_max_browser_login_uses_secure_cookie_and_same_permissions(self):
         manager, _ = await self.finance_ids()
         await self.pool.execute("INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'max','9001')", manager)
-        response = await self.client.post('/api/auth/start?platform=max', headers={'origin': 'https://testserver'})
+        with patch('app.web.max_login.login_link', return_value='https://max.ru/test_bot?start=web_test'):
+            response = await self.client.post('/api/auth/start?platform=max', headers={'origin': 'https://testserver'})
         self.assertEqual(response.status_code, 200, response.text)
         data = response.json()
-        self.assertNotIn('bot_url', data)
+        self.assertEqual(data['bot_url'], 'https://max.ru/test_bot?start=web_test')
         self.assertIn('Secure', response.headers['set-cookie'])
         self.assertIn('HttpOnly', response.headers['set-cookie'])
         await WebAuthService().present(9001, data['command'].split()[1], platform='max')

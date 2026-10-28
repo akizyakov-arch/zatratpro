@@ -108,3 +108,15 @@ class MaxWebLoginTests(DatabaseFixture):
         reply = (await handler.handle(message(9001, reply.buttons[0][0])))[1]
         self.assertIn('Вход подтверждён', reply)
         self.assertEqual((await WebAuthService().consume(binding))['status'], 'authenticated')
+
+    async def test_deep_link_bot_started_requires_confirmation(self):
+        from app.max_bot.handler import MaxHandler
+        from test_max_adapter import message
+        await self.setup_max()
+        binding, req = await self.request()
+        handler = MaxHandler()
+        reply = (await handler.handle({'update_type': 'bot_started', 'user': {'user_id': 9001, 'is_bot': False}, 'payload': 'web_' + req['code']}))[1]
+        self.assertIn('Подтверждайте', reply)
+        self.assertEqual((await WebAuthService().consume(binding))['status'], 'pending')
+        await handler.handle(message(9001, reply.buttons[0][0]))
+        self.assertEqual((await WebAuthService().consume(binding))['status'], 'authenticated')
