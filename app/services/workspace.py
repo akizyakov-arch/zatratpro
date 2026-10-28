@@ -5,6 +5,7 @@ guards apply equally to the browser and the older Telegram adapter.
 """
 import json
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import asyncpg
@@ -53,6 +54,15 @@ async def ensure_settled(connection, company_id, *, employee_id=None, project_id
         raise WorkspaceError('Сначала завершите расчёты и проверьте ожидающие операции.')
 
 
+@asynccontextmanager
+async def workspace_transaction(connection=None):
+    if connection is not None:
+        yield connection
+    else:
+        async with get_pool().acquire() as c, c.transaction():
+            yield c
+
+
 class WorkspaceService:
     async def _context(self, c, actor):
         owner_id = get_owner_telegram_id()
@@ -69,7 +79,7 @@ class WorkspaceService:
         if row['owner']:
             result.update(role='owner', company_id=None, company_name=None)
         elif row['role'] != 'manager' or row['company_status'] != 'active':
-            raise WorkspaceError('Веб-панель доступна руководителю активной компании и владельцу системы.')
+            raise WorkspaceError('Действие доступно руководителю активной компании и владельцу системы.')
         return {key: result[key] for key in ('id', 'name', 'role', 'company_id', 'company_name')}
 
     async def context(self, actor):
@@ -123,12 +133,20 @@ class WorkspaceService:
             result = dict(row)
             result['document_count'] = await c.fetchval('SELECT count(*) FROM documents WHERE project_id=$1', project_id)
             result['total_amount'] = await c.fetchval("SELECT COALESCE(sum(total_amount),0) FROM documents WHERE project_id=$1 AND currency='RUB'", project_id)
+            result['created_by_name'] = await c.fetchval("SELECT COALESCE(NULLIF(concat_ws(' ',first_name,last_name),''),username) FROM users WHERE id=$1", row['created_by_user_id'])
             result['has_open_settlements'] = await c.fetchval('SELECT workspace_has_open_settlements($1,NULL,$2)', ctx['company_id'], project_id)
             return result
 
-    async def create_project(self, actor, name):
+    async def project_documents(self, actor, project_id):
+        async with get_pool().acquire() as c:
+            ctx = await self._manager(c, actor)
+            if not await c.fetchval('SELECT 1 FROM projects WHERE id=$1 AND company_id=$2', project_id, ctx['company_id']):
+                raise WorkspaceError('Проект недоступен.')
+            return await c.fetch('SELECT vendor,total_amount,currency FROM documents WHERE project_id=$1 AND company_id=$2 ORDER BY created_at DESC,id DESC', project_id, ctx['company_id'])
+
+    async def create_project(self, actor, name, *, connection=None):
         name = _name(name)
-        async with get_pool().acquire() as c, c.transaction():
+        async with workspace_transaction(connection) as c:
             ctx = await self._manager(c, actor, lock=True)
             try:
                 row = await c.fetchrow('INSERT INTO projects(company_id,name,created_by_user_id) VALUES($1,$2,$3) RETURNING *', ctx['company_id'], name, actor)
@@ -137,9 +155,9 @@ class WorkspaceService:
             await self._audit(c, actor, 'created', 'project', row['id'], ctx['company_id'], name=name)
             return dict(row)
 
-    async def rename_project(self, actor, project_id, name):
+    async def rename_project(self, actor, project_id, name, *, connection=None):
         name = _name(name)
-        async with get_pool().acquire() as c, c.transaction():
+        async with workspace_transaction(connection) as c:
             ctx = await self._manager(c, actor, lock=True)
             try:
                 row = await c.fetchrow("UPDATE projects SET name=$3 WHERE id=$1 AND company_id=$2 AND status='active' RETURNING *", project_id, ctx['company_id'], name)
@@ -255,6 +273,7 @@ class WorkspaceService:
         row = await c.fetchrow('''SELECT c.*,u.first_name AS manager_first_name,u.last_name AS manager_last_name,
             (SELECT count(*) FROM company_members cm WHERE cm.company_id=c.id AND cm.role='employee' AND cm.status='active') AS employee_count,
             (SELECT count(*) FROM projects p WHERE p.company_id=c.id AND p.status='active') AS project_count,
+            (SELECT count(*) FROM projects p WHERE p.company_id=c.id AND p.status='archived') AS archived_project_count,
             (SELECT count(*) FROM documents d WHERE d.company_id=c.id) AS document_count
             FROM companies c LEFT JOIN users u ON u.id=c.manager_user_id WHERE c.id=$1''', company_id)
         if row is None:
@@ -275,9 +294,9 @@ class WorkspaceService:
                 WHERE c.name ILIKE $1 AND ($2::text IS NULL OR c.status=$2) ORDER BY ''' + order,
                 ['%' + q[:200] + '%', status], page, per_page)
 
-    async def create_company(self, actor, name):
+    async def create_company(self, actor, name, *, connection=None):
         name = _name(name)
-        async with get_pool().acquire() as c, c.transaction():
+        async with workspace_transaction(connection) as c:
             await self._owner(c, actor)
             row = await c.fetchrow('INSERT INTO companies(name,owner_user_id) VALUES($1,$2) RETURNING *', name, actor)
             await self._audit(c, actor, 'created', 'company', row['id'], row['id'], name=name)
@@ -306,6 +325,20 @@ class WorkspaceService:
                 WHERE concat_ws(' ',u.first_name,u.last_name,u.username,u.id::text) ILIKE $1
                 AND ($2::boolean IS NULL OR u.is_active=$2) ORDER BY ''' + order,
                 ['%' + q[:200] + '%', None if status is None else status == 'active', actor], page, per_page, people=True)
+
+    async def user(self, actor, user_id):
+        async with get_pool().acquire() as c:
+            await self._owner(c, actor)
+            row = await c.fetchrow("""SELECT u.id,u.first_name,u.last_name,u.username,u.is_active,
+                cm.company_id,cm.role,c.name AS company_name FROM users u
+                LEFT JOIN company_members cm ON cm.user_id=u.id AND cm.status='active'
+                LEFT JOIN companies c ON c.id=cm.company_id WHERE u.id=$1""", user_id)
+            if row is None:
+                raise WorkspaceError('Пользователь не найден.')
+            result = _person(row)
+            if user_id == actor:
+                result['role'] = 'owner'
+            return result
 
     async def assign_user(self, actor, user_id, company_id, role):
         if role not in ('manager', 'employee'):
@@ -375,8 +408,8 @@ class WorkspaceService:
             await self._audit(c, actor, 'access_resumed' if active else 'access_suspended', 'user', user_id, reason=reason)
             return dict(row)
 
-    async def manager_invite(self, actor, company_id, *, code_factory=None):
-        async with get_pool().acquire() as c, c.transaction():
+    async def manager_invite(self, actor, company_id, *, code_factory=None, connection=None):
+        async with workspace_transaction(connection) as c:
             await self._owner(c, actor)
             return await self._invite(c, actor, company_id, 'manager', code_factory=code_factory)
 

@@ -51,7 +51,7 @@ class CrossPlatformProfileTests(DatabaseFixture):
         self.assertIn('Подтвердите', target.answer.call_args.args[0])
         self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM users'), before)
         pending = (await MaxHandler().handle(message(9001, 'Обновить профиль')))[1]
-        self.assertIn(['Подтвердить Telegram · ' + request], pending.buttons)
+        self.assertIn(['Подтвердить подключение'], pending.buttons)
         for _ in range(2):
             reply = (await MaxHandler().handle(message(9001, 'Подтвердить Telegram · ' + request)))[1]
             self.assertNotIn(['Подключить Telegram'], reply.buttons)
@@ -75,7 +75,7 @@ class CrossPlatformProfileTests(DatabaseFixture):
         await links.confirm('telegram', '1901', link['id'])
         self.assertEqual(await links.resolve('max', '9001'), actor)
         self.assertEqual(await self.pool.fetchval('SELECT manager_user_id FROM companies WHERE id=$1', company.id), actor)
-        self.assertIn(['Пригласить сотрудника'], (await MaxHandler().handle(message(9001, '/start')))[1].buttons)
+        self.assertIn(['Проекты', 'Сотрудники'], (await MaxHandler().handle(message(9001, '/start')))[1].buttons)
 
     async def test_employee_can_start_in_max_and_connect_telegram_with_ledger_preserved(self):
         from app.services.advances import AdvanceService

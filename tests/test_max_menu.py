@@ -34,7 +34,7 @@ class MaxMenuTransportTests(unittest.IsolatedAsyncioTestCase):
         keyboard = bodies[-1]['attachments'][0]
         self.assertEqual(keyboard['type'], 'inline_keyboard')
         self.assertEqual(keyboard['payload']['buttons'][0], [
-            {'type': 'message', 'text': 'Проекты'}, {'type': 'message', 'text': 'Деньги'}])
+            {'type': 'message', 'text': 'Загрузить документ'}])
         self.assertTrue(all(request.url.params['user_id'] == '123' for request in requests))
 
     async def test_unknown_labels_cannot_select_actor_or_inject_multiple_commands(self):
@@ -86,21 +86,21 @@ class MaxMenuIntegrationTests(DatabaseFixture):
         ids = [await AdvanceService().issue(manager, employee, self.project.id, '100', 'Purchase', f'menu-{i}') for i in range(7)]
         first = await self.press('Деньги')
         self.assertIn('страница 1/2', first)
-        self.assertEqual(sum(label.startswith('Выдача №') for row in first.buttons for label in row), 5)
+        self.assertEqual(sum(getattr(label, 'command', '').startswith('/advance ') for row in first.buttons for label in row), 5)
         second = await self.press('Выдачи · страница 2')
-        self.assertEqual(sum(label.startswith('Выдача №') for row in second.buttons for label in row), 2)
-        self.assertIn(['Выдачи · страница 1'], second.buttons)
+        self.assertEqual(sum(getattr(label, 'command', '').startswith('/advance ') for row in second.buttons for label in row), 2)
+        self.assertIn(['←'], second.buttons)
         aid = ids[0]
         card = await self.press(f'Выдача №{aid}')
-        self.assertIn([f'Подтвердить получение №{aid}'], card.buttons)
+        self.assertIn(['Подтвердить получение'], card.buttons)
         prompt = await self.press(f'Подтвердить получение №{aid}')
         self.assertIn('100.00 RUB', prompt)
-        self.assertIn([f'Да, получил №{aid}'], prompt.buttons)
+        self.assertIn(['Да, получил'], prompt.buttons)
         self.assertIsNone((await AdvanceService().card(employee, aid))['received_at'])
         for _ in range(2):
             self.assertIn('подтверждено', await self.press(f'Да, получил №{aid}'))
         self.assertEqual(await self.pool.fetchval("SELECT count(*) FROM advance_events WHERE advance_id=$1 AND kind='received'", aid), 1)
-        self.assertNotIn([f'Подтвердить получение №{aid}'], (await self.press(f'Выдача №{aid}')).buttons)
+        self.assertNotIn(['Подтвердить получение'], (await self.press(f'Выдача №{aid}')).buttons)
         self.assertIn('уже подтверждено', await self.press(f'Подтвердить получение №{aid}'))
         self.assertIn(HOME, card.buttons)
 
@@ -110,7 +110,7 @@ class MaxMenuIntegrationTests(DatabaseFixture):
         await self.link(self.manager, 9002)
         aid = await AdvanceService().issue(manager, employee, self.project.id, '100', 'Private', 'menu-denied')
         manager_card = await self.press(f'Выдача №{aid}', sender=9002)
-        self.assertNotIn([f'Подтвердить получение №{aid}'], manager_card.buttons)
+        self.assertNotIn(['Подтвердить получение'], manager_card.buttons)
         self.assertIn('недоступно', await self.press(f'Подтвердить получение №{aid}', sender=9002))
         self.assertIn('Получение подтверждает сотрудник', await self.press(f'Да, получил №{aid}', sender=9002))
         self.assertIsNone((await AdvanceService().card(employee, aid))['received_at'])

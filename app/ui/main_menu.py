@@ -1,75 +1,21 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
-
+from app.ui.menu_layout import MENU_BUTTONS, main_menu_rows
 
 MAIN_MENU_TEXT = "Главное меню ZATRATPRO."
 
 
-MENU_BUTTONS = {
-    "upload_document": "Загрузить документ",
-    "companies": "Компании",
-    "users": "Пользователи",
-    "create_company": "Создать компанию",
-    "system_status": "Статус системы",
-    "projects": "Проекты",
-    "employees": "Сотрудники",
-    "my_company": "Моя компания",
-    "reports": "Отчеты",
-    "my_documents": "Мои документы",
-    "join_company": "Ввести invite-код",
-    "help": "Помощь",
-    "back": "Назад",
-    "money": "Деньги",
-    "settings": "Настройки",
-    "profile": "Мой профиль",
-}
-
-
 def build_main_menu_keyboard(
-    menu_kind: str = "employee",
+    menu_kind: str = 'employee',
     has_company: bool = True,
     can_view_reports: bool = False,
     allow_web_app: bool = True,
 ) -> ReplyKeyboardMarkup:
-    if menu_kind == "platform_owner":
-        keyboard = [
-            [KeyboardButton(text=MENU_BUTTONS["companies"]), KeyboardButton(text=MENU_BUTTONS["users"])],
-            [KeyboardButton(text=MENU_BUTTONS["create_company"]), KeyboardButton(text=MENU_BUTTONS["system_status"])],
-            [KeyboardButton(text=MENU_BUTTONS["help"])],
-        ]
-    elif not has_company:
-        keyboard = [
-            [KeyboardButton(text=MENU_BUTTONS["join_company"])],
-            [KeyboardButton(text=MENU_BUTTONS["help"])],
-        ]
-    elif menu_kind == "manager":
-        keyboard = [
-            [KeyboardButton(text=MENU_BUTTONS["upload_document"])],
-            [KeyboardButton(text=MENU_BUTTONS["projects"]), KeyboardButton(text=MENU_BUTTONS["employees"])],
-            [KeyboardButton(text=MENU_BUTTONS["my_company"]), KeyboardButton(text=MENU_BUTTONS["reports"])],
-            [KeyboardButton(text=MENU_BUTTONS["help"])],
-        ]
-    else:
-        second_row = [KeyboardButton(text=MENU_BUTTONS["my_documents"])]
-        if can_view_reports:
-            second_row.append(KeyboardButton(text=MENU_BUTTONS["reports"]))
-        keyboard = [
-            [KeyboardButton(text=MENU_BUTTONS["upload_document"])],
-            second_row,
-            [KeyboardButton(text=MENU_BUTTONS["help"])],
-        ]
-
-    if has_company and menu_kind != 'platform_owner':
-        keyboard.insert(-1, [KeyboardButton(text=MENU_BUTTONS['money'])])
-
+    rows = main_menu_rows(menu_kind, has_company, can_view_reports)
     if menu_kind == 'manager' and has_company and allow_web_app:
         from app.web.config import mini_app_url
-        url = mini_app_url()
-        if url:
-            keyboard.insert(0, [KeyboardButton(text='Панель руководителя')])
-    keyboard.insert(-1, [KeyboardButton(text=MENU_BUTTONS['profile']), KeyboardButton(text=MENU_BUTTONS['settings'])])
-
+        if mini_app_url():
+            rows.insert(0, ['Панель руководителя'])
     return ReplyKeyboardMarkup(
-        keyboard=keyboard,
-        resize_keyboard=True,
-        input_field_placeholder="Выбери действие",
+        keyboard=[[KeyboardButton(text=label) for label in row] for row in rows],
+        resize_keyboard=True, input_field_placeholder='Выбери действие',
     )

@@ -3,6 +3,8 @@ import logging
 import os
 from types import SimpleNamespace
 import unittest
+from uuid import uuid4
+from app.max_bot.menu import CALLBACK_PREFIX, MenuButton
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -17,6 +19,13 @@ from app.services.advances import AdvanceService
 
 
 def message(user_id, text, *, chat_type='dialog', is_bot=False):
+    if isinstance(text, MenuButton):
+        return {'update_type': 'message_callback', 'callback': {
+            'callback_id': uuid4().hex, 'user': {'user_id': user_id, 'is_bot': is_bot},
+            'payload': CALLBACK_PREFIX + text.command}, 'message': {
+            'sender': {'user_id': 9999, 'is_bot': True},
+            'recipient': {'chat_type': chat_type, 'user_id': user_id},
+            'body': {'mid': 'bot-message', 'text': 'Кнопки'}}}
     return {'update_type': 'message_created', 'timestamp': 1234, 'message': {
         'sender': {'user_id': user_id, 'is_bot': is_bot},
         'recipient': {'chat_id': 7000, 'chat_type': chat_type, 'user_id': 9999},
@@ -66,7 +75,7 @@ class MaxTransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await client.updates(0, 30), ([], 44))
         self.assertEqual(requests[0].url.params['marker'], '0')
         self.assertEqual(requests[0].url.params['timeout'], '30')
-        self.assertEqual(requests[0].url.params['types'], 'bot_started,message_created')
+        self.assertEqual(requests[0].url.params['types'], 'bot_started,message_created,message_callback')
 
     async def test_invalid_update_pages_are_not_accepted(self):
         for data in ({'updates': None, 'marker': 1}, {'updates': [{}], 'marker': True},

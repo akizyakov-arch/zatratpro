@@ -6,7 +6,7 @@ import logging
 import asyncpg
 
 from app.max_bot.client import MaxAPIError
-from app.max_bot.handler import MaxHandler
+from app.max_bot.handler import MaxHandler, event_message
 from app.services.database import get_pool
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,17 @@ async def process_batch(client, handler, updates, *, check_lease=None):
     while pending:
         if check_lease:
             await check_lease()
-        reply = await handler.handle(pending[0])
+        update = pending[0]
+        if update.get('update_type') == 'message_callback' and event_message(update) is not None:
+            try:
+                await client.answer(update['callback']['callback_id'])
+            except MaxAPIError as exc:
+                # Old/already answered callbacks must not block the update queue.
+                if exc.status not in (400, 404, 410):
+                    raise
+            if check_lease:
+                await check_lease()
+        reply = await handler.handle(update)
         if reply is not None:
             if check_lease:
                 await check_lease()
