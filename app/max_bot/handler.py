@@ -31,7 +31,8 @@ HELP = ('FIINOPS · MAX\n'
         '/balance — деньги у сотрудников и долги компании\n'
         '/advance ID — карточка выдачи\n'
         '/receive ID — подтвердить фактическое получение денег\n'
-        '/reports — отчёты и ИИ-запросы\n'
+        '/reports — отчёты, панель и ИИ-запросы\n'
+        '/web_login КОД — подтвердить вход из браузера через MAX\n'
         '/ask ВОПРОС — ИИ-отчёт текстом или голосовым сообщением\n'
         '/report [month|week|all_time] — денежный отчёт\n'
         '/join КОД — вступить в компанию без Telegram\n'
@@ -115,6 +116,10 @@ class MaxHandler:
         if text.split(maxsplit=1)[:1] in (['/web_login'], ['/web_approve'], ['/web_deny']):
             from app.max_bot.web_login import handle_login
             return sender, await handle_login(sender, text)
+
+        if text == '/panel':
+            from app.max_bot.web_login import open_panel
+            return sender, await open_panel(sender)
 
         body = update.get('message', {}).get('body', {})
         event_id = ('callback:' + hashlib.sha256(update['callback']['callback_id'].encode()).hexdigest() if update.get('update_type') == 'message_callback'
@@ -211,7 +216,7 @@ class MaxHandler:
             return MenuText(HELP, await self._main_buttons(actor))
         if command == '/reports':
             await self.directory.projects(actor)
-            buttons = [[MenuButton('ИИ-отчёты', '/ai_reports')]] if (await self.advances.membership(actor))['role'] == 'manager' else []
+            buttons = [[MenuButton('Панель руководителя', '/panel')], [MenuButton('ИИ-отчёты', '/ai_reports')]] if (await self.advances.membership(actor))['role'] == 'manager' else []
             return MenuText('Отчёты\nВыберите ИИ-запрос или период денежного отчёта (UTC).', buttons + PERIODS)
         if command == '/profile':
             return await self.profile_menu.show(sender, actor)

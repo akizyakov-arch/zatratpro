@@ -77,8 +77,14 @@ class WebAuthService:
             str(external_id), platform,
         )
         if user_id is None:
-            raise WebAuthError('Сначала зарегистрируйтесь в боте и получите доступ к компании.')
+            raise WebAuthError('Этот аккаунт не подключён к FIINOPS. Вступите в компанию по приглашению или подключите существующий профиль в разделе «Мой профиль».')
         return await self._user(c, user_id)
+
+    async def platform_access(self, platform, external_id):
+        if platform not in ('telegram', 'max'):
+            raise WebAuthError('Недействительный канал входа.')
+        async with get_pool().acquire() as c:
+            return await self._platform_user(c, external_id, platform)
 
     async def _telegram_user(self, c, external_id):
         return await self._platform_user(c, external_id, 'telegram')

@@ -1,6 +1,6 @@
 """Authenticated MAX events approve the common browser-bound login request."""
 from app.services.web_auth import WebAuthService, WebAuthError
-from app.max_bot.menu import MenuText, MenuButton, HOME
+from app.max_bot.menu import MenuText, MenuButton, LinkButton, HOME
 
 async def handle_login(sender, text):
     service = WebAuthService()
@@ -17,5 +17,18 @@ async def handle_login(sender, text):
                  [MenuButton('Отклонить', '/web_deny ' + result['id'])]])
         status = await service.decide(sender, value, command == '/web_approve', platform='max')
         return MenuText('Вход подтверждён. Вернитесь в браузер.' if status == 'approved' else 'Вход отклонён.', [HOME])
+    except WebAuthError as exc:
+        return MenuText(str(exc), [HOME])
+
+
+async def open_panel(sender):
+    from app.web.config import panel_url
+    try:
+        await WebAuthService().platform_access('max', sender)
+        url = panel_url()
+        if not url:
+            return MenuText('Панель ещё не подключена: не настроен HTTPS-адрес сервера.', [HOME])
+        return MenuText('Откройте панель. Для входа выберите «Продолжить через MAX», скопируйте команду и отправьте её в этот чат. Подтвердите вход и вернитесь в тот же браузер.',
+                        [[LinkButton('Открыть панель', url)], [MenuButton('Назад к отчётам', '/reports')]])
     except WebAuthError as exc:
         return MenuText(str(exc), [HOME])

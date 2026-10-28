@@ -3,7 +3,7 @@ import ssl
 from pathlib import Path
 
 import httpx
-from app.max_bot.menu import CALLBACK_PREFIX, MenuButton
+from app.max_bot.menu import CALLBACK_PREFIX, MenuButton, LinkButton
 
 API_URL = 'https://platform-api2.max.ru'
 ROOT_CA = Path(__file__).with_name('certs') / 'russian_trusted_root_ca.pem'
@@ -94,7 +94,8 @@ class MaxClient:
             body = {'text': str(text[start:start + 3500])}
             if buttons and start + 3500 >= len(text):
                 body['attachments'] = [{'type': 'inline_keyboard', 'payload': {'buttons': [
-                    [({'type': 'callback', 'text': str(label)[:128], 'payload': CALLBACK_PREFIX + label.command}
+                    [({'type': 'link', 'text': str(label)[:128], 'url': label.url} if isinstance(label, LinkButton) else
+                     {'type': 'callback', 'text': str(label)[:128], 'payload': CALLBACK_PREFIX + label.command}
                       if isinstance(label, MenuButton) else {'type': 'message', 'text': str(label)[:128]}) for label in row] for row in buttons
                 ]}}]
             await self._request('POST', '/messages', params={'user_id': user_id, 'disable_link_preview': 'true'},

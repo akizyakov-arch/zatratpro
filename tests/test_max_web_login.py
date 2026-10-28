@@ -84,3 +84,27 @@ class MaxWebLoginTests(DatabaseFixture):
         await self.pool.execute(migration.read_text())
         await WebAuthService().decide(self.manager.id, req['id'], True)
         self.assertEqual((await WebAuthService().consume(binding))['status'], 'authenticated')
+
+    async def test_max_reports_panel_button_opens_native_https_link(self):
+        from unittest.mock import patch
+        from app.max_bot.handler import MaxHandler
+        from test_max_adapter import message
+        await self.setup_max()
+        report = (await MaxHandler().handle(message(9001, '/reports')))[1]
+        panel_button = next(b for row in report.buttons for b in row if str(b) == 'Панель руководителя')
+        with patch.dict(os.environ, {'WEB_ORIGIN': 'https://panel.example', 'WEB_MINI_APP_ENABLED': 'false'}):
+            reply = (await MaxHandler().handle(message(9001, panel_button)))[1]
+        self.assertEqual(reply.buttons[0][0].url, 'https://panel.example')
+        denied = (await MaxHandler().handle(message(9002, '/panel')))[1]
+        self.assertNotIn('Открыть панель', str(denied.buttons))
+
+    async def test_max_login_from_real_message_and_callback(self):
+        from app.max_bot.handler import MaxHandler
+        from test_max_adapter import message
+        await self.setup_max()
+        binding, req = await self.request()
+        handler = MaxHandler()
+        reply = (await handler.handle(message(9001, '/web_login ' + req['code'])))[1]
+        reply = (await handler.handle(message(9001, reply.buttons[0][0])))[1]
+        self.assertIn('Вход подтверждён', reply)
+        self.assertEqual((await WebAuthService().consume(binding))['status'], 'authenticated')

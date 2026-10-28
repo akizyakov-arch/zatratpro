@@ -39,6 +39,14 @@ class CallbackTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests[1].url.params['callback_id'], 'callback-id')
         self.assertEqual(json.loads(requests[1].content), {})
 
+    async def test_panel_link_is_native_link_not_callback_or_message(self):
+        from app.max_bot.menu import LinkButton
+        sent = []
+        async with MaxClient('test', transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200, json={}))) as client:
+            await client.send(55, MenuText('Панель', [[LinkButton('Открыть панель', 'https://panel.example')]]))
+        button = json.loads(sent[0].content)['attachments'][0]['payload']['buttons'][0][0]
+        self.assertEqual(button, {'type': 'link', 'text': 'Открыть панель', 'url': 'https://panel.example'})
+
     async def test_same_names_have_distinct_actions_and_long_names_fit_max(self):
         rows = keyboard(ui.build_projects_keyboard([SimpleNamespace(id=11, name='Одинаково'), SimpleNamespace(id=22, name='Одинаково')], False))
         self.assertEqual(rows[0][0], rows[1][0])
