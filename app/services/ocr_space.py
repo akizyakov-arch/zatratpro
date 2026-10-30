@@ -55,12 +55,15 @@ class OCRSpaceService:
     provider_name = 'ocr_space'
 
     async def extract_text(self, file_path: Path) -> str:
-        key = get_settings().ocr_space_api_key
+        settings = get_settings()
+        key = settings.ocr_space_api_key
+        configured_proxy = getattr(settings, 'ocr_space_proxy_url', None)
+        proxy = configured_proxy.get_secret_value() if configured_proxy is not None else ''
         if not key:
             raise RecognitionError('Не задан ключ OCR_SPACE_API_KEY.', code='authentication')
         request_id = token_hex(6)
         started = time.monotonic()
-        logger.warning('ocr_space_start request=%s bytes=%s', request_id, file_path.stat().st_size)
+        logger.warning('ocr_space_start request=%s bytes=%s route=%s', request_id, file_path.stat().st_size, 'explicit_proxy' if proxy else 'environment')
 
         async def trace(event, info):
             # Whitelist event names only; info can contain private headers/body.
@@ -69,7 +72,8 @@ class OCRSpaceService:
                          'http2.send_request_body.complete', 'http2.receive_response_headers.complete'):
                 logger.warning('ocr_space_transport request=%s stage=%s elapsed=%.2f', request_id, event, time.monotonic()-started)
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=20)) as client:
+            proxy_options = {'proxy': proxy} if proxy else {}
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=20), **proxy_options) as client:
                 with file_path.open('rb') as image_file:
                     response = await client.post(API_URL,
                         data={'apikey': key, 'language': 'rus', 'OCREngine': 2},

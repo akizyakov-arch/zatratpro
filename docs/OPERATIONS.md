@@ -37,6 +37,7 @@ Python приложения работает внутри образа `python:3
 | Telegram | TELEGRAM_BOT_TOKEN | Токен Bot API; облачное имя секрета TOKEN не является именем настройки Python |
 | Владелец | BOT_OWNER_TELEGRAM_ID | Положительный Telegram ID действующего owner; не ID бота |
 | Telegram proxy | TELEGRAM_PROXY_URL | Пусто либо URL HTTP/SOCKS5; MTProxy не подходит |
+| OCR.space proxy | OCR_SPACE_PROXY_URL | Полный HTTP/SOCKS5 URL; отдельно от Telegram, см. OCR_DIAGNOSTICS |
 | MAX | MAX_BOT_TOKEN, MAX_CA_BUNDLE | MAX-токен; дополнительный PEM CA необязателен |
 | Ссылка на Telegram | TELEGRAM_BOT_USERNAME | Имя без @ для ссылок привязки из MAX |
 | OCR/LLM | OCR_SPACE_API_KEY, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, DEEPSEEK_VISION_MODEL | Распознавание и структура/вопросы; выберите актуальные модели |
