@@ -29,7 +29,7 @@ class LinkButton(str):
 
 
 def command_text(text):
-    names = {'распознавание': '/recognition_settings', 'привязанные аккаунты': '/accounts', 'информация о компании': '/company_info','выдача': '/issue', 'мои выдачи': '/advances', 'бизнес-карты': '/cards', 'отчёт по деньгам': '/report_periods money money', 'панель руководителя': '/panel', 'ии-отчёты': '/ai_reports', 'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
+    names = {'для бухгалтерии': '/accountant', 'распознавание': '/recognition_settings', 'привязанные аккаунты': '/accounts', 'информация о компании': '/company_info','выдача': '/issue', 'мои выдачи': '/advances', 'бизнес-карты': '/cards', 'отчёт по деньгам': '/report_periods money money', 'панель руководителя': '/panel', 'ии-отчёты': '/ai_reports', 'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
              'ввести invite-код': '/join', 'настройки': '/settings', 'мой профиль': '/profile',
              'компании': '/companies', 'пользователи': '/users', 'создать компанию': '/create_company',
              'статус системы': '/system_status', 'сотрудники': '/employees', 'моя компания': '/my_company',

@@ -368,6 +368,23 @@ def create_app():
     ):
         return ok(await reports.report(user['id'], *bounds, project_id=project_id, employee_id=employee_id))
 
+    @app.get('/api/reports/accountant')
+    async def accountant_export(
+        start: date | None = None, end: date | None = None, period: str = 'month',
+        employee_id: int | None = None, project_id: int | None = None,
+        user=Depends(manager),
+    ):
+        from app.services.accountant_exports import AccountantExportService
+        if (start is None) != (end is None):
+            raise AdvanceError('Укажите обе даты периода.')
+        value = f'{start.isoformat()} {end.isoformat()}' if start and end else period
+        filename, data, missing = await AccountantExportService().build(
+            user['id'], value,
+            project_id=project_id, employee_id=employee_id)
+        return Response(data, media_type='application/zip', headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'X-Missing-Scans': str(missing), 'Cache-Control': 'no-store'})
+
     @app.get('/api/reports/export')
     async def export(
         employee_id: int | None = None, project_id: int | None = None,

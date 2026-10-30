@@ -69,6 +69,10 @@ async def action(callback):
         await callback.answer('Откройте актуальное меню.', show_alert=True)
         return
     await callback.answer()
+    if text.split(maxsplit=1)[0] == '/accountant':
+        from app.handlers.accountant import show
+        await show(callback.message, callback.from_user, text)
+        return
     if text in ('/help', '/reports', '/profile', '/accounts', '/upload_document', '/my_documents'):
         from app.handlers import start
         from app.handlers.profile import profile_entry, accounts_entry

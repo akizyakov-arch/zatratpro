@@ -205,8 +205,12 @@ class DatabaseTests(DatabaseFixture):
         @asynccontextmanager
         async def no_typing(**kwargs):
             yield
+        from io import BytesIO
+        from PIL import Image
+        original = BytesIO()
+        Image.new('RGB', (32, 32), 'white').save(original, 'PNG')
         async def download(file, destination):
-            destination.write(b'raw-image')
+            destination.write(original.getvalue())
         for failure in (False, True):
             with tempfile.TemporaryDirectory() as folder:
                 path = Path(folder) / 'prepared.jpg'
@@ -217,6 +221,8 @@ class DatabaseTests(DatabaseFixture):
                     await handlers.process_photo(message)
                 self.assertFalse(path.exists())
                 self.assertEqual(await has_active_document_flow(self.employee.id), not failure)
+                if not failure:
+                    self.assertEqual(await self.pool.fetchval('SELECT original_data FROM pending_document_flows'), original.getvalue())
                 await clear_document_flow(self.employee.id)
 
     async def test_pdf_preview_project_save_and_failure_cleanup(self):

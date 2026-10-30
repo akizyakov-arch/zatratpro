@@ -219,6 +219,20 @@ class MaxHandler:
             return MenuText('FIINOPS · Главное меню\nВыберите раздел.', await self._main_buttons(actor))
         if command == '/help':
             return MenuText(HELP, await self._main_buttons(actor))
+        if command == '/accountant':
+            from app.application.accountant import AccountantCommands
+            from app.max_bot.menu import LinkButton
+            from app.web.config import panel_url
+            menus = AccountantCommands()
+            if not arg or arg == 'custom':
+                return await menus.selection(actor, arg)
+            start, end = await menus.dates(actor, arg)
+            url = panel_url()
+            if not url:
+                return MenuText('Для скачивания архива в MAX настройте HTTPS-адрес панели.', [HOME])
+            url = url.split('#', 1)[0].rstrip('/') + f'/#/reports?start={start.isoformat()}&end={end.isoformat()}'
+            return MenuText(f'Для бухгалтерии: {start:%d.%m.%Y} — {end:%d.%m.%Y}.\nОткройте панель, войдите через MAX и нажмите «Для бухгалтерии · ZIP». Выбранные даты переданы в панель.',
+                [[LinkButton('Скачать в панели', url)], [MenuButton('Другой период', '/accountant')]])
         if command in ('/reports', '/money', '/report_periods', '/section_report'):
             from app.application.section_menus import SectionMenus
             menus = SectionMenus()

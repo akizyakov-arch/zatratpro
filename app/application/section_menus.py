@@ -12,6 +12,7 @@ REPORT_MENU = (
     ('По проектам', '/report_periods projects reports', 'manager:reports:projects'),
     ('По сотрудникам', '/report_periods employees reports', 'manager:reports:employees'),
     ('Дубли документов', '/report_periods duplicates reports', 'manager:reports:duplicates'),
+    ('Для бухгалтерии', '/accountant', 'core:/accountant'),
     ('Excel выгрузка', '/report_periods export reports', 'manager:reports:export'),
     ('Назад', '/my_company', 'core:/my_company'),
 )

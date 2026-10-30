@@ -3,6 +3,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import hashlib
+from io import BytesIO
+from PIL import Image
 import logging
 from secrets import token_urlsafe
 
@@ -120,6 +122,14 @@ class DocumentFlow:
                     raise DocumentFlowError('Компания изменилась. Отправьте документ заново.')
                 await self._row(c, actor, member, upload_id)
                 await self._store(c, actor, pending)
+                if source_type == 'pdf':
+                    extension = 'pdf'
+                else:
+                    with Image.open(BytesIO(data)) as image:
+                        extension = {'JPEG': 'jpg', 'PNG': 'png', 'WEBP': 'webp'}.get(image.format)
+                    if extension is None:
+                        raise DocumentFlowError('Для архива отправьте скан JPEG, PNG или WebP.')
+                await c.execute('UPDATE pending_document_flows SET original_data=$2,original_ext=$3 WHERE actor_id=$1', actor, data, extension)
                 return await self._projects(c, actor, member, pending)
         except BaseException as exc:
             await get_pool().execute('DELETE FROM pending_document_flows WHERE actor_id=$1 AND upload_id=$2', actor, upload_id)
@@ -182,8 +192,10 @@ class DocumentFlow:
             if document_warnings(pending.extracted_document) and pending.reviewed_fingerprint != review_fingerprint(pending.extracted_document):
                 await self._store(c, actor, pending)
                 return DocumentView(warning_text(pending.extracted_document) + '\nСверьте выделенные строки с оригиналом.', upload_id, [DocumentAction('Проверил по оригиналу — сохранить', 'review'), DocumentAction('Отменить', 'cancel')])
-            await self.documents.save_for_user(actor, project['id'], pending.normalized_text, pending.extracted_document,
+            document_id = await self.documents.save_for_user(actor, project['id'], pending.normalized_text, pending.extracted_document,
                 source_type=pending.source_type, upload_id=upload_id, provider=pending.provider, connection=c)
+            if row['original_data'] is not None:
+                await c.execute('INSERT INTO document_originals(document_id,content,extension) VALUES($1,$2,$3) ON CONFLICT(document_id) DO NOTHING', document_id, row['original_data'], row['original_ext'])
             await c.execute('DELETE FROM pending_document_flows WHERE actor_id=$1 AND upload_id=$2', actor, upload_id)
             return await self._saved(c, actor, member, upload_id)
 

@@ -981,10 +981,10 @@
       toast(e.message, true);
     }
   }
-  async function downloadReport(params) {
+  async function downloadReport(params, accountant = false) {
     const userAtRequest = state.user;
     try {
-      const res = await fetch("/api/reports/export?" + query(params), {
+      const res = await fetch((accountant ? "/api/reports/accountant?" : "/api/reports/export?") + query(params), {
         headers: mini?.headers() || {},
         credentials: mini ? "omit" : "same-origin",
       });
@@ -993,7 +993,7 @@
         throw new Error(
           typeof d.detail === "string"
             ? d.detail
-            : "Не удалось сформировать Excel.",
+            : "Не удалось сформировать выгрузку.",
         );
       }
       const blob = await res.blob();
@@ -1008,7 +1008,7 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast("Excel подготовлен");
+      toast(accountant ? `Архив подготовлен. Без скана: ${res.headers.get("X-Missing-Scans") || 0}` : "Excel подготовлен");
     } catch (e) {
       toast(e.message, true);
     }
@@ -2132,7 +2132,7 @@
       );
     main.append(
       info(
-        "В панели доступны распознанные данные. Оригиналы ранее загруженных фотографий не сохранялись.",
+        "Сканы доступны в разделе «Отчёты → Для бухгалтерии». Для старых документов файл может отсутствовать.",
       ),
     );
   }
@@ -2502,7 +2502,8 @@
     const m = data.money || {},
       t = m.totals || {};
     main.replaceChildren(
-      header("Отчёты", "Полная картина по документам и движению денег.", [
+      header("Отчёты", "Отчёты — по дате загрузки. Архив для бухгалтерии — по дате документа; без даты — по загрузке UTC.", [
+        button("Для бухгалтерии · ZIP", () => downloadReport(dateParams(params), true), "", "down"),
         button(
           "Скачать Excel",
           () => downloadReport(dateParams(params)),
