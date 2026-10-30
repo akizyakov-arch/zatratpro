@@ -5,6 +5,7 @@ from io import BytesIO
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from openpyxl import Workbook
+from app.schemas.fiscal import fiscalization_label
 from app.services.database import get_pool
 from app.services.advances import AdvanceError
 from app.services.reporting import ReportService
@@ -81,15 +82,16 @@ def _package(rows, items, originals, start, end):
     _append_row(summary, ['С', start.isoformat(), 'По (включительно)', end.isoformat()])
     _append_row(summary, ['Отбор', 'Дата документа; если не указана — дата загрузки UTC'])
     _append_row(summary, ['Дубли', 'Включены и отмечены; архивные проекты включены'])
+    _append_row(summary, ['Фискализация', 'По реквизитам OCR; проверка через ФНС не выполнялась'])
     missing = sum(r['id'] not in originals for r in rows)
     _append_row(summary, ['Документов', len(rows), 'Без скана', missing])
     sheet = workbook.create_sheet('Документы')
-    _append_row(sheet, ['ID', 'Проект', 'Сотрудник', 'Тип', 'Номер', 'Дата документа', 'Загружен UTC', 'Поставщик', 'ИНН', 'КПП', 'Валюта', 'Сумма', 'Дубль', 'Файл', 'Основание периода'])
+    _append_row(sheet, ['ID', 'Проект', 'Сотрудник', 'Тип', 'Номер', 'Дата документа', 'Загружен UTC', 'Поставщик', 'ИНН', 'КПП', 'Валюта', 'Сумма', 'Дубль', 'Файл', 'Основание периода', 'Фискализация'])
     output = BytesIO()
     with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         for row in rows:
             path = f"files/{row['id']}.{row['extension']}" if row['id'] in originals else ''
-            _append_row(sheet, [row['id'], row['project_name'], row['employee_name'], row['document_type'], row['external_document_number'] or '', str(row['document_date'] or ''), row['created_at'].isoformat(), row['vendor'] or '', row['vendor_inn'] or '', row['vendor_kpp'] or '', row['currency'], str(row['total_amount']), row['duplicate_status'], path or 'Скан отсутствует', 'Дата документа' if row['document_date'] else 'Дата загрузки UTC'])
+            _append_row(sheet, [row['id'], row['project_name'], row['employee_name'], row['document_type'], row['external_document_number'] or '', str(row['document_date'] or ''), row['created_at'].isoformat(), row['vendor'] or '', row['vendor_inn'] or '', row['vendor_kpp'] or '', row['currency'], str(row['total_amount']), row['duplicate_status'], path or 'Скан отсутствует', 'Дата документа' if row['document_date'] else 'Дата загрузки UTC', fiscalization_label(row['is_fiscalized'])])
             if path:
                 archive.writestr(path, originals[row['id']])
         positions = workbook.create_sheet('Позиции')

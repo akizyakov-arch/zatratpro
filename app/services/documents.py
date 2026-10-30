@@ -138,12 +138,13 @@ class DocumentService:
                     llm_provider,
                     source_file_path,
                     source_file_id,
-                    upload_id
+                    upload_id,
+                    is_fiscalized
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8,
                     $9, $10, $11, $12, $13, $14, $15,
-                    $16, $17, NOW(), $19, 'deepseek', NULL, NULL, $18
+                    $16, $17, NOW(), $19, 'deepseek', NULL, NULL, $18, $20
                 )
                 ON CONFLICT (upload_id) WHERE upload_id IS NOT NULL DO NOTHING
                 RETURNING id
@@ -167,6 +168,7 @@ class DocumentService:
                 duplicate_check.duplicate_document_id,
                 upload_id,
                 provider,
+                document.is_fiscalized,
             )
             if document_id is None:
                 # Retry of this upload, not a ban on intentionally duplicated receipts.

@@ -1950,6 +1950,7 @@
               numeric: true,
               render: (r) => money(r.total_amount, r.currency || "RUB"),
             },
+            { label: "Фискализация", render: (r) => fiscalLabel(r.is_fiscalized) },
             { label: "Оплата", render: (r) => fundingBadge(r.payment_source) },
             {
               label: "Дубли",
@@ -1979,6 +1980,7 @@
       ),
     );
   }
+  const fiscalLabel = (value) => value === true ? "Да" : value === false ? "Нет" : "Не определено";
   function fundingBadge(source) {
     return source === "advance"
       ? badge("Подотчёт", "info")
@@ -2061,6 +2063,7 @@
             ["Дата загрузки", datetime(d.created_at)],
             ["Сотрудник", d.uploaded_by_name],
             ["ИНН", d.vendor_inn],
+            ["Фискализация (по реквизитам)", fiscalLabel(d.is_fiscalized)],
             ["Источник оплаты", fundingBadge(d.payment_source)],
             ["Проверка дублей", duplicateBadge(d.duplicate_status)],
           ]),

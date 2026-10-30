@@ -199,6 +199,7 @@ class ReportDocumentDetail:
     uploaded_by_name: str | None
     first_item_name: str | None
     created_at: datetime
+    is_fiscalized: bool | None = None
 
 
 @dataclass(slots=True)

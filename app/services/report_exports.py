@@ -4,6 +4,7 @@ from io import BytesIO
 import re
 
 from openpyxl import Workbook
+from app.schemas.fiscal import fiscalization_label
 
 from app.services.report_periods import REPORT_PERIOD_LABELS
 from app.services.money_reports import CASH_FIELDS, cash_and_employee_debt, employee_name
@@ -41,7 +42,7 @@ def build_manager_report_workbook(
         _append_row(employees_sheet, [row.user_id, row.employee_name or '', row.username or '', row.document_count, float(row.total_amount or 0), row.exact_duplicate_count, row.probable_duplicate_count])
 
     duplicates_sheet = workbook.create_sheet('Duplicates')
-    _append_row(duplicates_sheet, ['ID документа', 'Статус дубля', 'Дубль записи', 'Проект', 'Номер', 'Дата', 'Продавец', 'ИНН', 'Сумма', 'Кем загружен'])
+    _append_row(duplicates_sheet, ['ID документа', 'Статус дубля', 'Дубль записи', 'Проект', 'Номер', 'Дата', 'Продавец', 'ИНН', 'Сумма', 'Кем загружен', 'Валюта', 'Фискализация'])
     for row in duplicates:
         _append_row(duplicates_sheet, [
             row.id,
@@ -54,10 +55,12 @@ def build_manager_report_workbook(
             row.vendor_inn or '',
             float(row.total_amount or 0),
             row.uploaded_by_name or '',
+            getattr(row, 'currency', 'RUB') or 'RUB',
+            fiscalization_label(getattr(row, 'is_fiscalized', None)),
         ])
 
     documents_sheet = workbook.create_sheet('Documents')
-    _append_row(documents_sheet, ['ID', 'Проект', 'Номер', 'Дата', 'Продавец', 'ИНН', 'Сумма', 'Статус дубля', 'Загружен', 'Кем загружен'])
+    _append_row(documents_sheet, ['ID', 'Проект', 'Номер', 'Дата', 'Продавец', 'ИНН', 'Сумма', 'Статус дубля', 'Загружен', 'Кем загружен', 'Валюта', 'Фискализация'])
     for row in documents:
         _append_row(documents_sheet, [
             row.id,
@@ -70,6 +73,8 @@ def build_manager_report_workbook(
             row.duplicate_status,
             row.created_at.isoformat(),
             row.uploaded_by_name or '',
+            getattr(row, 'currency', 'RUB') or 'RUB',
+            fiscalization_label(getattr(row, 'is_fiscalized', None)),
         ])
 
     items_sheet = workbook.create_sheet('Items')
