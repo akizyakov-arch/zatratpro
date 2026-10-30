@@ -61,3 +61,31 @@ class OCRDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('две попытки', str(caught.exception))
         self.assertIn('attempt=2',str(logs.output))
         notify.assert_awaited_once()
+
+    async def test_multipart_contains_only_ocr_key_and_original_file_not_deepseek_payload(self):
+        from email.parser import BytesParser
+        from email.policy import default
+        captured = []
+        def handler(request):
+            captured.append(request)
+            return httpx.Response(200, json={'ParsedResults': [{'ParsedText': 'CHECK TOTAL 260.00'}], 'IsErroredOnProcessing': False})
+        original = httpx.AsyncClient
+        settings = SimpleNamespace(ocr_space_api_key='ocr-only-key', deepseek_api_key='deepseek-only-key')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'receipt.jpg'
+            image_bytes = b'JPEG-specific-marker'
+            path.write_bytes(image_bytes)
+            with patch('app.services.ocr_space.get_settings', return_value=settings), patch('app.services.ocr_space.httpx.AsyncClient', side_effect=lambda **kw: original(transport=httpx.MockTransport(handler), **kw)):
+                text = await OCRSpaceService().extract_text(path)
+        self.assertEqual(text, 'CHECK TOTAL 260.00')
+        self.assertEqual(len(captured), 1)
+        request = captured[0]
+        self.assertEqual(str(request.url), 'https://api.ocr.space/parse/image')
+        self.assertNotIn('authorization', request.headers)
+        self.assertNotIn(b'deepseek-only-key', request.content)
+        self.assertNotIn(b'image_url', request.content)
+        self.assertNotIn(b'messages', request.content)
+        raw = ('Content-Type: ' + request.headers['content-type'] + '\r\n\r\n').encode() + request.content
+        message = BytesParser(policy=default).parsebytes(raw)
+        parts = {part.get_param('name', header='content-disposition'): part.get_payload(decode=True) for part in message.iter_parts()}
+        self.assertEqual(parts, {'apikey': b'ocr-only-key', 'language': b'rus', 'OCREngine': b'2', 'file': image_bytes})
