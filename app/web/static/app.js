@@ -981,10 +981,10 @@
       toast(e.message, true);
     }
   }
-  async function downloadReport(params) {
+  async function downloadReport(params, accountant = false) {
     const userAtRequest = state.user;
     try {
-      const res = await fetch("/api/reports/export?" + query(params), {
+      const res = await fetch((accountant ? "/api/reports/accountant?" : "/api/reports/export?") + query(params), {
         headers: mini?.headers() || {},
         credentials: mini ? "omit" : "same-origin",
       });
@@ -993,7 +993,7 @@
         throw new Error(
           typeof d.detail === "string"
             ? d.detail
-            : "Не удалось сформировать Excel.",
+            : "Не удалось сформировать выгрузку.",
         );
       }
       const blob = await res.blob();
@@ -1008,7 +1008,7 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast("Excel подготовлен");
+      toast(accountant ? `Архив подготовлен. Без скана: ${res.headers.get("X-Missing-Scans") || 0}` : "Excel подготовлен");
     } catch (e) {
       toast(e.message, true);
     }
@@ -1950,6 +1950,7 @@
               numeric: true,
               render: (r) => money(r.total_amount, r.currency || "RUB"),
             },
+            { label: "Фискализация", render: (r) => fiscalLabel(r.is_fiscalized) },
             { label: "Оплата", render: (r) => fundingBadge(r.payment_source) },
             {
               label: "Дубли",
@@ -1979,6 +1980,7 @@
       ),
     );
   }
+  const fiscalLabel = (value) => value === true ? "Да" : value === false ? "Нет" : "Не определено";
   function fundingBadge(source) {
     return source === "advance"
       ? badge("Подотчёт", "info")
@@ -2061,6 +2063,7 @@
             ["Дата загрузки", datetime(d.created_at)],
             ["Сотрудник", d.uploaded_by_name],
             ["ИНН", d.vendor_inn],
+            ["Фискализация (по реквизитам)", fiscalLabel(d.is_fiscalized)],
             ["Источник оплаты", fundingBadge(d.payment_source)],
             ["Проверка дублей", duplicateBadge(d.duplicate_status)],
           ]),
@@ -2132,7 +2135,7 @@
       );
     main.append(
       info(
-        "В панели доступны распознанные данные. Оригиналы ранее загруженных фотографий не сохранялись.",
+        "Сканы доступны в разделе «Отчёты → Для бухгалтерии». Для старых документов файл может отсутствовать.",
       ),
     );
   }
@@ -2502,7 +2505,8 @@
     const m = data.money || {},
       t = m.totals || {};
     main.replaceChildren(
-      header("Отчёты", "Полная картина по документам и движению денег.", [
+      header("Отчёты", "Отчёты — по дате загрузки. Архив для бухгалтерии — по дате документа; без даты — по загрузке UTC.", [
+        button("Для бухгалтерии · ZIP", () => downloadReport(dateParams(params), true), "", "down"),
         button(
           "Скачать Excel",
           () => downloadReport(dateParams(params)),
@@ -3292,10 +3296,10 @@
       );
     }
   }
-  function safeBotUrl(value) {
+  function safeBotUrl(value, platform = "telegram") {
     try {
       const url = new URL(value);
-      return url.protocol === "https:" && url.hostname === "t.me"
+      return url.protocol === "https:" && url.hostname === (platform === "max" ? "max.ru" : "t.me")
         ? url.href
         : "#";
     } catch {
@@ -3328,132 +3332,155 @@
       h(
         "p",
         { class: "intro" },
-        "Подтвердите вход в Telegram — и продолжайте работу с проектами, документами и деньгами.",
+        "Подтвердите вход в Telegram или MAX — и продолжайте работу с проектами, документами и деньгами.",
       ),
       message && h("div", { class: "error-box", role: "alert" }, message),
     );
-    const loginAction = button(
-      "Продолжить через Telegram",
-      async () => {
-        const attempt = ++state.loginAttempt;
-        if (state.poll) {
-          clearInterval(state.poll);
-          state.poll = null;
-        }
-        loginAction.disabled = true;
-        try {
-          const data = await api("/api/auth/start", {
-            method: "POST",
-            body: {},
-          });
-          if (attempt !== state.loginAttempt || state.user) return;
-          waiting.replaceChildren(
-            h(
-              "div",
-              { class: "login-waiting", role: "status" },
-              h("span", { class: "spinner" }),
+    let loginStarting = false;
+    const makeLoginAction = (platform) => {
+      const loginAction = button(
+        platform === "max" ? "Продолжить через MAX" : "Продолжить через Telegram",
+        async () => {
+          if (loginStarting) return;
+          loginStarting = true;
+          const attempt = ++state.loginAttempt;
+          if (state.poll) {
+            clearInterval(state.poll);
+            state.poll = null;
+          }
+          loginAction.disabled = true;
+          try {
+            const data = await api("/api/auth/start?platform=" + platform, {
+              method: "POST",
+              body: {},
+            });
+            if (attempt !== state.loginAttempt || state.user) return;
+            waiting.replaceChildren(
               h(
-                "span",
-                {},
-                "Ожидаем подтверждение в боте. После подтверждения панель откроется автоматически.",
-              ),
-            ),
-            h(
-              "a",
-              {
-                class: "button primary full",
-                href: safeBotUrl(data.bot_url),
-                target: "_blank",
-                rel: "noopener noreferrer",
-              },
-              icon("telegram"),
-              "Открыть Telegram",
-            ),
-          );
-          loginAction.textContent = "Создать новый запрос";
-          loginAction.disabled = false;
-          const expires = new Date(
-            data.expires_at || Date.now() + 300000,
-          ).valueOf();
-          if (state.poll) clearInterval(state.poll);
-          let busy = false;
-          const poll = setInterval(async () => {
-            if (attempt !== state.loginAttempt || state.user) {
-              clearInterval(poll);
-              return;
-            }
-            if (busy) return;
-            if (Date.now() > expires) {
-              clearInterval(poll);
-              state.poll = null;
-              waiting.replaceChildren(
+                "div",
+                { class: "login-waiting", role: "status" },
+                h("span", { class: "spinner" }),
                 h(
-                  "div",
-                  { class: "error-box" },
-                  "Время подтверждения истекло. Создайте новый запрос входа.",
+                  "span",
+                  {},
+                  platform === "max" && !data.bot_url
+                  ? "Шаг 1: скопируйте команду ниже и отправьте её боту FIINOPS в MAX. Шаг 2: нажмите в боте «Подтвердить вход». Шаг 3: вернитесь в этот браузер."
+                  : platform === "max"
+                    ? "Нажмите «Открыть MAX», подтвердите вход в боте и вернитесь в этот браузер."
+                    : "Ожидаем подтверждение в боте. После подтверждения панель откроется автоматически.",
                 ),
-              );
-              return;
-            }
-            busy = true;
-            try {
-              const s = await api("/api/auth/status");
-              if (attempt !== state.loginAttempt || state.user) return;
-              if (s.status === "authenticated") {
+              ),
+              platform === "max" && !data.bot_url ? h("div", {class: "notice"},
+                h("p", {}, "Откройте вашего бота FIINOPS в MAX, отправьте команду ниже и подтвердите вход. Затем вернитесь в этот браузер."),
+                h("pre", {}, data.command),
+                button("Скопировать команду", async () => {
+                  try {
+                    await navigator.clipboard.writeText(data.command);
+                    toast("Команда скопирована. Отправьте её боту FIINOPS в MAX.");
+                  } catch {
+                    toast("Выделите и скопируйте команду вручную.", true);
+                  }
+                })) : h(
+                "a",
+                {
+                  class: "button primary full",
+                  href: safeBotUrl(data.bot_url, platform),
+                  target: "_blank",
+                  rel: "noopener noreferrer",
+                },
+                icon(platform === "max" ? "shield" : "telegram"),
+                platform === "max" ? "Открыть MAX" : "Открыть Telegram",
+              ),
+            );
+            loginAction.textContent = platform === "max" ? "Новый запрос через MAX" : "Новый запрос через Telegram";
+            loginAction.disabled = false;
+            const expires = new Date(
+              data.expires_at || Date.now() + 300000,
+            ).valueOf();
+            if (state.poll) clearInterval(state.poll);
+            let busy = false;
+            const poll = setInterval(async () => {
+              if (attempt !== state.loginAttempt || state.user) {
                 clearInterval(poll);
-                state.poll = null;
-                await boot();
-              } else if (
-                ["denied", "rejected", "expired", "canceled"].includes(s.status)
-              ) {
+                return;
+              }
+              if (busy) return;
+              if (Date.now() > expires) {
                 clearInterval(poll);
                 state.poll = null;
                 waiting.replaceChildren(
                   h(
                     "div",
                     { class: "error-box" },
-                    "Вход не подтверждён. При необходимости создайте новый запрос.",
+                    "Время подтверждения истекло. Создайте новый запрос входа.",
                   ),
                 );
+                return;
               }
-            } catch (e) {
-              if (attempt !== state.loginAttempt || state.user) return;
-              if (e.status === 400 || e.status === 401 || e.status === 410) {
-                clearInterval(poll);
-                state.poll = null;
-                waiting.replaceChildren(
-                  h("div", { class: "error-box" }, e.message),
-                );
+              busy = true;
+              try {
+                const s = await api("/api/auth/status");
+                if (attempt !== state.loginAttempt || state.user) return;
+                if (s.status === "authenticated") {
+                  clearInterval(poll);
+                  state.poll = null;
+                  await boot();
+                } else if (
+                  ["denied", "rejected", "expired", "canceled"].includes(s.status)
+                ) {
+                  clearInterval(poll);
+                  state.poll = null;
+                  waiting.replaceChildren(
+                    h(
+                      "div",
+                      { class: "error-box" },
+                      "Вход не подтверждён. При необходимости создайте новый запрос.",
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (attempt !== state.loginAttempt || state.user) return;
+                if (e.status === 400 || e.status === 401 || e.status === 410) {
+                  clearInterval(poll);
+                  state.poll = null;
+                  waiting.replaceChildren(
+                    h("div", { class: "error-box" }, e.message),
+                  );
+                }
+              } finally {
+                busy = false;
               }
-            } finally {
-              busy = false;
-            }
-          }, 2200);
-          state.poll = poll;
-        } catch (e) {
-          if (attempt !== state.loginAttempt || state.user) return;
-          toast(e.message, true);
-          loginAction.disabled = false;
-        }
-      },
-      "primary full",
-      "telegram",
-    );
+            }, 2200);
+            state.poll = poll;
+          } catch (e) {
+            if (attempt !== state.loginAttempt || state.user) return;
+            toast(e.message, true);
+            loginAction.disabled = false;
+          } finally {
+            loginStarting = false;
+          }
+        },
+        "primary full",
+        platform === "max" ? "shield" : "telegram",
+      );
+      return loginAction;
+    };
     const waiting = h("div");
     formCard.append(
-      loginAction,
+      makeLoginAction("telegram"),
+      makeLoginAction("max"),
       waiting,
       h(
         "ol",
         { class: "login-steps" },
-        h("li", {}, "Откройте бота по кнопке и нажмите «Запустить»."),
+        h("li", {}, "Откройте бота выбранного мессенджера."),
         h("li", {}, "Проверьте запрос и подтвердите вход в веб-панель."),
         h("li", {}, "Вернитесь в этот браузер — ваши данные уже здесь."),
       ),
       h(
         "p",
         { class: "login-footer" },
-        "Доступ для руководителей и владельца системы. Используйте тот же Telegram-аккаунт, с которым вы работаете в боте.",
+        "Доступ для руководителей и владельца системы. Используйте аккаунт Telegram или MAX, с которым вы работаете в боте.",
       ),
     );
     app.replaceChildren(

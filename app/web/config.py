@@ -14,6 +14,7 @@ class WebSettings(BaseSettings):
     allowed_hosts: str = ''
     cookie_secure: bool = True
     bot_username: str = 'prozatrat_bot'
+    max_bot_username: str = ''
     trusted_proxies: str = '127.0.0.1'
 
     model_config = SettingsConfigDict(
@@ -36,3 +37,15 @@ def mini_app_url():
             or parsed.fragment or parsed.path or parsed.hostname in ('localhost','127.0.0.1')):
         return None
     return origin + '/mini'
+
+
+def panel_url():
+    """Public browser panel origin, independent of Telegram Mini App settings."""
+    from urllib.parse import urlsplit
+    origin = get_web_settings().origin.rstrip('/')
+    parsed = urlsplit(origin)
+    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username
+            or parsed.password or parsed.query or parsed.fragment or parsed.path
+            or parsed.hostname in ('localhost', '127.0.0.1')):
+        return None
+    return origin

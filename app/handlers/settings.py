@@ -11,6 +11,15 @@ router.message.filter(F.chat.type == 'private')
 router.callback_query.filter(F.message.chat.type == 'private')
 
 
+@router.message(Command('recognition_settings'))
+@router.message(F.text == 'Распознавание')
+async def recognition_settings(message):
+    try:
+        await send_view(message, await WorkspaceCommands().handle(await actor(message.from_user), '/recognition_settings', platform='telegram'))
+    except (AdvanceError, ValueError) as exc:
+        await message.answer(str(exc))
+
+
 @router.message(Command('settings'))
 @router.message(F.text == 'Настройки')
 async def show_settings(message):

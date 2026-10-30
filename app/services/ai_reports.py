@@ -58,14 +58,6 @@ class ReportIntent(BaseModel):
         return value
 
 
-async def report_actor(telegram_id):
-    actor=await get_pool().fetchval("SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1",str(telegram_id))
-    if actor is None:raise ReportQuestionError('Сначала зарегистрируйся через /start.')
-    try:
-        context=await WorkspaceService().context(actor)
-    except WorkspaceError as exc:raise ReportQuestionError(str(exc)) from None
-    if context['role']!='manager':raise ReportQuestionError('Финансовые ИИ-отчёты доступны руководителю своей компании.')
-    return actor
 
 
 class NameChoiceRequired(ReportQuestionError):

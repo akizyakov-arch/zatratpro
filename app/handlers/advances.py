@@ -9,7 +9,8 @@ from app.handlers.telegram_identity import actor
 from app.ui.money import keyboard, send_details
 from app.ui.main_menu import MENU_BUTTONS
 from app.state.locks import serialize_user
-from app.state.pending_actions import get_pending_action, pop_pending_action, set_pending_action
+from app.state.pending_actions import get_pending_action
+from app.application.financial_inputs import FinancialInputs, cancel_inputs
 
 router = Router()
 router.message.filter(F.chat.type == 'private')
@@ -60,14 +61,12 @@ async def show_card(message,uid,aid):
 async def money_entry(message):
     try:
         uid = await actor(message.from_user)
-        member = await directory.membership(uid)
+        from app.application.section_menus import SectionMenus
+        view = await SectionMenus().money(uid)
         markup = ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text='Выдача' if member['role'] == 'manager' else 'Мои выдачи')],
-            [KeyboardButton(text='Бизнес-карты')],
-            [KeyboardButton(text='Отчёт по деньгам')],
-            [KeyboardButton(text='Главное меню')],
+            [KeyboardButton(text=str(button)) for button in row] for row in view.buttons
         ], resize_keyboard=True, input_field_placeholder='Выбери действие с деньгами')
-        await message.answer('Деньги', reply_markup=markup)
+        await message.answer(str(view), reply_markup=markup)
     except AdvanceError as exc:
         await message.answer(str(exc))
 
@@ -91,29 +90,9 @@ async def balances_entry(message):
     try:
         uid = await actor(message.from_user)
         records = await service.balances(uid)
-        if not records:
-            await message.answer('Деньги на руках: 0.00 RUB. Выдач пока нет.')
-            return
+        from app.services.finance_formatters import balance_text
         from app.services.json_formatter import chunk_message
-        lines = ['Деньги на руках', 'Получено − учтённые расходы − подтверждённые возвраты.', '']
-        total = 0
-        for row in records:
-            name = ' '.join(part for part in (row['first_name'], row['last_name']) if part) or f"Сотрудник №{row['employee_id']}"
-            lines.extend([
-                name,
-                f"Получено: {row['received']:.2f} RUB",
-                f"Учтённые расходы: {row['spent']:.2f} RUB",
-                f"Возвращено: {row['returned']:.2f} RUB",
-                f"На руках: {max(row['balance'], 0):.2f} RUB",
-            ])
-            if row['balance'] < 0:
-                lines.append(f"Компания должна сотруднику: {-row['balance']:.2f} RUB")
-            if row['pending']:
-                lines.append(f"Ожидает подтверждения получения: {row['pending']:.2f} RUB")
-            lines.append('')
-            total += row['balance']
-        lines.append(f'Общий расчётный остаток: {total:.2f} RUB')
-        for chunk in chunk_message('\n'.join(lines)):
+        for chunk in chunk_message(balance_text(records)):
             await message.answer(chunk)
     except AdvanceError as exc:
         await message.answer(str(exc))
@@ -154,25 +133,18 @@ async def cash_callback(callback):
         else:
             aid=int(parts[2])
             if action in ('cancel_issue', 'reject_expense', 'reject_return'):
-                member = await directory.membership(uid)
-                if member['role'] != 'manager':
-                    raise AdvanceError('Решение принимает руководитель.')
-                await service.card(uid, aid)
-                payload = {'advance': aid}
-                if action != 'cancel_issue':
-                    payload['operation'] = int(parts[3])
-                await set_pending_action(callback.from_user.id, 'advance_' + action, payload)
-                await callback.message.answer('Укажите причину отмены или отклонения (до 1000 символов). /cancel — отмена ввода.')
+                payload={'advance':aid}
+                if action!='cancel_issue':payload['operation']=int(parts[3])
+                result=await FinancialInputs(advances=service).start(uid,'advance_'+action,payload)
+                await callback.message.answer(result.text)
                 return
             if action=='receive': await service.receive(uid,aid)
             elif action=='expense': await service.approve_expense(uid,aid,int(parts[3]))
             elif action=='approve_return': await service.approve_return(uid,aid,int(parts[3]))
             elif action=='attach': await service.attach(uid,aid,int(parts[3]))
             elif action=='return':
-                card=await service.card(uid,aid)
-                if card['employee_id']!=uid: raise AdvanceError('Возврат оформляет сотрудник.')
-                await set_pending_action(callback.from_user.id,'advance_return',{'advance':aid,'key':callback.id})
-                await callback.message.answer('Укажите сумму фактического возврата. Руководитель должен подтвердить её. /cancel — отмена.')
+                result=await FinancialInputs(advances=service).start(uid,'advance_return',{'advance':aid,'key':callback.id})
+                await callback.message.answer(result.text)
                 return
             elif action=='documents':
                 card=await service.card(uid,aid)
@@ -195,12 +167,7 @@ async def finance_input(message):
 @router.message(Command('cancel'))
 @serialize_user
 async def cancel(message):
-    from app.services.advance_issue_flow import AdvanceIssueFlow
-    from app.services.workspace_flow import WorkspaceFlow
-    uid = await actor(message.from_user)
-    await AdvanceIssueFlow().cancel(uid)
-    await WorkspaceFlow().cancel(uid)
-    await pop_pending_action(message.from_user.id)
+    await cancel_inputs(await actor(message.from_user))
     await message.answer('Ввод отменён.')
 
 
@@ -209,26 +176,10 @@ async def cancel(message):
 async def amount_input(message, pending_action=None):
     state=pending_action or await get_pending_action(message.from_user.id)
     if state is None or state.action not in ('advance_return','advance_cancel_issue','advance_reject_expense','advance_reject_return'): return
-    current = await get_pending_action(message.from_user.id)
-    if current is None or current.revision != state.revision:
-        await message.answer('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
-        return
     try:
-        uid=await actor(message.from_user)
-        if state.action == 'advance_return':
-            aid=state.payload['advance']
-            await service.request_return(uid,aid,message.text.strip(),state.payload['key'])
-            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
-        else:
-            aid = state.payload['advance']
-            if state.action == 'advance_cancel_issue':
-                await service.cancel(uid, aid, message.text)
-            elif state.action == 'advance_reject_expense':
-                await service.reject_expense(uid, aid, state.payload['operation'], message.text)
-            else:
-                await service.reject_return(uid, aid, state.payload['operation'], message.text)
-            await pop_pending_action(message.from_user.id, expected_revision=state.revision)
-            await message.answer('Решение сохранено. Причина доступна в карточке выдачи сотруднику.')
-        await show_card(message,uid,aid)
-    except (AdvanceError,ValueError) as exc:
-        await message.answer(str(exc) if isinstance(exc,AdvanceError) else 'Укажите сумму. Назначение необязательно. /cancel — отмена.')
+        result=await FinancialInputs(advances=service).submit(await actor(message.from_user),message.text,state.revision)
+        await message.answer(result.text)
+        if result.advance_id is not None:
+            await show_card(message,await actor(message.from_user),result.advance_id)
+    except AdvanceError as exc:
+        await message.answer(str(exc))

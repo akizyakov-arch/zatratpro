@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
 from app.schemas.document import DocumentItem, DocumentSchema
+from app.schemas.fiscal import fiscalization_label
 from app.services.document_checks import warning_text
 
 
@@ -31,7 +32,7 @@ def format_document_json(document: dict) -> str:
 def format_document_preview(document: DocumentSchema) -> str:
     title = DOCUMENT_TYPE_TITLES.get(document.document_type, "ДОКУМЕНТ")
     currency_display = _format_currency(document.currency)
-    lines = [title]
+    lines = [title, "Фискализация: " + fiscalization_label(document.is_fiscalized)]
 
     number = document.external_document_number or document.incoming_number
     if number:

@@ -103,7 +103,7 @@ def build_projects_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Активные проекты", callback_data=MANAGER_PROJECTS_ACTIVE_CALLBACK)],
             [InlineKeyboardButton(text="Архивные проекты", callback_data=MANAGER_PROJECTS_ARCHIVED_CALLBACK)],
             [InlineKeyboardButton(text="Создать проект", callback_data=MANAGER_PROJECT_CREATE_CALLBACK)],
-            [InlineKeyboardButton(text="Назад", callback_data=NAV_MAIN_CALLBACK)],
+            [InlineKeyboardButton(text="Назад", callback_data="core:/my_company")],
         ]
     )
 
@@ -137,7 +137,7 @@ def build_employees_menu_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Список сотрудников", callback_data=MANAGER_EMPLOYEES_LIST_CALLBACK)],
             [InlineKeyboardButton(text="Пригласить сотрудника", callback_data=MANAGER_EMPLOYEE_INVITE_CALLBACK)],
-            [InlineKeyboardButton(text="Назад", callback_data=NAV_MAIN_CALLBACK)],
+            [InlineKeyboardButton(text="Назад", callback_data="core:/my_company")],
         ]
     )
 
@@ -181,12 +181,12 @@ def build_confirm_keyboard(confirm_callback: str, cancel_callback: str) -> Inlin
 def _member_button_text(member: Any) -> str:
     full_name = getattr(member, "full_name", None)
     username = getattr(member, "username", None)
-    telegram_id = getattr(member, "telegram_id", None)
+    user_id = getattr(member, "user_id", None)
     if full_name:
         return full_name
     if username:
         return f"@{username}"
-    return str(telegram_id)
+    return f"Пользователь №{user_id}"
 
 
 def _owner_user_button_text(user: Any) -> str:

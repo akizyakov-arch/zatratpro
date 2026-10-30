@@ -17,8 +17,19 @@ CALLBACK_PREFIX = 'fiinops:'
 from app.application.views import Action as MenuButton, View as MenuText
 
 
+class LinkButton(str):
+    def __new__(cls, label, url):
+        from urllib.parse import urlsplit
+        parsed = urlsplit(url)
+        if len(url) > 2048 or parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError('Некорректная ссылка MAX.')
+        result = super().__new__(cls, label)
+        result.url = url
+        return result
+
+
 def command_text(text):
-    names = {'ии-отчёты': '/ai_reports', 'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
+    names = {'для бухгалтерии': '/accountant', 'распознавание': '/recognition_settings', 'привязанные аккаунты': '/accounts', 'информация о компании': '/company_info','выдача': '/issue', 'мои выдачи': '/advances', 'бизнес-карты': '/cards', 'отчёт по деньгам': '/report_periods money money', 'панель руководителя': '/panel', 'ии-отчёты': '/ai_reports', 'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
              'ввести invite-код': '/join', 'настройки': '/settings', 'мой профиль': '/profile',
              'компании': '/companies', 'пользователи': '/users', 'создать компанию': '/create_company',
              'статус системы': '/system_status', 'сотрудники': '/employees', 'моя компания': '/my_company',
@@ -32,7 +43,7 @@ def command_text(text):
              'отчёты': '/reports', 'профиль': '/profile', 'остаток': '/balance',
              'за неделю': '/report week', 'за месяц': '/report month',
              'за всё время': '/report all_time', 'пригласить сотрудника': '/invite',
-             'подключить telegram': '/link_telegram', 'обновить профиль': '/profile'}
+             'подключить telegram': '/link_telegram', 'обновить профиль': '/accounts'}
     if text.lower() in names:
         return names[text.lower()]
     for pattern, command in (

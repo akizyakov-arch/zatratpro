@@ -11,7 +11,8 @@ from app.max_bot.handler import MaxHandler
 from app.services.account_links import AccountLinkService
 from app.services.workspace import WorkspaceService, WorkspaceError
 from app.services.workspace_flow import WorkspaceFlow
-from app.services.recognition import get_provider_name, get_provider_for_user
+from app.services.recognition import get_provider_for_user
+from app.adapters.telegram.recognition import get_provider_name
 from app.ui.menu_layout import main_menu_rows
 
 
@@ -57,7 +58,7 @@ class MaxWorkspaceTests(DatabaseFixture):
         code = await self.pool.fetchval('SELECT code FROM company_invites WHERE company_id=$1', company['id'])
         await self.press('Вступить по приглашению', 9002)
         self.assertIn('руководитель', await self.press(code, 9002))
-        self.assertIn(['Проекты', 'Сотрудники'], (await self.press('Моя компания', 9002)).buttons)
+        self.assertIn(['Проекты'], (await self.press('Моя компания', 9002)).buttons)
 
     async def test_manager_and_employee_cannot_create_company_or_use_owner_buttons(self):
         await self.link(self.manager, 9001)
@@ -130,19 +131,20 @@ class MaxWorkspaceTests(DatabaseFixture):
     async def test_recognition_settings_are_shared_and_isolated(self):
         employee = await self.link(self.employee, 9001)
         manager = await self.link(self.manager, 9002)
-        self.assertIn('DeepSeek Vision', await self.press('Настройки'))
+        self.assertIn('Распознавание', str((await self.press('Настройки')).buttons))
+        self.assertIn('DeepSeek Vision', await self.press('Распознавание'))
         self.assertIn('OCR.space', await self.press('OCR.space'))
         self.assertEqual(await get_provider_name(self.employee.id), 'ocr_space')
         self.assertEqual(await get_provider_for_user(employee), 'ocr_space')
         self.assertEqual(await get_provider_for_user(manager), 'deepseek')
-        from app.services.recognition import set_provider
+        from app.adapters.telegram.recognition import set_provider
         await set_provider(self.employee.id, 'deepseek')
-        self.assertIn('Сейчас: DeepSeek Vision', await self.press('Настройки'))
+        self.assertIn('Сейчас: DeepSeek Vision', await self.press('Распознавание'))
 
     async def test_manager_projects_create_rename_archive_restore(self):
         await self.link(self.manager, 9001)
         main = await self.press('/start')
-        self.assertIn(['Проекты', 'Сотрудники'], main.buttons)
+        self.assertIn(['Моя компания'], main.buttons)
         self.assertEqual(main.buttons[-1], ['Помощь'])
         self.assertIn(['Создать проект'], (await self.press('Проекты')).buttons)
         await self.press('Создать проект')
@@ -215,7 +217,7 @@ class MaxWorkspaceTests(DatabaseFixture):
         self.assertIsNone(await self.pool.fetchval("SELECT id FROM projects WHERE name='Wrong company'"))
 
     async def test_my_documents_show_only_own_documents_and_recheck_access(self):
-        from app.services.documents import DocumentService
+        from app.adapters.telegram.documents import DocumentService
         from app.services.member_directory import MemberDirectory
         from app.services.membership import MembershipError
         employee = await self.link(self.employee, 9001)

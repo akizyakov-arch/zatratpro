@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock,patch
 from types import SimpleNamespace
 import httpx
 from db_fixture import DatabaseFixture
-from app.services.ai_reports import ReportIntent,run_report,report_actor,resolve_name,ReportQuestionError
+from app.services.ai_reports import ReportIntent,run_report,resolve_name,ReportQuestionError
+from app.adapters.telegram.ai_reports import report_actor
 from app.services.speech import transcribe_voice,SpeechError
 from app.services.advances import AdvanceService
 

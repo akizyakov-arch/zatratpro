@@ -29,12 +29,13 @@ flowchart LR
 адаптера. ИИ-запросы и голос подключены в Telegram и MAX через общий `AIReportCommands`. Общее ядро документов
 используется Telegram/MAX; веб-загрузки ещё нет.
 
-Это действующее разделение для новых канонических сценариев. В `CompanyService`,
-`ProjectService`, `DocumentService` и части старых интерфейсов остаются совместимые
-Telegram-фасады. Их наличие не следует считать основанием передавать Telegram
-User в новый общий сценарий. Весь репозиторий не объявляется полностью свободным
-от зависимостей SDK. Независимость общих команд, сценариев документов, отчётов
-и вступления проверяет `test_application_core.py`.
+Обязательная граница определена в [CORE_BOUNDARY_REQUIREMENTS.md](CORE_BOUNDARY_REQUIREMENTS.md).
+Все модули `services`/`application` импортируются без SDK, UI и HTTP-фреймворка.
+Telegram-совместимые сигнатуры вынесены в `app/adapters/telegram` и преобразуют
+идентичность перед вызовом канонических сервисов. Фронты не выполняют SQL;
+инициализация/закрытие БД разрешены только как управление жизненным циклом.
+Идентичность и адреса доставки могут содержать внешние IDs, но бизнес-команда
+принимает внутренний actor. Это проверяет `test_core_boundaries.py`.
 
 ## 2. Точки запуска и процессы
 
@@ -113,10 +114,14 @@ sequenceDiagram
 предпросмотра и сохранением проверяется актуальный доступ. При ошибке записи
 транзакция откатывается, готовый черновик остаётся для повтора. При ошибке OCR
 частичный документ не вставляется. Готовый черновик можно продолжить через
-второй привязанный аккаунт; исходные файлы для повторного OCR не архивируются.
+второй привязанный аккаунт. Миграция 026 добавляет исходные байты к черновику;
+при сохранении документа оригинал переносится в `document_originals` в той же
+транзакции. Оригиналы доступны только в ZIP для бухгалтерии, не для повторного OCR.
+См. [хранение и периоды](ACCOUNTANT_EXPORT.md).
 
 `DocumentService.save_for_user` и `find_duplicate_for_user` — канонические методы.
-Старые методы с Telegram-идентичностью разрешают её в actor и делегируют им.
+Старые методы находятся в `adapters/telegram/documents.py`: разрешают
+Telegram-идентичность в actor и делегируют этим методам.
 Состояние хранится по actor; `state/pending_documents.py` — совместимая обёртка
 для старых Telegram-вызовов. Границы подробно разобраны в DOCUMENT_CORE.
 
@@ -174,7 +179,7 @@ erDiagram
 | Привязки | account_link_requests, account_link_attempts, account_link_events | Коды, лимиты и журнал привязок |
 | Web | web_login_requests, web_sessions, web_auth_attempts, web_auth_events, telegram_mini_logins | Вход и сессии |
 | Прочее состояние | pending_actions, recognition_settings, ai_report_sessions, max_poll_offsets | Ввод, провайдер, ИИ-контекст и polling |
-| Общие диалоги | advance_issue_drafts, advance_issue_inputs, workspace_flows | Канонический пользователь, Telegram/MAX, многошаговые команды |
+| Общие диалоги | pending_actions (actor_id/company_id), advance_issue_drafts, advance_issue_inputs, workspace_flows | Канонический пользователь, Telegram/MAX, многошаговые команды |
 | MAX onboarding | max_onboarding_inputs, max_company_invite_attempts | Вступление и защита попыток |
 | Системное | workspace_events, advance_receipt_notifications, schema_migrations | Аудит, доставка уведомлений, версия схемы |
 

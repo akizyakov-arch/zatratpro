@@ -75,24 +75,11 @@ class DuplicateDocumentInfo:
 
 class DocumentService:
     @property
-    def company_service(self):
-        # Legacy Telegram entry points resolve identities at their boundary.
-        from app.services.companies import CompanyService
-        return CompanyService()
+    def directory(self):
+        from app.services.companies import CompanyDirectory
+        return CompanyDirectory()
 
-    async def save_document(
-        self,
-        telegram_user,
-        project: Project,
-        normalized_text: str,
-        document: DocumentSchema,
-        duplicate_check: DuplicateCheckResult | None = None,
-        source_type: str = "photo",
-        upload_id: str | None = None,
-    ) -> int:
-        actor = await self.company_service._workspace_actor(telegram_user.id)
-        return await self.save_for_user(actor, project.id, normalized_text, document,
-                                        source_type=source_type, upload_id=upload_id)
+
 
     async def _member(self, connection, actor):
         try:
@@ -151,12 +138,13 @@ class DocumentService:
                     llm_provider,
                     source_file_path,
                     source_file_id,
-                    upload_id
+                    upload_id,
+                    is_fiscalized
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8,
                     $9, $10, $11, $12, $13, $14, $15,
-                    $16, $17, NOW(), $19, 'deepseek', NULL, NULL, $18
+                    $16, $17, NOW(), $19, 'deepseek', NULL, NULL, $18, $20
                 )
                 ON CONFLICT (upload_id) WHERE upload_id IS NOT NULL DO NOTHING
                 RETURNING id
@@ -180,6 +168,7 @@ class DocumentService:
                 duplicate_check.duplicate_document_id,
                 upload_id,
                 provider,
+                document.is_fiscalized,
             )
             if document_id is None:
                 # Retry of this upload, not a ban on intentionally duplicated receipts.
@@ -217,15 +206,6 @@ class DocumentService:
                 )
         return document_id
 
-    async def find_company_duplicate_document(
-        self,
-        telegram_user,
-        project: Project,
-        document: DocumentSchema,
-        normalized_text: str | None = None,
-    ) -> DuplicateCheckResult:
-        actor = await self.company_service._workspace_actor(telegram_user.id)
-        return await self.find_duplicate_for_user(actor, project.id, document, normalized_text)
 
     async def find_duplicate_for_user(self, actor, project_id, document, normalized_text=None, *, connection=None):
         fields = _resolve_document_fields(document, normalized_text)
@@ -279,9 +259,9 @@ class DocumentService:
             fields=fields,
         )
 
-    async def get_duplicate_document_info(self, telegram_user_id: int, duplicate_document_id: int) -> DuplicateDocumentInfo:
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        member_role = await self.company_service.ensure_member_role(telegram_user_id)
+    async def get_duplicate_document_info(self, actor_id: int, duplicate_document_id: int) -> DuplicateDocumentInfo:
+        company = await self.directory.get_active_company_for_user(actor_id)
+        member_role = await self.directory.ensure_member_role(actor_id)
         if member_role not in ADMIN_ROLES | WORKER_ROLES:
             raise CompanyAccessError('Недостаточно прав для просмотра дубля.')
         pool = get_pool()
@@ -319,36 +299,36 @@ class DocumentService:
             total_amount=row['total_amount'],
         )
 
-    async def resolve_duplicate_keep_separate(self, telegram_user_id: int, document_id: int) -> None:
+    async def resolve_duplicate_keep_separate(self, actor_id: int, document_id: int) -> None:
         from app.services.reporting import ReportService
         from app.services.advances import AdvanceError
-        actor = await self.company_service._workspace_actor(telegram_user_id)
+        actor = await self.directory._workspace_actor(actor_id)
         try:
             await ReportService().duplicate_keep(actor, document_id)
         except AdvanceError as exc:
             raise CompanyAccessError(str(exc)) from exc
 
-    async def delete_source_duplicate_document(self, telegram_user_id: int, duplicate_document_id: int) -> None:
+    async def delete_source_duplicate_document(self, actor_id: int, duplicate_document_id: int) -> None:
         from app.services.reporting import ReportService
         from app.services.advances import AdvanceError
-        actor = await self.company_service._workspace_actor(telegram_user_id)
+        actor = await self.directory._workspace_actor(actor_id)
         try:
             await ReportService().duplicate_delete(actor, duplicate_document_id, source=True)
         except AdvanceError as exc:
             raise CompanyAccessError(str(exc)) from exc
 
-    async def delete_duplicate_document(self, telegram_user_id: int, document_id: int) -> None:
+    async def delete_duplicate_document(self, actor_id: int, document_id: int) -> None:
         from app.services.reporting import ReportService
         from app.services.advances import AdvanceError
-        actor = await self.company_service._workspace_actor(telegram_user_id)
+        actor = await self.directory._workspace_actor(actor_id)
         try:
             await ReportService().duplicate_delete(actor, document_id)
         except AdvanceError as exc:
             raise CompanyAccessError(str(exc)) from exc
 
-    async def cleanup_broken_duplicate_links(self, telegram_user_id: int) -> int:
-        company = await self.company_service.get_active_company_for_user(telegram_user_id)
-        member_role = await self.company_service.ensure_member_role(telegram_user_id)
+    async def cleanup_broken_duplicate_links(self, actor_id: int) -> int:
+        company = await self.directory.get_active_company_for_user(actor_id)
+        member_role = await self.directory.ensure_member_role(actor_id)
         if member_role not in ADMIN_ROLES | WORKER_ROLES:
             raise CompanyAccessError('Действие доступно только manager.')
         pool = get_pool()

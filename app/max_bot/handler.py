@@ -13,7 +13,7 @@ from app.max_bot.menu import HOME, ONBOARDING, PERIODS, CALLBACK_PREFIX, MenuBut
 from app.services.account_links import AccountLinkError, AccountLinkService
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.member_directory import MemberDirectory
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 from app.services.max_onboarding import MaxOnboardingService
 from app.services.workspace import WorkspaceError, WorkspaceService
 from app.services.membership import MembershipError
@@ -31,7 +31,8 @@ HELP = ('FIINOPS · MAX\n'
         '/balance — деньги у сотрудников и долги компании\n'
         '/advance ID — карточка выдачи\n'
         '/receive ID — подтвердить фактическое получение денег\n'
-        '/reports — отчёты и ИИ-запросы\n'
+        '/reports — отчёты, панель и ИИ-запросы\n'
+        '/web_login КОД — подтвердить вход из браузера через MAX\n'
         '/ask ВОПРОС — ИИ-отчёт текстом или голосовым сообщением\n'
         '/report [month|week|all_time] — денежный отчёт\n'
         '/join КОД — вступить в компанию без Telegram\n'
@@ -42,7 +43,7 @@ LINK_HELP = MenuText(
     'Добро пожаловать в FIINOPS!\n'
     'Впервые здесь? Нажмите «Вступить по приглашению» и отправьте код компании.\n'
     'Уже работаете в Telegram? Нажмите «Подключить профиль Telegram» и отправьте код '
-    'из раздела «Мой профиль» в Telegram. Затем подтвердите подключение там же.\n'
+    'из раздела «Настройки → Привязанные аккаунты» в Telegram. Затем подтвердите подключение там же.\n'
     'Компания, роль и история будут общими для обоих мессенджеров.', ONBOARDING)
 
 
@@ -58,6 +59,8 @@ def event_message(update):
         if isinstance(payload, str):
             if re.fullmatch(r'link_[A-Za-z0-9]{12}', payload):
                 text = '/link ' + payload[5:]
+            elif re.fullmatch(r'web_[A-Za-z0-9_-]{32}', payload):
+                text = '/web_login ' + payload[4:]
             elif re.fullmatch(r'join_(?:[A-Za-z0-9]{10}|[A-Za-z0-9]{12})', payload):
                 text = '/join ' + payload[5:]
     elif kind == 'message_callback':
@@ -112,6 +115,14 @@ class MaxHandler:
             return None
         sender, text = event
         text = command_text(text)
+        if text.split(maxsplit=1)[:1] in (['/web_login'], ['/web_approve'], ['/web_deny']):
+            from app.max_bot.web_login import handle_login
+            return sender, await handle_login(sender, text)
+
+        if text == '/panel':
+            from app.max_bot.web_login import open_panel
+            return sender, await open_panel(sender)
+
         body = update.get('message', {}).get('body', {})
         event_id = ('callback:' + hashlib.sha256(update['callback']['callback_id'].encode()).hexdigest() if update.get('update_type') == 'message_callback'
                     else body.get('mid') if isinstance(body, dict) else None)
@@ -139,6 +150,9 @@ class MaxHandler:
                 # Audio and explicit AI commands bypass document/name/amount inputs.
                 if text.startswith(('/ask', '/ai_')) or any(isinstance(a, dict) and a.get('type') == 'audio' for a in (body.get('attachments') or [])):
                     result = await self.ai_menu.handle(actor, text, update)
+                if result is None:
+                    from app.application.card_menus import CardMenus
+                    result = await CardMenus().handle(actor, text)
                 if result is None:
                     result = await self.document_menu.handle(actor, sender, text, update)
                 if result is None:
@@ -183,10 +197,10 @@ class MaxHandler:
             await MaxOnboardingService().await_input(sender, command[1:])
             prompt = ('Отправьте код приглашения в компанию отдельным сообщением. Его выдаёт руководитель или владелец.'
                       if command == '/join' else
-                      'В Telegram откройте «Мой профиль» → «Код для подключения MAX». Отправьте сюда свежий код отдельным сообщением. После этого подтвердите подключение в Telegram.')
+                      'В Telegram откройте «Настройки» → «Привязанные аккаунты» → «Код для подключения MAX». Отправьте сюда свежий код отдельным сообщением. После этого подтвердите подключение в Telegram.')
             return MenuText(prompt, ONBOARDING)
         if command == '/link' and await MaxOnboardingService().code_kind(arg) == 'join':
-            return MenuText('Это код приглашения в компанию. Нажмите «Вступить по приглашению» и отправьте код ещё раз. Если профиль уже есть в Telegram, получите код подключения в «Мой профиль».', ONBOARDING)
+            return MenuText('Это код приглашения в компанию. Нажмите «Вступить по приглашению» и отправьте код ещё раз. Если профиль уже есть в Telegram, получите код подключения в «Настройки → Привязанные аккаунты».', ONBOARDING)
         if command == '/join' and await MaxOnboardingService().code_kind(arg) == 'link':
             return MenuText('Это код подключения профиля. Нажмите «Подключить профиль Telegram» и отправьте код ещё раз.', ONBOARDING)
         if command == '/join':
@@ -205,11 +219,35 @@ class MaxHandler:
             return MenuText('FIINOPS · Главное меню\nВыберите раздел.', await self._main_buttons(actor))
         if command == '/help':
             return MenuText(HELP, await self._main_buttons(actor))
-        if command == '/reports':
-            await self.directory.projects(actor)
-            buttons = [[MenuButton('ИИ-отчёты', '/ai_reports')]] if (await self.advances.membership(actor))['role'] == 'manager' else []
-            return MenuText('Отчёты\nВыберите ИИ-запрос или период денежного отчёта (UTC).', buttons + PERIODS)
+        if command == '/accountant':
+            from app.application.accountant import AccountantCommands
+            from app.max_bot.menu import LinkButton
+            from app.web.config import panel_url
+            menus = AccountantCommands()
+            if not arg or arg == 'custom':
+                return await menus.selection(actor, arg)
+            start, end = await menus.dates(actor, arg)
+            url = panel_url()
+            if not url:
+                return MenuText('Для скачивания архива в MAX настройте HTTPS-адрес панели.', [HOME])
+            url = url.split('#', 1)[0].rstrip('/') + f'/#/reports?start={start.isoformat()}&end={end.isoformat()}'
+            return MenuText(f'Для бухгалтерии: {start:%d.%m.%Y} — {end:%d.%m.%Y}.\nОткройте панель, войдите через MAX и нажмите «Для бухгалтерии · ZIP». Выбранные даты переданы в панель.',
+                [[LinkButton('Скачать в панели', url)], [MenuButton('Другой период', '/accountant')]])
+        if command in ('/reports', '/money', '/report_periods', '/section_report'):
+            from app.application.section_menus import SectionMenus
+            menus = SectionMenus()
+            if command == '/reports': return await menus.reports(actor)
+            if command == '/money': return await menus.money(actor)
+            args = arg.split()
+            if command == '/report_periods' and len(args) == 2:
+                return await menus.periods(actor, *args)
+            if command == '/section_report' and len(args) == 3:
+                return await menus.report(actor, *args)
+            raise ValueError('Некорректная кнопка отчёта.')
         if command == '/profile':
+            from app.application.profile import profile_summary
+            return await profile_summary(actor)
+        if command == '/accounts':
             return await self.profile_menu.show(sender, actor)
         if command == '/link_telegram':
             return await self.profile_menu.issue_telegram(sender)
@@ -237,7 +275,7 @@ class MaxHandler:
         if command in ('/projects', 'проекты'):
             projects = await self.directory.projects(actor)
             return 'Открытые проекты:\n' + ('\n'.join(f"№{p['id']} · {p['name']}" for p in projects) or 'Проектов пока нет.')
-        if command in ('/money', '/money_page'):
+        if command in ('/advances', '/money_page'):
             page = int(arg) if command == '/money_page' and re.fullmatch('[1-6]', arg) else 1
             result = money_menu(await self.advances.list(actor), page)
             member = await self.advances.membership(actor)
@@ -247,12 +285,8 @@ class MaxHandler:
                     result.buttons.insert(1, ['Продолжить выдачу'])
             return result
         if command == '/balance':
-            rows = await self.advances.balances(actor)
-            lines = ['Деньги: получено − учтённые расходы − подтверждённые возвраты.']
-            for row in rows:
-                name = ' '.join(p for p in (row['first_name'], row['last_name']) if p) or f"Сотрудник №{row['employee_id']}"
-                lines.append(f"{name}: у сотрудника {max(row['balance'], 0):.2f} RUB; компания должна {max(-row['balance'], 0):.2f} RUB; ожидает получения {row['pending']:.2f} RUB.")
-            return '\n'.join(lines) if rows else 'Выдач пока нет. Остаток: 0.00 RUB.'
+            from app.services.finance_formatters import balance_text
+            return balance_text(await self.advances.balances(actor))
         if command in ('/advance', '/receive', '/receive_prompt'):
             if not re.fullmatch(r'[1-9][0-9]{0,17}', arg):
                 return 'Формат: /advance ID или /receive ID. Получение подтверждайте только после фактической передачи денег.'

@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.services.account_links import AccountLinkService
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 from app.services.document_flow import DocumentFlow, DocumentFlowError
 from app.services.document_processing import MAX_IMAGE_BYTES
 from app.services.documents import DocumentValidationError

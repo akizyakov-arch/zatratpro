@@ -1,13 +1,32 @@
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
+from typing import Annotated
 
-from pydantic import Field, AliasChoices, SecretStr, field_validator
+from pydantic import Field, AliasChoices, SecretStr, field_validator, AfterValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TMP_DIR = BASE_DIR / "tmp"
+
+
+def _validate_ocr_proxy(value):
+    url = value.get_secret_value().strip()
+    if not url:
+        return SecretStr('')
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme not in ('http', 'socks5') or not parsed.hostname
+                or not parsed.port or parsed.path not in ('', '/') or parsed.query
+                or parsed.fragment or any(c.isspace() for c in url)):
+            raise ValueError
+    except ValueError:
+        raise ValueError('OCR_SPACE_PROXY_URL: нужен http://host:port или socks5://host:port.') from None
+    return SecretStr(url)
+
+
+OCRProxy = Annotated[SecretStr, AfterValidator(_validate_ocr_proxy)]
 
 
 class DatabaseSettings(BaseSettings):
@@ -69,6 +88,7 @@ class Settings(DatabaseSettings):
         return SecretStr(url)
 
     ocr_space_api_key: str = Field(alias="OCR_SPACE_API_KEY")
+    ocr_space_proxy_url: OCRProxy = Field(default='', alias='OCR_SPACE_PROXY_URL')
     deepseek_api_key: str = Field(alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
         default="https://api.deepseek.com",
@@ -94,8 +114,9 @@ def get_settings() -> Settings:
 
 class RecognitionSettings(BaseSettings):
     """Provider configuration independent of messenger credentials."""
-    model_config = DatabaseSettings.model_config
+    model_config = SettingsConfigDict(**{**DatabaseSettings.model_config, 'hide_input_in_errors': True})
     ocr_space_api_key: str = Field(default='', alias='OCR_SPACE_API_KEY')
+    ocr_space_proxy_url: OCRProxy = Field(default='', alias='OCR_SPACE_PROXY_URL')
     deepseek_api_key: str = Field(default='', alias='DEEPSEEK_API_KEY')
     deepseek_base_url: str = Field(default='https://api.deepseek.com', alias='DEEPSEEK_BASE_URL')
     deepseek_model: str = Field(default='deepseek-chat', alias='DEEPSEEK_MODEL')

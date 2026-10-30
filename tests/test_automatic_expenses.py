@@ -10,7 +10,7 @@ from app.services.advances import AdvanceError, AdvanceService
 from app.services.ai_report_engine import build_report
 from app.services.ai_reports import ReportIntent
 from app.services.business_cards import BusinessCardService
-from app.services.documents import DocumentService
+from app.adapters.telegram.documents import DocumentService
 from app.services.web_finance_directory import WebFinanceDirectory
 
 

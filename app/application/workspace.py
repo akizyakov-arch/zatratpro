@@ -54,6 +54,10 @@ class WorkspaceCommands:
             invite = await self.service.invite_employee(actor)
             return MenuText(f"Приглашение сотруднику действует 72 часа и используется один раз.\nМожно выбрать Telegram или MAX.\nКод: {invite['code']}\nВ MAX нажмите «Вступить по приглашению» и отправьте код отдельным сообщением.\nВ Telegram отправьте /join {invite['code']}\nНовый код заменяет предыдущее неиспользованное приглашение сотрудника.", [HOME])
         if command == 'settings':
+            from app.application.profile import profile_summary
+            await profile_summary(actor)
+            return MenuText('Настройки', [[MenuButton('Распознавание', '/recognition_settings')], [MenuButton('Мой профиль', '/profile')], [MenuButton('Привязанные аккаунты', '/accounts')], [MenuButton('Назад', '/start')]])
+        if command == 'recognition_settings':
             return await self.settings(actor)
         if command == 'recognition':
             await set_provider_for_user(actor, arg)
@@ -86,9 +90,11 @@ class WorkspaceCommands:
             elif command == 'company_archive_yes':
                 await self.service.archive_company(actor, cid)
             return await self.company(actor, cid)
-        if command == 'my_company':
+        if command in ('my_company', 'company_info'):
             row = await self.service.company(actor)
-            return MenuText(self.company_text(row), main_menu_rows('manager'))
+            if command == 'company_info':
+                return MenuText(self.company_text(row), [[MenuButton('Назад', '/my_company')]])
+            return MenuText('Моя компания · ' + row['name'], [[MenuButton('Проекты', '/projects')], [MenuButton('Сотрудники', '/employees')], [MenuButton('Отчёты', '/reports')], [MenuButton('Информация о компании', '/company_info')], [MenuButton('Назад', '/start')]])
         if command == 'employees':
             await self.service.company(actor)
             return MenuText('Раздел сотрудников:', keyboard(ui.build_employees_menu_keyboard()))
@@ -170,7 +176,7 @@ class WorkspaceCommands:
         selected = await get_provider_for_user(actor)
         buttons = [[MenuButton(('✓ ' if key == selected else '') + title, '/recognition ' + key)] for key, title in PROVIDERS.items()]
         return MenuText('Настройки → Распознавание\nСейчас: ' + PROVIDERS[selected] +
-            '\nНастройка общая для вашего профиля в Telegram и MAX. Действует для следующих фото и PDF; сохранённые документы не меняются.', buttons + [HOME])
+            '\nНастройка общая для вашего профиля в Telegram и MAX. Действует для следующих фото и PDF; сохранённые документы не меняются.', buttons + [[MenuButton('Назад', '/settings')]])
 
     async def listing(self, actor, kind, page=1, archived=False):
         method = getattr(self.service, kind)
@@ -207,7 +213,7 @@ class WorkspaceCommands:
     def person(row):
         full_name = ' '.join(filter(None, (row.get('first_name'), row.get('last_name')))) or row.get('name')
         return SimpleNamespace(user_id=row['id'], full_name=full_name, username=row.get('username'),
-                               telegram_id=row['id'], company_name=row.get('company_name'))
+                               company_name=row.get('company_name'))
 
     @staticmethod
     def company_text(row):

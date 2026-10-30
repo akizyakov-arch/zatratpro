@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from db_fixture import DatabaseFixture
 from app.services.account_links import AccountLinkService, AccountLinkError
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 from app.handlers import link_notifications
 from app.handlers.profile import profile_entry
 

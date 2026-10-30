@@ -199,6 +199,7 @@ class ReportDocumentDetail:
     uploaded_by_name: str | None
     first_item_name: str | None
     created_at: datetime
+    is_fiscalized: bool | None = None
 
 
 @dataclass(slots=True)
@@ -238,111 +239,107 @@ def _dto(kind, row):
 
 
 class ViewService:
-    """Legacy Telegram DTO projection; queries/calculations live in shared services."""
-    async def _actor(self, telegram_id):
-        from app.services.account_links import AccountLinkService
-        actor = await AccountLinkService().resolve('telegram', str(telegram_id))
-        if actor is None:
-            raise CompanyAccessError('Учётная запись недоступна.')
-        return actor
+    """Canonical-user report projections; interface identity conversion is external."""
+    async def _actor(self, actor_id):
+        from app.services.companies import CompanyDirectory
+        return await CompanyDirectory()._workspace_actor(actor_id)
 
-
-    async def _report(self, telegram_id, period, **scope):
+    async def _report(self, actor_id, period, **scope):
         from app.services.reporting import ReportService
         from app.services.advances import AdvanceError
         try:
-            return await ReportService().period_report(await self._actor(telegram_id), period, **scope)
+            return await ReportService().period_report(await self._actor(actor_id), period, **scope)
         except AdvanceError as exc:
             raise CompanyAccessError(str(exc)) from exc
 
 
-    async def get_employee_card(self, telegram_user_id: int, member_user_id: int) -> MemberCard:
+    async def get_employee_card(self, actor_id: int, member_user_id: int) -> MemberCard:
         from app.services.reporting import ReportService
         from app.services.advances import AdvanceError
         try:
-            return _dto(MemberCard, await ReportService().employee(await self._actor(telegram_user_id), member_user_id))
+            return _dto(MemberCard, await ReportService().employee(await self._actor(actor_id), member_user_id))
         except AdvanceError as exc:
             raise CompanyAccessError(str(exc)) from exc
 
 
-    async def get_project_card(self, telegram_user_id: int, project_id: int) -> ProjectCard:
+    async def get_project_card(self, actor_id: int, project_id: int) -> ProjectCard:
         from app.services.workspace import WorkspaceService, WorkspaceError
         try:
-            return _dto(ProjectCard, await WorkspaceService().project(await self._actor(telegram_user_id), project_id))
+            return _dto(ProjectCard, await WorkspaceService().project(await self._actor(actor_id), project_id))
         except WorkspaceError as exc:
             raise CompanyAccessError(str(exc)) from exc
 
 
-    async def list_my_documents(self, telegram_user_id: int) -> list[DocumentRow]:
+    async def list_my_documents(self, actor_id: int) -> list[DocumentRow]:
         from app.services.member_directory import MemberDirectory
         from app.services.membership import MembershipError
         try:
-            rows, _ = await MemberDirectory().documents(await self._actor(telegram_user_id), per_page=20)
+            rows, _ = await MemberDirectory().documents(await self._actor(actor_id), per_page=20)
             return [_dto(DocumentRow, row) for row in rows]
         except MembershipError as exc:
             raise CompanyAccessError(str(exc)) from exc
 
 
-    async def get_manager_report_summary(self, telegram_user_id: int, period: str) -> ReportSummary:
-        data = await self._report(telegram_user_id, period)
+    async def get_manager_report_summary(self, actor_id: int, period: str) -> ReportSummary:
+        data = await self._report(actor_id, period)
         return ReportSummary(period=period, **{key: data['summary'][key] for key in ('start_at','documents','total_amount','exact_duplicates','probable_duplicates')})
 
-    async def get_duplicate_report_summary(self, telegram_user_id: int, period: str) -> ReportSummary:
-        data = await self._report(telegram_user_id, period)
+    async def get_duplicate_report_summary(self, actor_id: int, period: str) -> ReportSummary:
+        data = await self._report(actor_id, period)
         docs = data['duplicates']
         return ReportSummary(period, data['start'], len(docs), sum((d['total_amount'] or Decimal(0)) for d in docs if d['currency']=='RUB'), sum(d['duplicate_status']=='exact' for d in docs), sum(d['duplicate_status']=='probable' for d in docs))
 
-    async def get_employee_report_summary(self, telegram_user_id: int, period: str) -> ReportSummary:
-        return await self.get_manager_report_summary(telegram_user_id, period)
+    async def get_employee_report_summary(self, actor_id: int, period: str) -> ReportSummary:
+        return await self.get_manager_report_summary(actor_id, period)
 
-    async def list_report_projects(self, telegram_user_id: int, period: str) -> list[ProjectReportRow]:
-        data = await self._report(telegram_user_id, period)
+    async def list_report_projects(self, actor_id: int, period: str) -> list[ProjectReportRow]:
+        data = await self._report(actor_id, period)
         return [_dto(ProjectReportRow, row) for row in sorted(data['projects'], key=lambda row: (-row['total_amount'], -row['document_count'], row['project_name']))]
 
-    async def list_report_employees(self, telegram_user_id: int, period: str) -> list[EmployeeReportRow]:
-        data = await self._report(telegram_user_id, period)
+    async def list_report_employees(self, actor_id: int, period: str) -> list[EmployeeReportRow]:
+        data = await self._report(actor_id, period)
         return [_dto(EmployeeReportRow, row) for row in sorted(data['employees'], key=lambda row: (-row['total_amount'], -row['document_count'], row['user_id']))]
 
-    async def get_project_report_detail(self, telegram_user_id: int, period: str, project_id: int) -> tuple[ProjectCard, list[ReportDocumentDetail]]:
-        project = await self.get_project_card(telegram_user_id, project_id)
-        data = await self._report(telegram_user_id, period, project_id=project_id)
+    async def get_project_report_detail(self, actor_id: int, period: str, project_id: int) -> tuple[ProjectCard, list[ReportDocumentDetail]]:
+        project = await self.get_project_card(actor_id, project_id)
+        data = await self._report(actor_id, period, project_id=project_id)
         return project, [_dto(ReportDocumentDetail, row) for row in data['documents']]
 
-    async def get_employee_report_detail(self, telegram_user_id: int, period: str, member_user_id: int) -> tuple[MemberCard, list[ReportDocumentDetail]]:
-        member = await self.get_employee_card(telegram_user_id, member_user_id)
-        data = await self._report(telegram_user_id, period, employee_id=member_user_id)
+    async def get_employee_report_detail(self, actor_id: int, period: str, member_user_id: int) -> tuple[MemberCard, list[ReportDocumentDetail]]:
+        member = await self.get_employee_card(actor_id, member_user_id)
+        data = await self._report(actor_id, period, employee_id=member_user_id)
         return member, [_dto(ReportDocumentDetail, row) for row in data['documents']]
 
     async def get_report_document_items(
         self,
-        telegram_user_id: int,
+        actor_id: int,
         period: str,
         document_id: int,
         project_id: int | None = None,
         uploaded_by_user_id: int | None = None,
     ) -> tuple[ReportDocumentDetail, list[ReportItemDetail]]:
-        data = await self._report(telegram_user_id, period, project_id=project_id, employee_id=uploaded_by_user_id)
+        data = await self._report(actor_id, period, project_id=project_id, employee_id=uploaded_by_user_id)
         document = next((row for row in data['documents'] if row['id']==document_id), None)
         if document is None:
             raise CompanyAccessError('Документ отчета не найден.')
         return _dto(ReportDocumentDetail, document), [_dto(ReportItemDetail, row) for row in data['items'] if row['document_id']==document_id]
 
-    async def list_duplicate_report_rows(self, telegram_user_id: int, period: str) -> list[DuplicateReportRow]:
-        data = await self._report(telegram_user_id, period)
+    async def list_duplicate_report_rows(self, actor_id: int, period: str) -> list[DuplicateReportRow]:
+        data = await self._report(actor_id, period)
         return [_dto(DuplicateReportRow, row) for row in sorted(data['duplicates'], key=lambda row: (row['created_at'], row['id']), reverse=True)]
 
-    async def get_duplicate_report_row(self, telegram_user_id: int, period: str, duplicate_id: int) -> DuplicateReportRow:
-        rows = await self.list_duplicate_report_rows(telegram_user_id, period)
+    async def get_duplicate_report_row(self, actor_id: int, period: str, duplicate_id: int) -> DuplicateReportRow:
+        rows = await self.list_duplicate_report_rows(actor_id, period)
         for row in rows:
             if row.id == duplicate_id:
                 return row
         raise CompanyAccessError('Дубль больше не актуален: исходная запись удалена, статус снят.')
 
-    async def list_report_documents_for_company(self, telegram_user_id: int, period: str) -> list[ReportDocumentDetail]:
-        return [_dto(ReportDocumentDetail, row) for row in (await self._report(telegram_user_id, period))['documents']]
+    async def list_report_documents_for_company(self, actor_id: int, period: str) -> list[ReportDocumentDetail]:
+        return [_dto(ReportDocumentDetail, row) for row in (await self._report(actor_id, period))['documents']]
 
-    async def list_report_items_for_company(self, telegram_user_id: int, period: str) -> list[ReportItemDetail]:
-        return [_dto(ReportItemDetail, row) for row in (await self._report(telegram_user_id, period))['items']]
+    async def list_report_items_for_company(self, actor_id: int, period: str) -> list[ReportItemDetail]:
+        return [_dto(ReportItemDetail, row) for row in (await self._report(actor_id, period))['items']]
 
 
 def _report_period_start(period: str) -> datetime:

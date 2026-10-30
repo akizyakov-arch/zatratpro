@@ -54,15 +54,12 @@ class MiniSignatureTests(unittest.TestCase):
     def test_test_key_not_accepted_by_production_verifier(self):
         with self.assertRaises(WebAuthError): verify_init_data(signed(),BOT_ID)
 
-    def test_bot_button_only_for_manager_with_configured_https(self):
-        with patch.dict(os.environ,{'WEB_MINI_APP_ENABLED':'true','WEB_TELEGRAM_BOT_ID':str(BOT_ID),'WEB_ORIGIN':'https://panel.example'}):
-            manager = build_main_menu_keyboard('manager')
-            self.assertEqual(manager.keyboard[0][0].text,'Панель руководителя')
-            self.assertIsNone(manager.keyboard[0][0].web_app)
-            for role in ('employee','platform_owner'):
-                self.assertFalse(any(b.text=='Панель руководителя' for row in build_main_menu_keyboard(role).keyboard for b in row))
-            with patch.dict(os.environ,{'WEB_ORIGIN':'http://panel.example'}):
-                self.assertFalse(any(b.text=='Панель руководителя' for row in build_main_menu_keyboard('manager').keyboard for b in row))
+    def test_panel_moves_from_main_menu_to_reports(self):
+        from app.ui.reports import build_reports_menu_keyboard
+        for role in ('manager', 'employee', 'platform_owner'):
+            self.assertFalse(any(b.text == 'Панель руководителя' for row in build_main_menu_keyboard(role).keyboard for b in row))
+        buttons = [b for row in build_reports_menu_keyboard().inline_keyboard for b in row]
+        self.assertTrue(any(b.text == 'Панель руководителя' and b.callback_data == 'manager:reports:panel' for b in buttons))
 
 
 @unittest.skipUnless(os.environ.get('RUN_DATABASE_TESTS')=='1','PostgreSQL tests disabled')
@@ -161,3 +158,12 @@ class MiniAPITests(DatabaseFixture):
         message=SimpleNamespace(from_user=self.employee,answer=AsyncMock())
         await open_panel(message)
         self.assertNotIn('reply_markup',message.answer.call_args.kwargs)
+
+    async def test_reports_callback_checks_human_sender_not_bot_message(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from app.handlers.mini_app import panel_from_reports
+        target = SimpleNamespace(chat=SimpleNamespace(type='private'), answer=AsyncMock())
+        callback = SimpleNamespace(from_user=self.manager, message=target, answer=AsyncMock())
+        await panel_from_reports(callback)
+        self.assertEqual(target.answer.call_args.kwargs['reply_markup'].inline_keyboard[0][0].web_app.url, 'https://testserver/mini')

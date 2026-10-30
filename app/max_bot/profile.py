@@ -12,7 +12,7 @@ class ProfileMenu:
     async def show(self, sender, actor):
         accounts = await self.links.accounts('max', str(sender))
         pending = await self.links.pending('max', str(sender))
-        text = ['Мой профиль', 'Связанные аккаунты:']
+        text = ['Привязанные аккаунты', 'Связанные аккаунты:']
         text.extend(f"{row['platform']}: {row['external_id']}" for row in accounts)
         buttons = []
         if 'telegram' not in {row['platform'] for row in accounts}:
@@ -21,7 +21,7 @@ class ProfileMenu:
             text.append(f"Запрос подключения {request['target_platform']}: {request['target_external_id']}. Подтверждайте только свой аккаунт.")
             buttons.append([MenuButton("Подтвердить подключение", f"/link_confirm {request['id']}")])
             buttons.append([MenuButton("Отклонить", f"/link_cancel {request['id']}")])
-        buttons.extend([['Обновить профиль'], HOME])
+        buttons.extend([['Обновить профиль'], [MenuButton('Назад', '/settings')]])
         return MenuText('\n'.join(text), buttons)
 
     async def issue_telegram(self, sender):

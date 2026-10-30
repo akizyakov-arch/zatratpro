@@ -1,5 +1,6 @@
 """Bounded PDF rendering in a separate process; no uploaded filenames are used."""
 import asyncio
+from app.services.recognition_runtime import extract_page
 from io import BytesIO
 import json
 import logging
@@ -88,16 +89,6 @@ def _render_worker(source, directory, caption):
     return payload['pages']
 
 
-async def extract_pdf(message, ocr_service):
-    document = message.document
-    if document.file_size and document.file_size > MAX_PDF_BYTES:
-        raise PDFError('PDF слишком большой. Максимум 10 МБ.')
-    with LimitedDownload() as destination:
-        await message.bot.download(document, destination=destination)
-        data = destination.getvalue()
-    return await extract_pdf_bytes(data, ocr_service, message.caption, message.answer)
-
-
 async def extract_pdf_bytes(data, ocr_service, caption='', notify=None):
     if len(data) > MAX_PDF_BYTES:
         raise PDFError('PDF слишком большой. Максимум 10 МБ.')
@@ -113,7 +104,7 @@ async def extract_pdf_bytes(data, ocr_service, caption='', notify=None):
             if notify:
                 await notify(f'Распознаю страницу {number + 1} PDF…')
             logger.info('pdf_page_start page=%s provider=%s', number + 1, type(ocr_service).__name__)
-            text = await ocr_service.extract_text(Path(directory) / f'{number + 1}.jpg')
+            text = await extract_page(ocr_service, Path(directory) / f'{number + 1}.jpg', notify)
             logger.info('pdf_page_done page=%s chars=%s', number + 1, len(text))
             if not text.strip():
                 raise PDFError(f'На странице {number + 1} не удалось прочитать текст. Документ не сохранён. Проверь скан или выбери другой диапазон страниц.')

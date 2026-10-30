@@ -11,10 +11,6 @@ def build_main_menu_keyboard(
     allow_web_app: bool = True,
 ) -> ReplyKeyboardMarkup:
     rows = main_menu_rows(menu_kind, has_company, can_view_reports)
-    if menu_kind == 'manager' and has_company and allow_web_app:
-        from app.web.config import mini_app_url
-        if mini_app_url():
-            rows.insert(0, ['Панель руководителя'])
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=label) for label in row] for row in rows],
         resize_keyboard=True, input_field_placeholder='Выбери действие',

@@ -38,6 +38,8 @@ PREFIXES = {
 
 
 def command(data):
+    if data.startswith('core:/'):
+        return data[5:]
     if data in EXACT:
         return EXACT[data]
     if data.startswith(ui.OWNER_USER_ASSIGN_COMPANY_PREFIX):

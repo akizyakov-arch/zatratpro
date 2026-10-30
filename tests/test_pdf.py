@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pypdfium2 as pdfium
-from app.services.pdf_files import PDFError, LimitedDownload, page_selection, _render_worker, extract_pdf
+from app.services.pdf_files import PDFError, LimitedDownload, page_selection, _render_worker
+from app.adapters.telegram.pdf_files import extract_pdf
 
 
 def make_pdf(path, pages=2):

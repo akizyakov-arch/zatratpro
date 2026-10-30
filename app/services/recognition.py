@@ -35,18 +35,6 @@ async def set_provider_for_user(user_id, provider):
         raise ValueError('Учётная запись недоступна.')
 
 
-async def get_provider_name(telegram_id):
-    user_id = await get_pool().fetchval("SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1", str(telegram_id))
-    return await get_provider_for_user(user_id) if user_id is not None else 'deepseek'
-
-
-async def set_provider(telegram_id, provider):
-    user_id = await get_pool().fetchval("SELECT user_id FROM external_accounts WHERE platform='telegram' AND external_id=$1", str(telegram_id))
-    if user_id is None:
-        raise ValueError('Сначала войди в бот через /start.')
-    await set_provider_for_user(user_id, provider)
-
-
 def image_blocks(file_path):
     blocks = []
     def add(data):
@@ -75,6 +63,7 @@ class IncompleteVisionResponse(OCRSpaceError):
 
 
 class DeepSeekVisionService:
+    provider_name = 'deepseek'
     async def extract_text(self, file_path: Path):
         try:
             # Stay within the handler's 120-second timeout, including one retry.

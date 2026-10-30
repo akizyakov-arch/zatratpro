@@ -2,7 +2,7 @@
 from app.services.document_drafts import PendingDocument, PENDING_DOCUMENT_TTL
 from app.services import document_drafts as core
 from app.services.account_links import AccountLinkService
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 
 
 async def _actor(telegram_id):

@@ -1,7 +1,8 @@
 import re
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
+from app.schemas.fiscal import detect_fiscalization
 
 
 NUMERIC_FIXES = str.maketrans({
@@ -54,6 +55,7 @@ class DocumentSchema(BaseModel):
     vendor_inn: str | None = None
     vendor_kpp: str | None = None
     date: str | None = None
+    is_fiscalized: StrictBool | None = None
     currency: str = "RUB"
     total: float | None = None
     items: list[DocumentItem] = Field(default_factory=lambda: [DocumentItem()])
@@ -67,6 +69,7 @@ class DocumentSchema(BaseModel):
     @model_validator(mode="after")
     def normalize_document_type(self) -> "DocumentSchema":
         self.document_type = _detect_document_type(self.document_type, self.raw_text)
+        self.is_fiscalized = detect_fiscalization(self.raw_text)
         return self
 
 

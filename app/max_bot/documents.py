@@ -10,7 +10,7 @@ from app.services.pdf_files import MAX_PDF_BYTES, PDFError
 from app.services.deepseek import DeepSeekError
 from app.services.ocr_space import OCRSpaceError
 from app.services.membership import MembershipError
-from app.services.companies import CompanyAccessError
+from app.services.company_policy import CompanyAccessError
 
 logger = logging.getLogger(__name__)
 

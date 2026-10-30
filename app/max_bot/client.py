@@ -1,11 +1,9 @@
 """Small MAX HTTP transport. Tokens are sent only to the official API host."""
-import asyncio
 import ssl
-import time
 from pathlib import Path
 
 import httpx
-from app.max_bot.menu import CALLBACK_PREFIX, MenuButton
+from app.max_bot.menu import CALLBACK_PREFIX, MenuButton, LinkButton
 
 API_URL = 'https://platform-api2.max.ru'
 ROOT_CA = Path(__file__).with_name('certs') / 'russian_trusted_root_ca.pem'
@@ -20,7 +18,7 @@ class MaxAPIError(RuntimeError):
 
 
 class MaxClient:
-    def __init__(self, token, *, ca_bundle=None, transport=None, rate_interval=.55):
+    def __init__(self, token, *, ca_bundle=None, transport=None):
         if not isinstance(token, str) or not token.strip():
             raise ValueError('MAX_BOT_TOKEN не настроен.')
         context = ssl.create_default_context()
@@ -32,8 +30,6 @@ class MaxClient:
         self.http = httpx.AsyncClient(base_url=API_URL, headers={'Authorization': token},
             verify=context, timeout=httpx.Timeout(45, connect=15), transport=transport,
             follow_redirects=False)
-        self.rate_interval = rate_interval
-        self.last_send = 0.0
 
     async def __aenter__(self):
         return self
@@ -87,14 +83,7 @@ class MaxClient:
             raise MaxAPIError('MAX вернул некорректную страницу событий.')
         return updates, marker
 
-    async def _throttle(self):
-        wait = self.rate_interval - (time.monotonic() - self.last_send)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        self.last_send = time.monotonic()
-
     async def answer(self, callback_id):
-        await self._throttle()
         await self._request('POST', '/answers', params={'callback_id': callback_id}, json={})
 
     async def send(self, user_id, text):
@@ -102,11 +91,11 @@ class MaxClient:
             raise ValueError('Некорректный получатель или текст MAX.')
         buttons = getattr(text, 'buttons', None)
         for start in range(0, len(text), 3500):
-            await self._throttle()
             body = {'text': str(text[start:start + 3500])}
             if buttons and start + 3500 >= len(text):
                 body['attachments'] = [{'type': 'inline_keyboard', 'payload': {'buttons': [
-                    [({'type': 'callback', 'text': str(label)[:128], 'payload': CALLBACK_PREFIX + label.command}
+                    [({'type': 'link', 'text': str(label)[:128], 'url': label.url} if isinstance(label, LinkButton) else
+                     {'type': 'callback', 'text': str(label)[:128], 'payload': CALLBACK_PREFIX + label.command}
                       if isinstance(label, MenuButton) else {'type': 'message', 'text': str(label)[:128]}) for label in row] for row in buttons
                 ]}}]
             await self._request('POST', '/messages', params={'user_id': user_id, 'disable_link_preview': 'true'},

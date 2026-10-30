@@ -2,7 +2,7 @@
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from app.services.companies import CompanyService
+from app.adapters.telegram.companies import CompanyService
 from app.web.config import mini_app_url
 
 router = Router()
@@ -14,7 +14,20 @@ router.message.filter(F.chat.type == 'private')
 async def open_panel(message):
     if message.from_user is None:
         return
-    context = await CompanyService().get_user_context(message.from_user.id)
+    await _show_panel(message.from_user.id, message)
+
+
+@router.callback_query(F.data == 'manager:reports:panel')
+async def panel_from_reports(callback):
+    if callback.message is None or callback.message.chat.type != 'private':
+        await callback.answer()
+        return
+    await callback.answer()
+    await _show_panel(callback.from_user.id, callback.message)
+
+
+async def _show_panel(sender, message):
+    context = await CompanyService().get_user_context(sender)
     if context.menu_kind != 'manager' or not context.has_company:
         await message.answer('Панель доступна руководителю активной компании.')
         return

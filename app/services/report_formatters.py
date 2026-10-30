@@ -1,6 +1,7 @@
 from __future__ import annotations
+from app.schemas.fiscal import fiscalization_label
 
-from app.ui.reports import REPORT_PERIOD_LABELS
+from app.services.report_periods import REPORT_PERIOD_LABELS
 
 NL = chr(10)
 
@@ -124,6 +125,7 @@ def format_report_document_items(title: str, period: str, document, items) -> st
         f'Контрагент: {vendor}',
         f'Дата: {date_line}',
         f'Номер: {number}',
+        'Фискализация: ' + fiscalization_label(getattr(document, 'is_fiscalized', None)),
         f'Сумма: {format_amount(document.total_amount)}',
         f'Исполнитель: {executor}',
         '',

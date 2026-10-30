@@ -37,6 +37,7 @@ Python приложения работает внутри образа `python:3
 | Telegram | TELEGRAM_BOT_TOKEN | Токен Bot API; облачное имя секрета TOKEN не является именем настройки Python |
 | Владелец | BOT_OWNER_TELEGRAM_ID | Положительный Telegram ID действующего owner; не ID бота |
 | Telegram proxy | TELEGRAM_PROXY_URL | Пусто либо URL HTTP/SOCKS5; MTProxy не подходит |
+| OCR.space proxy | OCR_SPACE_PROXY_URL | Полный HTTP/SOCKS5 URL; отдельно от Telegram, см. OCR_DIAGNOSTICS |
 | MAX | MAX_BOT_TOKEN, MAX_CA_BUNDLE | MAX-токен; дополнительный PEM CA необязателен |
 | Ссылка на Telegram | TELEGRAM_BOT_USERNAME | Имя без @ для ссылок привязки из MAX |
 | OCR/LLM | OCR_SPACE_API_KEY, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, DEEPSEEK_VISION_MODEL | Распознавание и структура/вопросы; выберите актуальные модели |
@@ -49,7 +50,7 @@ Python приложения работает внутри образа `python:3
 
 Для MAX-финансов без OCR достаточно его токена и БД; политика owner дополнительно
 зависит от BOT_OWNER_TELEGRAM_ID. Для OCR MAX нужны ключи провайдеров, но не
-Telegram-токен. Для веб-входа необходим настроенный Telegram-путь подтверждения.
+Telegram-токен. Браузерный вход можно подтвердить через Telegram или MAX; см. [MAX_WEB_LOGIN](MAX_WEB_LOGIN.md).
 Секреты разных платформ не взаимозаменяемы.
 
 ## 3. Новая пустая установка
@@ -101,6 +102,11 @@ docker compose -p fiinops -f docker-compose.yml -f docker-compose.max-dev.yml st
 docker compose -p fiinops -f docker-compose.yml -f docker-compose.max-dev.yml up -d --no-deps --force-recreate zatratpro-bot zatratpro-max
 )
 ```
+
+Миграция 024 переводит оставшийся ввод возвратов, решений и карт на внутренний
+actor_id; старые писатели этой таблицы несовместимы с новой схемой. Требуются
+backup и согласованное обновление ботов/панели.
+[Архитектурные требования](CORE_BOUNDARY_REQUIREMENTS.md).
 
 Миграция 023 объединяет черновики администрирования и выдачи Telegram/MAX.
 Требует согласованного обновления всех адаптеров; подробности —
@@ -193,3 +199,12 @@ CREATEDB: fixture создаёт отдельные базы. Не выдава�
 После рефакторинга общих команд полный прогон содержал 393 успешных теста. Промышленная приёмка
 дополнительно включает реальный скан/PDF, живой Telegram/MAX, получение/возврат,
 сверку отчёта и XLSX, восстановление backup и проверку доступа с чужого аккаунта.
+
+### Оригиналы для бухгалтерии (миграция 026)
+
+Новые оригиналы хранятся в PostgreSQL, без дополнительных volume. Резервная
+копия БД включает сканы; её размер и время создания увеличатся. Старые документы
+без сохранённых файлов будут помечены в реестре «Скан отсутствует».
+См. [периоды, ограничения и хранение](ACCOUNTANT_EXPORT.md).
+Обновлять Telegram/MAX/web одной версией после резервного копирования; `down -v`
+и пересоздание базы не требуются.

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock,patch
 from types import SimpleNamespace
 import httpx
 from db_fixture import DatabaseFixture
-from app.services.documents import DocumentService
+from app.adapters.telegram.documents import DocumentService
 from app.services.ai_reports import ReportIntent,parse_question
 from app.services.ai_report_engine import build_report
 

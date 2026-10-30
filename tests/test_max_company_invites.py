@@ -9,7 +9,7 @@ from test_max_adapter import message
 from app.max_bot.handler import MaxHandler
 from app.services.account_links import AccountLinkService, AccountLinkError
 from app.services.company_invitations import CompanyInvitations
-from app.services.companies import CompanyAccessError, CompanyService
+from app.adapters.telegram.companies import CompanyAccessError, CompanyService
 from app.services.max_onboarding import MaxOnboardingService
 
 
@@ -47,7 +47,7 @@ class MaxCompanyInviteTests(DatabaseFixture):
         code = await self.service.create_initial_manager_invite(self.owner, company.id)
         reply = (await MaxHandler().handle(message(9001, '/join ' + code)))[1]
         self.assertIn('руководитель', reply)
-        self.assertIn(['Проекты', 'Сотрудники'], reply.buttons)
+        self.assertIn(['Моя компания'], reply.buttons)
         manager = await self.max_actor()
         self.assertEqual(await self.pool.fetchval('SELECT manager_user_id FROM companies WHERE id=$1', company.id), manager)
         self.assertIsNone(await self.pool.fetchval('SELECT telegram_id FROM users WHERE id=$1', manager))

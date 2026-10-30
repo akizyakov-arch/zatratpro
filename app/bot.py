@@ -69,6 +69,8 @@ async def main() -> None:
     dispatcher.startup.register(on_startup)
     dispatcher.shutdown.register(on_shutdown)
 
+    from app.handlers.accountant import router as accountant_router
+    dispatcher.include_router(accountant_router)
     dispatcher.include_router(workspace_router)
     dispatcher.include_router(issue_router)
     dispatcher.include_router(ai_reports_router)

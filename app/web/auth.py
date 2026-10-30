@@ -1,6 +1,7 @@
-"""Same-origin HTTP adapter for the shared Telegram-approved login service."""
+"""Same-origin HTTP adapter for the shared messenger-approved login service."""
 import re
 import secrets
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -65,13 +66,18 @@ async def require_csrf(request: Request):
 
 
 @router.post('/start')
-async def start(request: Request, response: Response):
+async def start(request: Request, response: Response, platform: Literal['telegram', 'max'] = 'telegram'):
     check_origin(request)
     browser_token = secrets.token_urlsafe(32)
     try:
-        result = await service.start(browser_token, request.headers.get('user-agent', ''), request.client.host if request.client else 'unknown')
+        result = await service.start(browser_token, request.headers.get('user-agent', ''), request.client.host if request.client else 'unknown', platform=platform)
     except WebAuthError as exc:
         raise HTTPException(429, str(exc)) from None
+    if platform == 'max':
+        set_cookie(response, PENDING_COOKIE, browser_token, 300)
+        from app.web.max_login import login_link
+        url = await login_link(result['code'])
+        return {'id': result['id'], 'command': '/web_login ' + result['code'], 'bot_url': url, 'expires_at': result['expires_at']}
     username = get_web_settings().bot_username.lstrip('@')
     if not re.fullmatch(r'[A-Za-z0-9_]{5,32}', username):
         raise HTTPException(503, 'Не настроено имя Telegram-бота.')

@@ -26,7 +26,7 @@ class MaxMenuTransportTests(unittest.IsolatedAsyncioTestCase):
         def transport(request):
             requests.append(request)
             return httpx.Response(200, json={'message': {}})
-        async with MaxClient('test', transport=httpx.MockTransport(transport), rate_interval=0) as client:
+        async with MaxClient('test', transport=httpx.MockTransport(transport)) as client:
             await client.send(123, MenuText('А' * 7001, MAIN))
         bodies = [json.loads(request.content) for request in requests]
         self.assertEqual(''.join(body['text'] for body in bodies), 'А' * 7001)
@@ -72,7 +72,7 @@ class MaxMenuIntegrationTests(DatabaseFixture):
         self.assertEqual(start.buttons, MAIN)
         self.assertIn(self.project.name, await self.press('Проекты'))
         self.assertIn('Связанные аккаунты', await self.press('Профиль'))
-        self.assertEqual((await self.press('Отчёты')).buttons, PERIODS)
+        self.assertIn('руководител', str(await self.press('Отчёты')))
         for label in ('За неделю', 'За месяц', 'За всё время'):
             report = await self.press(label)
             self.assertIn('Отчёт по деньгам', report)
@@ -84,7 +84,8 @@ class MaxMenuIntegrationTests(DatabaseFixture):
         manager, employee = await self.finance_ids()
         await self.link(self.employee, 9001)
         ids = [await AdvanceService().issue(manager, employee, self.project.id, '100', 'Purchase', f'menu-{i}') for i in range(7)]
-        first = await self.press('Деньги')
+        section = await self.press('Деньги')
+        first = await self.press(section.buttons[0][0])
         self.assertIn('страница 1/2', first)
         self.assertEqual(sum(getattr(label, 'command', '').startswith('/advance ') for row in first.buttons for label in row), 5)
         second = await self.press('Выдачи · страница 2')
@@ -131,6 +132,8 @@ class MaxMenuIntegrationTests(DatabaseFixture):
     async def test_unavailable_page_and_empty_money_menu_have_navigation(self):
         await self.link(self.employee, 9001)
         empty = await self.press('Деньги')
+        self.assertIn('Мои выдачи', str(empty.buttons))
+        empty = await self.press(empty.buttons[0][0])
         self.assertIn('Выдач пока нет', empty)
         self.assertIn(HOME, empty.buttons)
         gone = await self.press('Выдачи · страница 6')

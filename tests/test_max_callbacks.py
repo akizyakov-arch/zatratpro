@@ -30,7 +30,7 @@ class CallbackTransportTests(unittest.IsolatedAsyncioTestCase):
         def transport(request):
             requests.append(request)
             return httpx.Response(200, json={})
-        async with MaxClient('test', transport=httpx.MockTransport(transport), rate_interval=0) as client:
+        async with MaxClient('test', transport=httpx.MockTransport(transport)) as client:
             await client.send(55, MenuText('Активные проекты:', [[MenuButton('Ривер Дон', '/project 17')]]))
             await client.answer('callback-id')
         button = json.loads(requests[0].content)['attachments'][0]['payload']['buttons'][0][0]
@@ -39,12 +39,20 @@ class CallbackTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests[1].url.params['callback_id'], 'callback-id')
         self.assertEqual(json.loads(requests[1].content), {})
 
+    async def test_panel_link_is_native_link_not_callback_or_message(self):
+        from app.max_bot.menu import LinkButton
+        sent = []
+        async with MaxClient('test', transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200, json={}))) as client:
+            await client.send(55, MenuText('Панель', [[LinkButton('Открыть панель', 'https://panel.example')]]))
+        button = json.loads(sent[0].content)['attachments'][0]['payload']['buttons'][0][0]
+        self.assertEqual(button, {'type': 'link', 'text': 'Открыть панель', 'url': 'https://panel.example'})
+
     async def test_same_names_have_distinct_actions_and_long_names_fit_max(self):
         rows = keyboard(ui.build_projects_keyboard([SimpleNamespace(id=11, name='Одинаково'), SimpleNamespace(id=22, name='Одинаково')], False))
         self.assertEqual(rows[0][0], rows[1][0])
         self.assertNotEqual(rows[0][0].command, rows[1][0].command)
         sent = []
-        async with MaxClient('test', transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200, json={})), rate_interval=0) as client:
+        async with MaxClient('test', transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200, json={}))) as client:
             await client.send(55, MenuText('Проекты', [[MenuButton('Я'*200, '/project 11')]]))
         self.assertEqual(len(json.loads(sent[0].content)['attachments'][0]['payload']['buttons'][0][0]['text']), 128)
 
@@ -173,7 +181,7 @@ class CallbackInterfaceTests(DatabaseFixture):
         self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM advances'), 1)
 
     async def test_project_documents_are_available_and_scoped(self):
-        from app.services.documents import DocumentService
+        from app.adapters.telegram.documents import DocumentService
         await self.link(self.manager)
         await DocumentService().save_document(self.employee, self.project, 'text', self.document, upload_id='callback-project-doc')
         active = await self.press('/admin_projects')

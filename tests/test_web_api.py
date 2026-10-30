@@ -12,8 +12,8 @@ from openpyxl import load_workbook
 from db_fixture import DatabaseFixture
 from app.services.advances import AdvanceService
 from app.services.business_cards import BusinessCardService
-from app.services.documents import DocumentService
-from app.services.projects import ProjectService
+from app.adapters.telegram.documents import DocumentService
+from app.adapters.telegram.projects import ProjectService
 from app.services.web_auth import WebAuthService
 from app.web.app import create_app
 
@@ -294,3 +294,23 @@ class WebAPITests(DatabaseFixture):
             self.assertEqual([row['id'] for row in custom.json()['items']], [old_id])
             invalid = await self.client.get(path + '?period=unknown-period')
             self.assertEqual(invalid.status_code, 422, invalid.text)
+
+    async def test_max_browser_login_uses_secure_cookie_and_same_permissions(self):
+        manager, _ = await self.finance_ids()
+        await self.pool.execute("INSERT INTO external_accounts(user_id,platform,external_id) VALUES($1,'max','9001')", manager)
+        with patch('app.web.max_login.login_link', return_value='https://max.ru/test_bot?start=web_test'):
+            response = await self.client.post('/api/auth/start?platform=max', headers={'origin': 'https://testserver'})
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual(data['bot_url'], 'https://max.ru/test_bot?start=web_test')
+        self.assertIn('Secure', response.headers['set-cookie'])
+        self.assertIn('HttpOnly', response.headers['set-cookie'])
+        await WebAuthService().present(9001, data['command'].split()[1], platform='max')
+        await WebAuthService().decide(9001, data['id'], True, platform='max')
+        response = await self.client.get('/api/auth/status')
+        self.assertEqual(response.json()['status'], 'authenticated')
+        self.assertEqual(response.json()['user']['id'], manager)
+        self.assertNotIn('session_token', response.json())
+        self.assertEqual((await self.client.get('/api/auth/me')).status_code, 200)
+        bad = await self.client.post('/api/auth/start?platform=other', headers={'origin': 'https://testserver'})
+        self.assertEqual(bad.status_code, 422)

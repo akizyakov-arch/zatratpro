@@ -8,7 +8,7 @@ from decimal import Decimal
 from db_fixture import DatabaseFixture
 from app.services.advances import AdvanceError, AdvanceService
 from app.services.business_cards import BusinessCardService
-from app.services.documents import DocumentService
+from app.adapters.telegram.documents import DocumentService
 from app.services.finance_directory import FinanceDirectory
 
 

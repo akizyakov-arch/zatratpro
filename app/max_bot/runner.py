@@ -2,12 +2,13 @@
 import asyncio
 from collections import deque
 import logging
+import time
 
 import asyncpg
 
 from app.max_bot.client import MaxAPIError
 from app.max_bot.handler import MaxHandler, event_message
-from app.services.database import get_pool
+from app.services import max_delivery as store
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,11 @@ async def process_batch(client, handler, updates, *, check_lease=None):
         if check_lease:
             await check_lease()
         update = pending[0]
+        started = time.perf_counter()
+        ack_ms = handle_ms = send_ms = 0.0
+        stamp = update.get('timestamp')
+        # MAX timestamps are epoch milliseconds; local clock skew affects this value.
+        age_ms = max(0, time.time() * 1000 - stamp) if type(stamp) in (int, float) and 0 < stamp < 10**15 else None
         if update.get('update_type') == 'message_callback' and event_message(update) is not None:
             try:
                 await client.answer(update['callback']['callback_id'])
@@ -31,13 +37,17 @@ async def process_batch(client, handler, updates, *, check_lease=None):
                 # Old/already answered callbacks must not block the update queue.
                 if exc.status not in (400, 404, 410):
                     raise
+            ack_ms = (time.perf_counter() - started) * 1000
             if check_lease:
                 await check_lease()
+        handling = time.perf_counter()
         reply = await handler.handle(update)
+        handle_ms = (time.perf_counter() - handling) * 1000
         if reply is not None:
             if check_lease:
                 await check_lease()
             user_id, text = reply
+            sending = time.perf_counter()
             try:
                 await client.send(user_id, text)
             except MaxAPIError as exc:
@@ -46,18 +56,25 @@ async def process_batch(client, handler, updates, *, check_lease=None):
                 if exc.status != 403:
                     raise
                 logger.warning('MAX: ответ недоступному получателю пропущен (HTTP 403).')
+            send_ms = (time.perf_counter() - sending) * 1000
+        # Never log event bodies, names, callbacks, IDs, URLs or query text.
+        kind = update.get('update_type')
+        kind = kind if kind in ('bot_started', 'message_created', 'message_callback') else 'other'
+        logger.info('max_event type=%s age_ms=%s ack_ms=%.0f handle_ms=%.0f send_ms=%.0f total_ms=%.0f pending=%s',
+                    kind, round(age_ms) if age_ms is not None else 'unknown', ack_ms,
+                    handle_ms, send_ms, (time.perf_counter() - started) * 1000, len(pending) - 1)
         pending.popleft()
 
 
 async def _poll_locked(client, bot_id, lease, *, timeout, once):
     async def check_lease():
         try:
-            await lease.fetchval('SELECT 1')
+            await store.check(lease)
         except Exception:
             raise PollingLeaseLost() from None
 
     handler = MaxHandler(notify=client.send)
-    marker = await lease.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=$1', bot_id)
+    marker = await store.marker(lease,bot_id)
     pending = None
     failures = 0
     while True:
@@ -70,8 +87,7 @@ async def _poll_locked(client, bot_id, lease, *, timeout, once):
             # marker is initially None. Recheck authorization on each retry.
             await process_batch(client, handler, pending, check_lease=check_lease)
             if next_marker is not None:
-                await lease.execute('''INSERT INTO max_poll_offsets(bot_id,marker) VALUES($1,$2)
-                    ON CONFLICT(bot_id) DO UPDATE SET marker=EXCLUDED.marker,updated_at=clock_timestamp()''', bot_id, next_marker)
+                await store.checkpoint(lease,bot_id,next_marker)
                 marker = next_marker
             pending = None
             failures = 0
@@ -90,9 +106,9 @@ async def _poll_locked(client, bot_id, lease, *, timeout, once):
 
 
 async def poll(client, bot_id, *, timeout=30, once=False):
-    async with get_pool().acquire() as lease:
+    async with store.acquire_lease() as lease:
         key = f'fiinops:max-poll:{bot_id}'
-        if not await lease.fetchval('SELECT pg_try_advisory_lock(hashtextextended($1,0))', key):
+        if not await store.lock(lease,key):
             raise RuntimeError('Для этого бота MAX уже работает другой polling-процесс.')
         lost = asyncio.Event()
         worker = None
@@ -120,7 +136,7 @@ async def poll(client, bot_id, *, timeout=30, once=False):
             if not lost.is_set():
                 try:
                     lease.remove_termination_listener(disconnected)
-                    await lease.execute('SELECT pg_advisory_unlock(hashtextextended($1,0))', key)
+                    await store.unlock(lease,key)
                 except Exception:
                     # A failed unlock must not leave a pooled session locked.
                     try:
