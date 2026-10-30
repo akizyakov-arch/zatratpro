@@ -35,12 +35,12 @@ class OCRDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                 await self.run_case(AsyncMock(side_effect=asyncio.CancelledError()))
         self.assertIn('ocr_space_cancelled',str(logs.output))
 
-    async def test_read_timeout_retries_three_times(self):
+    async def test_transport_does_not_retry_inside_shared_page_policy(self):
         post=AsyncMock(side_effect=httpx.ReadTimeout('private-key'))
         with self.assertLogs('app.services.ocr_space') as logs:
             with self.assertRaises(OCRSpaceError): await self.run_case(post)
-        self.assertEqual(post.await_count,3)
-        self.assertIn('attempt=3',str(logs.output))
+        self.assertEqual(post.await_count,1)
+        self.assertIn('code=timeout',str(logs.output))
         self.assertNotIn('private-key',str(logs.output))
 
     async def test_photo_deadlines_return_clear_error_and_never_parse(self):
@@ -54,7 +54,7 @@ class OCRDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder:
             image = Path(folder) / 'prepared.jpg'
             image.write_bytes(b'image')
-            with patch('app.services.document_processing.prepare_image', return_value=image), patch('app.services.document_processing.create_recognizer', return_value=SimpleNamespace(extract_text=AsyncMock())), patch('app.services.document_processing.asyncio.timeout', expired), patch('app.services.document_processing.asyncio.sleep', AsyncMock()), patch('app.services.document_processing.DeepSeekService') as parser, self.assertLogs('app.services.document_processing') as logs:
+            with patch('app.services.document_processing.prepare_image', return_value=image), patch('app.services.document_processing.create_recognizer', return_value=SimpleNamespace(extract_text=AsyncMock())), patch('app.services.document_processing.asyncio.timeout', expired), patch('app.services.document_processing.asyncio.sleep', AsyncMock()), patch('app.services.document_processing.DeepSeekService') as parser, self.assertLogs('app.services.recognition_runtime') as logs:
                 with self.assertRaises(OCRSpaceError) as caught:
                     await recognize_document(b'image', 'photo', 'ocr_space', notify=notify)
                 parser.assert_not_called()
@@ -89,3 +89,16 @@ class OCRDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         message = BytesParser(policy=default).parsebytes(raw)
         parts = {part.get_param('name', header='content-disposition'): part.get_payload(decode=True) for part in message.iter_parts()}
         self.assertEqual(parts, {'apikey': b'ocr-only-key', 'language': b'rus', 'OCREngine': b'2', 'file': image_bytes})
+
+    async def test_transport_trace_logs_only_whitelisted_names_without_private_info(self):
+        post = AsyncMock(return_value=httpx.Response(200, json={'ParsedResults': [{'ParsedText': 'OK'}]}))
+        await self.run_case(post)
+        trace = post.call_args.kwargs['extensions']['trace']
+        info = {'headers': {'authorization': 'private-key'}, 'body': 'private document'}
+        with self.assertLogs('app.services.ocr_space') as logs:
+            await trace('http11.send_request_body.complete', info)
+            await trace('unknown-private-event', info)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('http11.send_request_body.complete', logs.output[0])
+        self.assertNotIn('private-key', str(logs.output))
+        self.assertNotIn('private document', str(logs.output))

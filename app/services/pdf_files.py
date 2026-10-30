@@ -1,5 +1,6 @@
 """Bounded PDF rendering in a separate process; no uploaded filenames are used."""
 import asyncio
+from app.services.recognition_runtime import extract_page
 from io import BytesIO
 import json
 import logging
@@ -103,7 +104,7 @@ async def extract_pdf_bytes(data, ocr_service, caption='', notify=None):
             if notify:
                 await notify(f'Распознаю страницу {number + 1} PDF…')
             logger.info('pdf_page_start page=%s provider=%s', number + 1, type(ocr_service).__name__)
-            text = await ocr_service.extract_text(Path(directory) / f'{number + 1}.jpg')
+            text = await extract_page(ocr_service, Path(directory) / f'{number + 1}.jpg', notify)
             logger.info('pdf_page_done page=%s chars=%s', number + 1, len(text))
             if not text.strip():
                 raise PDFError(f'На странице {number + 1} не удалось прочитать текст. Документ не сохранён. Проверь скан или выбери другой диапазон страниц.')

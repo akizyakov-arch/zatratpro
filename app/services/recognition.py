@@ -63,6 +63,7 @@ class IncompleteVisionResponse(OCRSpaceError):
 
 
 class DeepSeekVisionService:
+    provider_name = 'deepseek'
     async def extract_text(self, file_path: Path):
         try:
             # Stay within the handler's 120-second timeout, including one retry.
