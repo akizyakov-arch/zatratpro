@@ -32,7 +32,7 @@ async def _show_profile(message, user):
     accounts = await service.accounts('telegram', str(user.id))
     pending = await service.pending('telegram', str(user.id))
     connected = {account['platform'] for account in accounts}
-    text = ['Мой профиль', 'Связанные аккаунты:']
+    text = ['Привязанные аккаунты', 'Связанные аккаунты:']
     text.extend(f"{account['platform']}: {account['external_id']}" for account in accounts)
     text.append('Для подключения MAX получите код здесь и отправьте /link КОД в боте MAX. Затем подтвердите конкретный аккаунт в этом Telegram-профиле. Подключение доступно после запуска настроенного бота MAX.')
     pending_text, rows = _pending_rows(pending)
@@ -40,17 +40,31 @@ async def _show_profile(message, user):
     if 'max' not in connected:
         rows.append(('Код для подключения MAX', 'profile:issue:max'))
     rows.append(('Обновить профиль', 'profile:refresh'))
+    rows.append(('Назад', 'core:/settings'))
     await message.answer('\n'.join(text), reply_markup=keyboard(rows))
 
 
-@router.message(Command('profile'))
-@router.message(F.text == 'Мой профиль')
-async def profile_entry(message):
+@router.message(Command('accounts'))
+@router.message(F.text == 'Привязанные аккаунты')
+async def accounts_entry(message):
     if not await private(message):
         return
     try:
         await CompanyService().ensure_platform_user(message.from_user)
         await _show_profile(message, message.from_user)
+    except (AccountLinkError, CompanyAccessError) as exc:
+        await message.answer(str(exc))
+
+
+@router.message(Command('profile'))
+@router.message(F.text == 'Мой профиль')
+async def profile_entry(message):
+    if not await private(message): return
+    try:
+        from app.application.profile import profile_summary
+        from app.handlers.application_views import send_view
+        uid = await CompanyService().ensure_platform_user(message.from_user)
+        await send_view(message, await profile_summary(uid))
     except (AccountLinkError, CompanyAccessError) as exc:
         await message.answer(str(exc))
 

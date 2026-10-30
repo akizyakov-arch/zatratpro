@@ -5,6 +5,7 @@ from app.application.navigation import command as decode_callback
 from app.application.workspace import WorkspaceCommands
 from app.handlers.application_views import send_view
 from app.handlers.telegram_identity import actor
+from app.services.account_links import AccountLinkError
 from app.services.advances import AdvanceError
 from app.services.company_policy import CompanyAccessError
 from app.services.workspace import WorkspaceError
@@ -34,7 +35,7 @@ async def run(message, sender, text, input_event=None):
             await message.answer('Действие недоступно. Откройте главное меню.')
         else:
             await send_view(message, view)
-    except (WorkspaceError, CompanyAccessError, AdvanceError) as exc:
+    except (WorkspaceError, CompanyAccessError, AdvanceError, AccountLinkError) as exc:
         await message.answer(str(exc))
 
 
@@ -68,12 +69,12 @@ async def action(callback):
         await callback.answer('Откройте актуальное меню.', show_alert=True)
         return
     await callback.answer()
-    if text in ('/help', '/reports', '/profile', '/upload_document', '/my_documents'):
+    if text in ('/help', '/reports', '/profile', '/accounts', '/upload_document', '/my_documents'):
         from app.handlers import start
-        from app.handlers.profile import profile_entry
+        from app.handlers.profile import profile_entry, accounts_entry
         routes = {'/help': start.help_command, '/reports': start.reports_menu_entry,
                   '/upload_document': start.upload_document_entry, '/my_documents': start.my_documents_entry,
-                  '/profile': profile_entry}
+                  '/profile': profile_entry, '/accounts': accounts_entry}
         await routes[text](callback.message.model_copy(update={'from_user': callback.from_user}))
         return
     await run(callback.message, callback.from_user, text)

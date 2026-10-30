@@ -101,9 +101,12 @@ class RecognitionSettingsTests(DatabaseFixture):
         with self.assertRaises(ValueError): await set_provider(self.employee.id,'ocr_space')
 
     async def test_menu_callback_uses_actor_identity(self):
-        from app.handlers.settings import choose_recognition, show_settings
+        from app.handlers.settings import choose_recognition, show_settings, recognition_settings
         message = SimpleNamespace(from_user=self.employee,answer=AsyncMock())
         await show_settings(message)
+        markup = message.answer.call_args.kwargs['reply_markup']
+        self.assertEqual(markup.inline_keyboard[0][0].text, 'Распознавание')
+        await recognition_settings(message)
         self.assertIn('DeepSeek Vision',message.answer.call_args.args[0])
         callback = SimpleNamespace(from_user=self.employee,data='recognition:ocr_space',answer=AsyncMock(),message=message)
         await choose_recognition(callback)

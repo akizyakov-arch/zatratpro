@@ -43,7 +43,7 @@ LINK_HELP = MenuText(
     'Добро пожаловать в FIINOPS!\n'
     'Впервые здесь? Нажмите «Вступить по приглашению» и отправьте код компании.\n'
     'Уже работаете в Telegram? Нажмите «Подключить профиль Telegram» и отправьте код '
-    'из раздела «Мой профиль» в Telegram. Затем подтвердите подключение там же.\n'
+    'из раздела «Настройки → Привязанные аккаунты» в Telegram. Затем подтвердите подключение там же.\n'
     'Компания, роль и история будут общими для обоих мессенджеров.', ONBOARDING)
 
 
@@ -197,10 +197,10 @@ class MaxHandler:
             await MaxOnboardingService().await_input(sender, command[1:])
             prompt = ('Отправьте код приглашения в компанию отдельным сообщением. Его выдаёт руководитель или владелец.'
                       if command == '/join' else
-                      'В Telegram откройте «Мой профиль» → «Код для подключения MAX». Отправьте сюда свежий код отдельным сообщением. После этого подтвердите подключение в Telegram.')
+                      'В Telegram откройте «Настройки» → «Привязанные аккаунты» → «Код для подключения MAX». Отправьте сюда свежий код отдельным сообщением. После этого подтвердите подключение в Telegram.')
             return MenuText(prompt, ONBOARDING)
         if command == '/link' and await MaxOnboardingService().code_kind(arg) == 'join':
-            return MenuText('Это код приглашения в компанию. Нажмите «Вступить по приглашению» и отправьте код ещё раз. Если профиль уже есть в Telegram, получите код подключения в «Мой профиль».', ONBOARDING)
+            return MenuText('Это код приглашения в компанию. Нажмите «Вступить по приглашению» и отправьте код ещё раз. Если профиль уже есть в Telegram, получите код подключения в «Настройки → Привязанные аккаунты».', ONBOARDING)
         if command == '/join' and await MaxOnboardingService().code_kind(arg) == 'link':
             return MenuText('Это код подключения профиля. Нажмите «Подключить профиль Telegram» и отправьте код ещё раз.', ONBOARDING)
         if command == '/join':
@@ -231,6 +231,9 @@ class MaxHandler:
                 return await menus.report(actor, *args)
             raise ValueError('Некорректная кнопка отчёта.')
         if command == '/profile':
+            from app.application.profile import profile_summary
+            return await profile_summary(actor)
+        if command == '/accounts':
             return await self.profile_menu.show(sender, actor)
         if command == '/link_telegram':
             return await self.profile_menu.issue_telegram(sender)

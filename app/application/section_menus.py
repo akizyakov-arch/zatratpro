@@ -13,7 +13,7 @@ REPORT_MENU = (
     ('По сотрудникам', '/report_periods employees reports', 'manager:reports:employees'),
     ('Дубли документов', '/report_periods duplicates reports', 'manager:reports:duplicates'),
     ('Excel выгрузка', '/report_periods export reports', 'manager:reports:export'),
-    ('Назад', '/start', 'nav:main'),
+    ('Назад', '/my_company', 'core:/my_company'),
 )
 
 def money_rows(role):

@@ -16,6 +16,8 @@ MENU_BUTTONS = {
     "money": "Деньги",
     "settings": "Настройки",
     "profile": "Мой профиль",
+    "recognition": "Распознавание",
+    "accounts": "Привязанные аккаунты",
 }
 
 
@@ -26,12 +28,11 @@ def main_menu_rows(menu_kind='employee', has_company=True, can_view_reports=Fals
     elif not has_company:
         rows = [[label['join_company']]]
     elif menu_kind == 'manager':
-        rows = [[label['upload_document']], [label['projects'], label['employees']],
-                [label['my_company'], label['reports']], [label['money']]]
+        rows = [[label['upload_document']], [label['money']], [label['my_company']]]
     else:
         rows = [[label['upload_document']], [label['my_documents']]]
         if can_view_reports:
             rows[-1].append(label['reports'])
         rows.append([label['money']])
-    rows.extend([[label['profile'], label['settings']], [label['help']]])
+    rows.extend([[label['settings']], [label['help']]])
     return rows

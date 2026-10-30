@@ -103,7 +103,7 @@ def build_projects_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Активные проекты", callback_data=MANAGER_PROJECTS_ACTIVE_CALLBACK)],
             [InlineKeyboardButton(text="Архивные проекты", callback_data=MANAGER_PROJECTS_ARCHIVED_CALLBACK)],
             [InlineKeyboardButton(text="Создать проект", callback_data=MANAGER_PROJECT_CREATE_CALLBACK)],
-            [InlineKeyboardButton(text="Назад", callback_data=NAV_MAIN_CALLBACK)],
+            [InlineKeyboardButton(text="Назад", callback_data="core:/my_company")],
         ]
     )
 
@@ -137,7 +137,7 @@ def build_employees_menu_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Список сотрудников", callback_data=MANAGER_EMPLOYEES_LIST_CALLBACK)],
             [InlineKeyboardButton(text="Пригласить сотрудника", callback_data=MANAGER_EMPLOYEE_INVITE_CALLBACK)],
-            [InlineKeyboardButton(text="Назад", callback_data=NAV_MAIN_CALLBACK)],
+            [InlineKeyboardButton(text="Назад", callback_data="core:/my_company")],
         ]
     )
 

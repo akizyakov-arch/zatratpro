@@ -29,7 +29,7 @@ class LinkButton(str):
 
 
 def command_text(text):
-    names = {'выдача': '/issue', 'мои выдачи': '/advances', 'бизнес-карты': '/cards', 'отчёт по деньгам': '/report_periods money money', 'панель руководителя': '/panel', 'ии-отчёты': '/ai_reports', 'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
+    names = {'распознавание': '/recognition_settings', 'привязанные аккаунты': '/accounts', 'информация о компании': '/company_info','выдача': '/issue', 'мои выдачи': '/advances', 'бизнес-карты': '/cards', 'отчёт по деньгам': '/report_periods money money', 'панель руководителя': '/panel', 'ии-отчёты': '/ai_reports', 'вступить по приглашению': '/join', 'подключить профиль telegram': '/link',
              'ввести invite-код': '/join', 'настройки': '/settings', 'мой профиль': '/profile',
              'компании': '/companies', 'пользователи': '/users', 'создать компанию': '/create_company',
              'статус системы': '/system_status', 'сотрудники': '/employees', 'моя компания': '/my_company',
@@ -43,7 +43,7 @@ def command_text(text):
              'отчёты': '/reports', 'профиль': '/profile', 'остаток': '/balance',
              'за неделю': '/report week', 'за месяц': '/report month',
              'за всё время': '/report all_time', 'пригласить сотрудника': '/invite',
-             'подключить telegram': '/link_telegram', 'обновить профиль': '/profile'}
+             'подключить telegram': '/link_telegram', 'обновить профиль': '/accounts'}
     if text.lower() in names:
         return names[text.lower()]
     for pattern, command in (
