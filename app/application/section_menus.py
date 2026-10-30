@@ -51,12 +51,39 @@ class SectionMenus:
     async def report(self, actor, kind, period, back='reports'):
         if period not in REPORT_PERIOD_LABELS or back not in ('reports','money'):
             raise ValueError('Некорректный период отчёта.')
-        navigation = [[Action('Назад к периодам', f'/report_periods {kind} {back}')], [Action('Назад к отчётам', '/reports')]]
+        navigation = [[Action('Назад к периодам', f'/report_periods {"employees" if kind.startswith("employee") else kind} {back}')], [Action('Назад к отчётам', '/reports')]]
         if kind == 'money':
             from app.services.money_reports import get_money_report_for_user, format_money_report
             from app.services.report_periods import report_period_start
             result = await get_money_report_for_user(actor, report_period_start(period))
             return View(format_money_report(result), navigation)
+        if kind == 'employees' or kind.startswith('employees_page_'):
+            page = 1 if kind == 'employees' else int(kind.removeprefix('employees_page_'))
+            directory = await WorkspaceService().employees(actor, page=page, per_page=20)
+            buttons = []
+            for person in directory['items']:
+                name = ' '.join(filter(None, (person.get('first_name'), person.get('last_name')))) or person.get('username') or 'Сотрудник'
+                buttons.append([Action(f"{name} · №{person['id']}", f"/section_report employee_{person['id']} {period} {back}")])
+            if page > 1:
+                buttons.append([Action('←', f'/section_report employees_page_{page-1} {period} {back}')])
+            if page * 20 < directory['total']:
+                buttons.append([Action('→', f'/section_report employees_page_{page+1} {period} {back}')])
+            buttons += navigation
+            return View('Выберите сотрудника:' if directory['items'] else 'Сотрудников пока нет.', buttons)
+        if kind.startswith('employee_'):
+            employee_id = int(kind.removeprefix('employee_'))
+            subject = await ReportService().employee(actor, employee_id)
+            result = await ReportService().period_report(actor, period, employee_id=employee_id)
+            from app.services.money_reports import format_money_report
+            name = ' '.join(filter(None, (subject['first_name'], subject['last_name']))) or subject['username'] or 'Сотрудник'
+            lines = [f"{name} · №{employee_id}", f"Период UTC: {result['start']:%d.%m.%Y} — {result['end']:%d.%m.%Y}"]
+            for row in result['projects']:
+                totals = '; '.join(f'{amount:.2f} {currency}' for currency, amount in row['totals_by_currency'].items())
+                lines.append(f"{row['project_name']}: {row['document_count']} документов · {totals}")
+            if not result['documents']:
+                lines.append('За выбранный период документов нет.')
+            lines += ['', format_money_report(result['money'])]
+            return View('\n'.join(lines), [[Action('Другой сотрудник', f'/section_report employees {period} {back}')]] + navigation)
         result = await ReportService().period_report(actor, period)
         title = {'projects': 'По проектам', 'employees': 'По сотрудникам', 'duplicates': 'Дубли документов', 'export': 'Excel выгрузка'}
         if kind not in title:

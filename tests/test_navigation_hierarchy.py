@@ -52,3 +52,15 @@ class HierarchyFlowTests(DatabaseFixture):
     async def test_employee_cannot_open_manager_company_children(self):
         denied=await self.press('/my_company',9002)
         self.assertNotIn('Проекты',str(denied.buttons))
+    async def test_max_employee_report_selects_subject_and_rejects_foreign_id(self):
+        periods=await self.press('/report_periods employees reports')
+        selection=await self.press(periods.buttons[0][0])
+        self.assertIn('Выберите сотрудника',selection)
+        employee=(await self.finance_ids())[1]
+        self.assertIn(f'№{employee}',selection.buttons[0][0])
+        report=await self.press(selection.buttons[0][0])
+        self.assertIn(f'№{employee}',report)
+        self.assertIn('документов нет',report)
+        self.assertEqual(report.buttons[0][0].command,'/section_report employees all_time reports')
+        denied=await self.press('/section_report employee_999999 all_time reports')
+        self.assertIn('недоступен',denied)
