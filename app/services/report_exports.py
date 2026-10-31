@@ -19,6 +19,7 @@ def build_manager_report_workbook(
     documents,
     items,
     money_report=None,
+    *, metadata=None,
 ) -> tuple[str, bytes]:
     workbook = Workbook()
 
@@ -108,6 +109,19 @@ def build_manager_report_workbook(
             _append_row(card_sheet, [r['document_id'],r['card_name'],r['last4'],employee_name(r),r['project_name'],float(r['amount']),'Учтено' if r['accepted'] else 'Историческая запись без учёта',r['approved_at'].isoformat() if r['accepted'] and r['approved_at'] else ''])
         _append_row(overview, ['Бизнес-карты: учтено RUB',float(money_report.get('card_spent',0))])
         _append_row(overview, ['Бизнес-карты: исторические без учёта RUB',float(money_report.get('card_pending',0))])
+
+    if metadata is not None:
+        _append_row(overview, ['До (не включая), UTC', metadata['end'].isoformat()])
+        _append_row(overview, ['Сформирован, UTC', metadata['generated_at'].isoformat()])
+        _append_row(overview, ['Проект ID', metadata['project_id'] or 'Все'])
+        _append_row(overview, ['Сотрудник ID', metadata['employee_id'] or 'Все'])
+        _append_row(overview, ['Основание периода документов', 'Дата загрузки, UTC'])
+        _append_row(overview, ['Основание периода денег', 'Дата подтверждения, UTC'])
+        overview['A4'] = 'Сумма RUB'
+        projects_sheet['D1'] = 'Сумма RUB'
+        employees_sheet['E1'] = 'Сумма RUB'
+        for currency, total in summary.totals_by_currency.items():
+            _append_row(overview, [f'Документы: {currency}', float(total)])
 
     for sheet in workbook.worksheets:
         # All cells in these exports are literal data; never export formulas from

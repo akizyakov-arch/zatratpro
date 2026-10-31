@@ -5,6 +5,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboa
 from app.adapters.telegram.companies import CompanyAccessError, CompanyService
 from app.adapters.telegram.documents import DocumentService
 from app.adapters.telegram.projects import ProjectService
+from app.services.report_periods import REPORT_PERIOD_LABELS
 from app.services.report_formatters import (
     format_duplicate_report,
     format_project_report,
@@ -13,7 +14,6 @@ from app.services.report_formatters import (
     report_period_label,
 )
 from app.adapters.telegram.views import ViewService
-from app.handlers.money_reports import send_money_report
 from app.services.advances import AdvanceError
 from app.state.pending_actions import pop_pending_action, set_pending_action
 from app.ui.company import NAV_MAIN_CALLBACK
@@ -52,11 +52,9 @@ from app.ui.reports import (
     build_duplicate_delete_source_confirm_keyboard,
     build_duplicate_report_keyboard,
     build_employee_report_period_keyboard,
-    build_employee_report_selector_keyboard,
     build_project_report_keyboard,
     build_report_document_back_keyboard,
     build_report_documents_keyboard,
-    build_report_period_keyboard,
     build_reports_menu_keyboard,
 )
 
@@ -244,93 +242,102 @@ async def reports_menu_callback(callback: CallbackQuery) -> None:
     await callback.message.answer('Раздел отчетов:', reply_markup=build_reports_menu_keyboard())
 
 
+async def _send_report_money(message, data):
+    from app.services.money_reports import format_money_report
+    from app.services.json_formatter import chunk_message
+    for text in chunk_message(format_money_report(data['money'])):
+        await message.answer(text)
+
+
+def _report_summary(data, period, *, duplicates=False):
+    from types import SimpleNamespace
+    summary = data['duplicate_summary'] if duplicates else data['summary']
+    return SimpleNamespace(period=period, **summary)
+
+
+async def show_section_report(message, sender, text):
+    """Decode a Telegram action and render the shared report snapshot."""
+    from types import SimpleNamespace
+    from app.application.section_menus import SectionMenus
+    from app.application.reports import ReportCommands
+    from app.handlers.application_views import send_view
+    from app.handlers.telegram_identity import actor
+    try:
+        uid = await actor(sender)
+        command, *args = text.split()
+        menus = SectionMenus()
+        if command == '/report_periods' and len(args) == 2:
+            await send_view(message, await menus.periods(uid, *args))
+            return
+        if command != '/section_report' or len(args) != 3:
+            raise ValueError('Некорректная кнопка отчёта.')
+        kind, period, back = args
+        if period not in REPORT_PERIOD_LABELS or back not in ('reports', 'money'):
+            raise ValueError('Некорректный период отчёта.')
+        if kind == REPORT_KIND_EXPORT:
+            filename, payload = await ReportCommands().export(uid, period)
+            await message.answer_document(BufferedInputFile(payload, filename=filename), caption=f'Выгрузка отчетов за период: {report_period_label(period)}')
+            return
+        if kind.startswith('employee_'):
+            employee_id = int(kind.removeprefix('employee_'))
+            report = await ReportCommands().load(uid, 'employee', period, subject_id=employee_id, documents=True)
+            subject = report.subject
+            name = ' '.join(filter(None, (subject['first_name'], subject['last_name']))) or subject['username'] or f'№{employee_id}'
+            title = ('Руководитель: ' if subject['role'] == 'manager' else 'Сотрудник: ') + name
+            documents = [SimpleNamespace(**row) for row in report.data['documents']]
+            await message.answer(format_report_documents(title, period, documents), reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, employee_id, documents), parse_mode='HTML')
+            await _send_report_money(message, report.data)
+            return
+        if kind in (REPORT_KIND_PROJECTS, REPORT_KIND_DUPLICATES):
+            report = await ReportCommands().load(uid, kind, period)
+            data = report.data
+            if kind == REPORT_KIND_PROJECTS:
+                rows = [SimpleNamespace(**row) for row in data['projects']]
+                await message.answer(format_project_report(_report_summary(data, period), rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
+                await _send_report_money(message, data)
+            else:
+                rows = [SimpleNamespace(**row) for row in data['duplicates']]
+                await message.answer(format_duplicate_report(_report_summary(data, period, duplicates=True), rows), reply_markup=build_duplicate_report_keyboard(period, rows), parse_mode='HTML')
+            return
+        await send_view(message, await menus.report(uid, kind, period, back))
+    except (CompanyAccessError, AdvanceError, ValueError) as exc:
+        await message.answer(str(exc))
+
+
+@router.callback_query(F.data.startswith(('r:', 'rp:')))
+async def shared_report_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+    prefix, value = callback.data.split(':', 1)
+    await callback.answer()
+    name = '/section_report' if prefix == 'r' else '/report_periods'
+    await show_section_report(callback.message, callback.from_user, name + ' ' + value.replace(':', ' '))
+
+
 @router.callback_query(F.data.in_({MANAGER_REPORTS_PROJECTS_CALLBACK, MANAGER_REPORTS_EMPLOYEES_CALLBACK, MANAGER_REPORTS_DUPLICATES_CALLBACK, MANAGER_REPORTS_EXPORT_CALLBACK}))
 async def report_kind_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    report_kind = {
-        MANAGER_REPORTS_PROJECTS_CALLBACK: REPORT_KIND_PROJECTS,
-        MANAGER_REPORTS_EMPLOYEES_CALLBACK: REPORT_KIND_EMPLOYEES,
-        MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
-        MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT,
-    }[callback.data]
-    if report_kind == REPORT_KIND_PROJECTS:
-        summary = await view_service.get_manager_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
-        rows = await view_service.list_report_projects(callback.from_user.id, REPORT_PERIOD_ALL)
-        await callback.answer()
-        await callback.message.answer(
-            format_project_report(summary, rows),
-            reply_markup=build_project_report_keyboard(REPORT_PERIOD_ALL, rows),
-            parse_mode='HTML',
-        )
-        await send_money_report(callback.message, callback.from_user.id, REPORT_PERIOD_ALL)
-        return
-    if report_kind == REPORT_KIND_DUPLICATES:
-        rows = await view_service.list_duplicate_report_rows(callback.from_user.id, REPORT_PERIOD_ALL)
-        summary = await view_service.get_duplicate_report_summary(callback.from_user.id, REPORT_PERIOD_ALL)
-        await callback.answer()
-        await callback.message.answer(
-            format_duplicate_report(summary, rows),
-            reply_markup=build_duplicate_report_keyboard(REPORT_PERIOD_ALL, rows),
-            parse_mode='HTML',
-        )
-        return
-    if report_kind == REPORT_KIND_EMPLOYEES:
-        rows = await view_service.list_report_employees(callback.from_user.id, REPORT_PERIOD_ALL)
-        await callback.answer()
-        if not rows:
-            await callback.message.answer('Сотрудников с затратами пока нет.', reply_markup=build_reports_menu_keyboard())
-            return
-        await callback.message.answer('Выбери сотрудника.', reply_markup=build_employee_report_selector_keyboard(rows))
-        return
+    kind = {MANAGER_REPORTS_PROJECTS_CALLBACK: REPORT_KIND_PROJECTS,
+            MANAGER_REPORTS_EMPLOYEES_CALLBACK: REPORT_KIND_EMPLOYEES,
+            MANAGER_REPORTS_DUPLICATES_CALLBACK: REPORT_KIND_DUPLICATES,
+            MANAGER_REPORTS_EXPORT_CALLBACK: REPORT_KIND_EXPORT}[callback.data]
     await callback.answer()
-    await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
+    await show_section_report(callback.message, callback.from_user, f'/report_periods {kind} reports')
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_PERIOD_PREFIX))
 async def report_period_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_PERIOD_PREFIX)
     try:
-        report_kind, period = payload.split(':', 1)
+        kind, period = callback.data.removeprefix(MANAGER_REPORTS_PERIOD_PREFIX).split(':', 1)
     except ValueError:
         await callback.answer('Некорректный период отчета.', show_alert=True)
         return
-    if period == '_back':
-        await callback.answer()
-        await callback.message.answer('Выбери период отчета.', reply_markup=build_report_period_keyboard(report_kind))
-        return
-    try:
-        if report_kind == 'money':
-            await callback.answer()
-            await send_money_report(callback.message, callback.from_user.id, period)
-            return
-        if report_kind == REPORT_KIND_PROJECTS:
-            summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
-            rows = await view_service.list_report_projects(callback.from_user.id, period)
-            await callback.answer()
-            await callback.message.answer(format_project_report(summary, rows), reply_markup=build_project_report_keyboard(period, rows), parse_mode='HTML')
-            await send_money_report(callback.message, callback.from_user.id, period)
-            return
-        if report_kind == REPORT_KIND_DUPLICATES:
-            rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
-            duplicate_summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-            await callback.answer()
-            await callback.message.answer(format_duplicate_report(duplicate_summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows), parse_mode='HTML')
-            return
-        if report_kind == REPORT_KIND_EXPORT:
-            from app.services.reporting import ReportService
-            from app.handlers.telegram_identity import actor
-            from app.services.report_periods import report_period_start
-            from datetime import datetime, timezone
-            filename, payload_bytes = await ReportService().export(await actor(callback.from_user), report_period_start(period), datetime.now(timezone.utc))
-            await callback.answer()
-            await callback.message.answer_document(BufferedInputFile(payload_bytes, filename=filename), caption=f'Выгрузка отчетов за период: {report_period_label(period)}')
-            return
-    except (CompanyAccessError, AdvanceError, ValueError) as exc:
-        await callback.answer(str(exc), show_alert=True)
-        return
+    await callback.answer()
+    command = f'/report_periods {kind} reports' if period == '_back' else f'/section_report {kind} {period} reports'
+    await show_section_report(callback.message, callback.from_user, command)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_PROJECT_DETAIL_PREFIX))
@@ -341,10 +348,14 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
     try:
         period, project_id_text = payload.split(':', 1)
         project_id = int(project_id_text)
-        project, documents = await view_service.get_project_report_detail(callback.from_user.id, period, project_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные проекта.'
-        await callback.answer(message, show_alert=True)
+        from types import SimpleNamespace
+        from app.application.reports import ReportCommands
+        from app.handlers.telegram_identity import actor
+        report = await ReportCommands().load(await actor(callback.from_user), 'project', period, subject_id=project_id, documents=True)
+        project = SimpleNamespace(**report.subject)
+        documents = [SimpleNamespace(**row) for row in report.data['documents']]
+    except (ValueError, CompanyAccessError, AdvanceError) as exc:
+        await callback.answer(str(exc), show_alert=True)
         return
     await callback.answer()
     await callback.message.answer(
@@ -352,8 +363,7 @@ async def report_project_detail_callback(callback: CallbackQuery) -> None:
         reply_markup=build_report_documents_keyboard(REPORT_KIND_PROJECTS, period, project.id, documents),
         parse_mode='HTML',
     )
-
-    await send_money_report(callback.message, callback.from_user.id, period, project_id=project.id)
+    await _send_report_money(callback.message, report.data)
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_EMPLOYEE_SELECT_PREFIX))
@@ -378,25 +388,15 @@ async def report_employee_select_callback(callback: CallbackQuery) -> None:
 async def report_employee_period_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.message is None:
         return
-    payload = callback.data.removeprefix(MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX)
     try:
-        user_id_text, period = payload.split(':', 1)
-        user_id = int(user_id_text)
-        member, documents = await view_service.get_employee_report_detail(callback.from_user.id, period, user_id)
-    except (ValueError, CompanyAccessError) as exc:
-        message = str(exc) if isinstance(exc, CompanyAccessError) else 'Некорректные данные сотрудника.'
-        await callback.answer(message, show_alert=True)
+        user_id, period = callback.data.removeprefix(MANAGER_REPORTS_EMPLOYEE_PERIOD_PREFIX).split(':', 1)
+        if not user_id.isascii() or not user_id.isdigit():
+            raise ValueError
+    except ValueError:
+        await callback.answer('Некорректные данные сотрудника.', show_alert=True)
         return
-    employee_name = member.full_name or (f'@{member.username}' if member.username else str(member.telegram_id))
-    title_prefix = 'Руководитель' if member.role == 'manager' else 'Сотрудник'
     await callback.answer()
-    await callback.message.answer(
-        format_report_documents(f'{title_prefix}: {employee_name}', period, documents),
-        reply_markup=build_report_documents_keyboard(REPORT_KIND_EMPLOYEES, period, member.user_id, documents),
-        parse_mode='HTML',
-    )
-
-    await send_money_report(callback.message, callback.from_user.id, period, employee_id=member.user_id)
+    await show_section_report(callback.message, callback.from_user, f'/section_report employee_{user_id} {period} reports')
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_VIEW_PREFIX))
@@ -430,9 +430,7 @@ async def duplicate_keep_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer('Статус дубля снят.')
-    rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
-    summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+    await show_section_report(callback.message, callback.from_user, f'/section_report duplicates {period} reports')
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_PREFIX))
@@ -464,9 +462,7 @@ async def duplicate_delete_confirm_callback(callback: CallbackQuery) -> None:
         await callback.answer(message, show_alert=True)
         return
     await callback.answer('Дубликат удален.')
-    rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
-    summary = await view_service.get_duplicate_report_summary(callback.from_user.id, period)
-    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+    await show_section_report(callback.message, callback.from_user, f'/section_report duplicates {period} reports')
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DUPLICATE_DELETE_SOURCE_PREFIX))
@@ -498,9 +494,7 @@ async def duplicate_delete_source_confirm_callback(callback: CallbackQuery) -> N
         await callback.answer(message, show_alert=True)
         return
     await callback.answer('Исходная запись удалена.')
-    rows = await view_service.list_duplicate_report_rows(callback.from_user.id, period)
-    summary = await view_service.get_manager_report_summary(callback.from_user.id, period)
-    await callback.message.answer(format_duplicate_report(summary, rows), reply_markup=build_duplicate_report_keyboard(period, rows))
+    await show_section_report(callback.message, callback.from_user, f'/section_report duplicates {period} reports')
 
 
 @router.callback_query(F.data.startswith(MANAGER_REPORTS_DOCUMENT_DETAIL_PREFIX))

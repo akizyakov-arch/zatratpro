@@ -94,6 +94,7 @@ class Settings(DatabaseSettings):
         default="https://api.deepseek.com",
         alias="DEEPSEEK_BASE_URL",
     )
+    document_processing_concurrency: int = Field(default=4, alias='DOCUMENT_PROCESSING_CONCURRENCY', ge=1, le=16)
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
     deepseek_vision_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_VISION_MODEL")
     assemblyai_api_key: str = Field(default="", validation_alias=AliasChoices("ASSEMBLYAI_API_KEY", "ASSAMBLY"))
@@ -119,6 +120,7 @@ class RecognitionSettings(BaseSettings):
     ocr_space_proxy_url: OCRProxy = Field(default='', alias='OCR_SPACE_PROXY_URL')
     deepseek_api_key: str = Field(default='', alias='DEEPSEEK_API_KEY')
     deepseek_base_url: str = Field(default='https://api.deepseek.com', alias='DEEPSEEK_BASE_URL')
+    document_processing_concurrency: int = Field(default=4, alias='DOCUMENT_PROCESSING_CONCURRENCY', ge=1, le=16)
     deepseek_model: str = Field(default='deepseek-chat', alias='DEEPSEEK_MODEL')
     deepseek_vision_model: str = Field(default='deepseek-flash', alias='DEEPSEEK_VISION_MODEL')
 

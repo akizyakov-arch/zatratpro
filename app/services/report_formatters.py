@@ -1,9 +1,16 @@
 from __future__ import annotations
+from html import escape
+from collections import defaultdict
+from decimal import Decimal
 from app.schemas.fiscal import fiscalization_label
 
 from app.services.report_periods import REPORT_PERIOD_LABELS
 
 NL = chr(10)
+
+
+def _text(value) -> str:
+    return escape(str(value), quote=False)
 
 
 def format_amount(value) -> str:
@@ -28,7 +35,7 @@ def report_period_label(period: str) -> str:
 
 def format_report_overview(summary, title: str) -> str:
     return NL.join([
-        f'<b>{title}</b>',
+        f'<b>{_text(title)}</b>',
         f'Период: {report_period_label(summary.period)}',
         f'С даты: {summary.start_at:%Y-%m-%d}',
         f'Документов: {summary.documents}',
@@ -58,7 +65,7 @@ def format_project_report(summary, rows) -> str:
             duplicate_parts.append(f'возможные дубли: {row.probable_duplicate_count}')
         duplicate_suffix = f" | {'; '.join(duplicate_parts)}" if duplicate_parts else ''
         lines.append(
-            f"{index}. {row.project_name} — {row.document_count} док. — {format_amount(row.total_amount)}{duplicate_suffix}"
+            f"{index}. {_text(row.project_name)} — {row.document_count} док. — {format_amount(row.total_amount)}{duplicate_suffix}"
         )
     return NL.join(lines)
 
@@ -70,6 +77,7 @@ def format_employee_report(summary, rows) -> str:
         return NL.join(lines)
     for index, row in enumerate(rows[:20], start=1):
         employee_name = row.employee_name or (f'@{row.username}' if row.username else f'user:{row.user_id}')
+        employee_name = _text(employee_name)
         if getattr(row, 'role', None) == 'manager':
             employee_name = f'<b>{employee_name}</b> (руководитель)'
         duplicate_parts = []
@@ -99,10 +107,13 @@ def format_duplicate_report(summary, rows) -> str:
 
 
 def format_report_documents(title: str, period: str, documents) -> str:
-    total_amount = sum((document.total_amount or 0) for document in documents)
+    totals = defaultdict(Decimal)
+    for document in documents:
+        totals[getattr(document, 'currency', None) or 'RUB'] += Decimal(str(document.total_amount or 0))
+    total_text = '; '.join(f'{format_amount(amount)} {_text(currency)}' for currency, amount in sorted(totals.items())) or '0.00 RUB'
     lines = [
-        f'<b>{title}</b>',
-        f'Общая сумма затрат: {format_amount(total_amount)}',
+        f'<b>{_text(title)}</b>',
+        f'Общая сумма затрат: {total_text}',
         f'Документов: {len(documents)}',
         '',
     ]
@@ -120,14 +131,14 @@ def format_report_document_items(title: str, period: str, document, items) -> st
     executor = document.uploaded_by_name or 'не указан'
     project_name = document.project_name or 'Проект не указан'
     lines = [
-        f'<b>{title}</b>',
-        f'Проект: {project_name}',
-        f'Контрагент: {vendor}',
-        f'Дата: {date_line}',
-        f'Номер: {number}',
+        f'<b>{_text(title)}</b>',
+        f'Проект: {_text(project_name)}',
+        f'Контрагент: {_text(vendor)}',
+        f'Дата: {_text(date_line)}',
+        f'Номер: {_text(number)}',
         'Фискализация: ' + fiscalization_label(getattr(document, 'is_fiscalized', None)),
         f'Сумма: {format_amount(document.total_amount)}',
-        f'Исполнитель: {executor}',
+        f'Исполнитель: {_text(executor)}',
         '',
         'Позиции:',
     ]
@@ -139,7 +150,7 @@ def format_report_document_items(title: str, period: str, document, items) -> st
         qty = item.quantity if item.quantity is not None else '—'
         price = item.price if item.price is not None else '—'
         line_total = item.line_total if item.line_total is not None else '—'
-        lines.append(f"{item.line_no}. {item_name} | {qty} x {price} = {line_total}")
+        lines.append(f"{_text(item.line_no)}. {_text(item_name)} | {_text(qty)} x {_text(price)} = {_text(line_total)}")
     if len(items) > 50:
         lines.append('Показаны только первые 50 позиций документа.')
     return NL.join(lines)

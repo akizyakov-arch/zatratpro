@@ -13,6 +13,8 @@ from app.services.image_files import prepare_image
 from app.services.recognition_runtime import extract_page
 from app.services.pdf_files import extract_pdf_bytes, MAX_PDF_BYTES, PDFError
 from app.services.recognition import create_recognizer
+from app.services.recognition_clients import recognition_session
+from app.services.async_work import run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,11 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 async def recognize_document(data, source_type, provider, caption='', notify=None):
+    async with recognition_session():
+        return await _recognize_document(data, source_type, provider, caption, notify)
+
+
+async def _recognize_document(data, source_type, provider, caption='', notify=None):
     if source_type not in ('photo', 'pdf'):
         raise DocumentValidationError('Отправьте фотографию или PDF документа.')
     limit = MAX_PDF_BYTES if source_type == 'pdf' else MAX_IMAGE_BYTES
@@ -35,7 +42,7 @@ async def recognize_document(data, source_type, provider, caption='', notify=Non
             path = Path(directory) / 'source'
             path.write_bytes(data)
             try:
-                prepared = await asyncio.to_thread(prepare_image, path)
+                prepared = await run_blocking(prepare_image, path, Path(directory))
             except Exception:
                 raise DocumentValidationError('Не удалось открыть изображение. Отправьте фото или скан JPEG/PNG.') from None
             try:

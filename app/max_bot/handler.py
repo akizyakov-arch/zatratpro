@@ -150,9 +150,10 @@ class MaxHandler:
                 # Audio and explicit AI commands bypass document/name/amount inputs.
                 if text.startswith(('/ask', '/ai_')) or any(isinstance(a, dict) and a.get('type') == 'audio' for a in (body.get('attachments') or [])):
                     result = await self.ai_menu.handle(actor, text, update)
-                if result is None:
+                has_document = any(isinstance(a, dict) and a.get('type') in ('image', 'photo', 'file') for a in (body.get('attachments') or []))
+                if result is None and not has_document:
                     from app.application.card_menus import CardMenus
-                    result = await CardMenus().handle(actor, text)
+                    result = await CardMenus().handle(actor, text, event_id=event_id, platform='max')
                 if result is None:
                     result = await self.document_menu.handle(actor, sender, text, update)
                 if result is None:

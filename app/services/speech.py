@@ -9,6 +9,7 @@ from app.config import get_speech_settings as get_settings
 logger = logging.getLogger(__name__)
 MAX_VOICE_BYTES = 10 * 1024 * 1024
 MAX_VOICE_SECONDS = 120
+REMOTE_CLEANUP_TIMEOUT = 1.0
 
 
 class SpeechError(ValueError):
@@ -59,7 +60,10 @@ async def transcribe_voice(data):
         finally:
             if job:
                 try:
-                    response=await client.delete('/v2/transcript/'+job)
-                    response.raise_for_status()
-                except httpx.HTTPError:
+                    # Cleanup still runs before closing the client, but must not
+                    # hold an already recognized answer for the normal 25s timeout.
+                    async with asyncio.timeout(REMOTE_CLEANUP_TIMEOUT):
+                        response = await client.delete('/v2/transcript/' + job, timeout=REMOTE_CLEANUP_TIMEOUT)
+                        response.raise_for_status()
+                except (httpx.HTTPError, TimeoutError):
                     logger.warning('speech_remote_cleanup_failed')

@@ -57,8 +57,9 @@ class HierarchyFlowTests(DatabaseFixture):
         selection=await self.press(periods.buttons[0][0])
         self.assertIn('Выберите сотрудника',selection)
         employee=(await self.finance_ids())[1]
-        self.assertIn(f'№{employee}',selection.buttons[0][0])
-        report=await self.press(selection.buttons[0][0])
+        selected=next(b for row in selection.buttons for b in row if b.command.startswith(f'/section_report employee_{employee} '))
+        self.assertIn(f'№{employee}',selected)
+        report=await self.press(selected)
         self.assertIn(f'№{employee}',report)
         self.assertIn('документов нет',report)
         self.assertEqual(report.buttons[0][0].command,'/section_report employees all_time reports')

@@ -1,58 +1,17 @@
 import json
-import re
 
 import httpx
 
 from app.config import get_recognition_settings as get_settings
-from app.prompts.cleanup_prompt import CLEANUP_PROMPT
 from app.prompts.extraction_prompt import EXTRACTION_PROMPT
+from app.services.recognition_clients import provider_client
 
 
 class DeepSeekError(RuntimeError):
     pass
 
 
-CURRENCY_SYMBOLS = {
-    "RUB": "₽",
-    "USD": "$",
-    "EUR": "€",
-}
-
-
 class DeepSeekService:
-    async def normalize_document_text(self, ocr_text: str) -> str:
-        settings = get_settings()
-        payload = {
-            "model": settings.deepseek_model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": CLEANUP_PROMPT},
-                {"role": "user", "content": ocr_text},
-            ],
-        }
-
-        try:
-            async with httpx.AsyncClient(
-                base_url=settings.deepseek_base_url,
-                timeout=60,
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-            ) as client:
-                response = await client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise DeepSeekError(f"Ошибка сети DeepSeek: {exc}") from exc
-
-        content = (
-            response.json()
-            .get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-        if not content:
-            raise DeepSeekError("DeepSeek вернул пустой нормализованный текст.")
-        return _apply_currency_symbols(content)
-
     async def extract_document(self, ocr_text: str) -> dict:
         settings = get_settings()
         payload = {
@@ -66,7 +25,7 @@ class DeepSeekService:
         }
 
         try:
-            async with httpx.AsyncClient(
+            async with provider_client(
                 base_url=settings.deepseek_base_url,
                 timeout=60,
                 headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
@@ -90,9 +49,3 @@ class DeepSeekService:
             return json.loads(content)
         except json.JSONDecodeError as exc:
             raise DeepSeekError("DeepSeek вернул невалидный JSON.") from exc
-
-
-def _apply_currency_symbols(text: str) -> str:
-    for code, symbol in CURRENCY_SYMBOLS.items():
-        text = re.sub(rf"\b{code}\b", symbol, text, flags=re.IGNORECASE)
-    return text

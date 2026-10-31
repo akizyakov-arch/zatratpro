@@ -3,7 +3,7 @@ from app.application.views import Action, View
 from app.services.finance_directory import FinanceDirectory
 from app.services.workspace import WorkspaceService, WorkspaceError
 from app.services.report_periods import REPORT_PERIOD_LABELS
-from app.services.reporting import ReportService
+from app.application.reports import ReportCommands
 
 REPORT_MENU = (
     ('Панель руководителя', '/panel', 'manager:reports:panel'),
@@ -43,7 +43,7 @@ class SectionMenus:
         if kind == 'money':
             await FinanceDirectory().membership(actor)
         else:
-            await WorkspaceService().context(actor)
+            await ReportCommands().authorize(actor)
         return View('Выберите период отчёта (UTC):',
                     [[Action(label, f'/section_report {kind} {period} {back}')] for period, label in REPORT_PERIOD_LABELS.items()]
                     + [[Action('Назад', '/' + back)]])
@@ -59,10 +59,12 @@ class SectionMenus:
             return View(format_money_report(result), navigation)
         if kind == 'employees' or kind.startswith('employees_page_'):
             page = 1 if kind == 'employees' else int(kind.removeprefix('employees_page_'))
-            directory = await WorkspaceService().employees(actor, page=page, per_page=20)
+            if not 1 <= page <= 2**31:
+                raise ValueError('Некорректная страница сотрудников.')
+            directory = await ReportCommands().subjects(actor, page=page)
             buttons = []
             for person in directory['items']:
-                name = ' '.join(filter(None, (person.get('first_name'), person.get('last_name')))) or person.get('username') or 'Сотрудник'
+                name = person['name'] + (' (руководитель)' if person['role'] == 'manager' else '')
                 buttons.append([Action(f"{name} · №{person['id']}", f"/section_report employee_{person['id']} {period} {back}")])
             if page > 1:
                 buttons.append([Action('←', f'/section_report employees_page_{page-1} {period} {back}')])
@@ -72,31 +74,32 @@ class SectionMenus:
             return View('Выберите сотрудника:' if directory['items'] else 'Сотрудников пока нет.', buttons)
         if kind.startswith('employee_'):
             employee_id = int(kind.removeprefix('employee_'))
-            subject = await ReportService().employee(actor, employee_id)
-            result = await ReportService().period_report(actor, period, employee_id=employee_id)
+            report = await ReportCommands().load(actor, 'employee', period, subject_id=employee_id)
+            subject, result = report.subject, report.data
             from app.services.money_reports import format_money_report
             name = ' '.join(filter(None, (subject['first_name'], subject['last_name']))) or subject['username'] or 'Сотрудник'
             lines = [f"{name} · №{employee_id}", f"Период UTC: {result['start']:%d.%m.%Y} — {result['end']:%d.%m.%Y}"]
             for row in result['projects']:
                 totals = '; '.join(f'{amount:.2f} {currency}' for currency, amount in row['totals_by_currency'].items())
                 lines.append(f"{row['project_name']}: {row['document_count']} документов · {totals}")
-            if not result['documents']:
+            if not result['summary']['document_count']:
                 lines.append('За выбранный период документов нет.')
             lines += ['', format_money_report(result['money'])]
             return View('\n'.join(lines), [[Action('Другой сотрудник', f'/section_report employees {period} {back}')]] + navigation)
-        result = await ReportService().period_report(actor, period)
-        title = {'projects': 'По проектам', 'employees': 'По сотрудникам', 'duplicates': 'Дубли документов', 'export': 'Excel выгрузка'}
+        title = {'projects': 'По проектам', 'duplicates': 'Дубли документов', 'export': 'Excel выгрузка'}
         if kind not in title:
             raise ValueError('Неизвестный отчёт.')
         if kind == 'export':
+            await ReportCommands().authorize(actor)
             return View('Excel выгрузка доступна в панели: откройте раздел отчётов, выберите период и скачайте файл.', [[Action('Панель руководителя', '/panel')]] + navigation)
+        result = (await ReportCommands().load(actor, kind, period)).data
         lines = [title[kind], f"Период UTC: {result['start']:%d.%m.%Y} — {result['end']:%d.%m.%Y}"]
         if kind == 'duplicates':
             lines += [f"№{d['id']} · {d['project_name']} · {d['vendor'] or 'Документ'} · {d['total_amount']} {d['currency']}" for d in result['duplicates']]
             navigation.insert(0, [Action('Проверить дубли в панели', '/panel')])
         else:
             for row in result[kind]:
-                name = row['project_name'] if kind == 'projects' else row['employee_name'] or row['username'] or f"Сотрудник №{row['user_id']}"
+                name = row['project_name']
                 totals = '; '.join(f'{amount:.2f} {currency}' for currency, amount in row['totals_by_currency'].items())
                 lines.append(f"{name}: {row['document_count']} документов · {totals}")
         if len(lines) == 2:

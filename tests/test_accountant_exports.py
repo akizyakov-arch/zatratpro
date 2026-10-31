@@ -168,3 +168,152 @@ class AccountantExportTests(DatabaseFixture):
         with ZipFile(BytesIO(file.data)) as archive:
             self.assertEqual(len(archive.namelist()),2)
         self.assertIn('Без скана: 0',outgoing.answer_document.call_args.kwargs['caption'])
+
+    async def test_zero_values_remain_distinct_from_unknown_in_accountant_register(self):
+        await self.save()
+        await self.pool.execute('UPDATE document_items SET quantity=NULL,price=0,line_total=0')
+        _, payload, _ = await self.export.build(self.manager_id, 'all_time')
+        with ZipFile(BytesIO(payload)) as archive:
+            book = load_workbook(BytesIO(archive.read('Реестр.xlsx')))
+        from decimal import Decimal
+        self.assertIsNone(book['Позиции']['D2'].value)
+        self.assertEqual(Decimal(book['Позиции']['E2'].value), 0)
+        self.assertEqual(Decimal(book['Позиции']['F2'].value), 0)
+
+    async def test_navigation_never_fetches_original_and_save_transfers_it_inside_database(self):
+        data = photo_bytes()
+        view = await self.receive(data=data)
+        async with self.flow.transaction(self.employee_id) as (connection, member):
+            row = await self.flow._row(connection, self.employee_id, member, view.upload_id)
+            self.assertNotIn('original_data', row.keys())
+            self.assertNotIn('content', row.keys())
+        resumed = await self.flow.action(self.employee_id, 'projects', view.upload_id, '1')
+        self.assertEqual(resumed.upload_id, view.upload_id)
+        saved = await self.flow.action(self.employee_id, 'project', view.upload_id, str(self.project.id))
+        self.assertEqual(await self.pool.fetchval('SELECT content FROM document_originals WHERE document_id=$1', saved.document_id), data)
+
+    async def test_originals_are_loaded_in_bounded_batches_and_temporary_files_are_removed(self):
+        import asyncpg
+        import tempfile
+        from pathlib import Path
+        from app.services import accountant_exports as exports
+        saved = await self.save()
+        original = await self.pool.fetchrow('SELECT content,extension FROM document_originals WHERE document_id=$1', saved.document_id)
+        for _ in range(4):
+            clone = await self.flow.documents.save_for_user(self.employee_id, self.project.id, 'preview', self.document)
+            await self.pool.execute('INSERT INTO document_originals(document_id,content,extension) VALUES($1,$2,$3)', clone, original['content'], original['extension'])
+        batches = []
+        fetch = asyncpg.Connection.fetch
+        async def observed(connection, query, *args, **kwargs):
+            if 'SELECT document_id,content FROM document_originals' in query:
+                batches.append(tuple(args[0]))
+            return await fetch(connection, query, *args, **kwargs)
+        with tempfile.TemporaryDirectory() as directory, patch.object(exports, 'TMP_DIR', Path(directory)), patch.object(exports, 'ORIGINAL_BATCH_COUNT', 2), patch.object(asyncpg.Connection, 'fetch', new=observed):
+            _, payload, missing = await self.export.build(self.manager_id, 'all_time')
+            self.assertEqual(list(Path(directory).iterdir()), [])
+        self.assertEqual([len(batch) for batch in batches], [2,2,1])
+        self.assertEqual(missing, 0)
+        with ZipFile(BytesIO(payload)) as archive:
+            self.assertEqual(len(archive.namelist()), 6)
+            self.assertEqual(archive.read(f'files/{saved.document_id}.jpg'), original['content'])
+
+    async def test_expired_scan_cleanup_is_bounded_and_keeps_active_or_locked_drafts(self):
+        from app.services.document_housekeeping import cleanup_expired_document_drafts
+        actors = [self.employee_id, self.manager_id]
+        for actor in actors:
+            await self.pool.execute("INSERT INTO pending_document_flows(actor_id,company_id,upload_id,expires_at,original_data,original_ext) VALUES($1,$2,$3,clock_timestamp()-interval '1 minute',$4,'jpg')", actor, self.company.id, f'expired-{actor}', photo_bytes())
+        async with self.pool.acquire() as connection, connection.transaction():
+            await connection.execute('SELECT actor_id FROM pending_document_flows WHERE actor_id=$1 FOR UPDATE', self.employee_id)
+            self.assertEqual(await cleanup_expired_document_drafts(limit=1), 1)
+            self.assertIsNotNone(await connection.fetchval('SELECT original_data FROM pending_document_flows WHERE actor_id=$1', self.employee_id))
+        await self.pool.execute("UPDATE pending_document_flows SET expires_at=clock_timestamp()+interval '1 hour' WHERE actor_id=$1", self.employee_id)
+        self.assertEqual(await cleanup_expired_document_drafts(), 0)
+        await self.pool.execute("UPDATE pending_document_flows SET expires_at=clock_timestamp()-interval '1 minute' WHERE actor_id=$1", self.employee_id)
+        self.assertEqual(await cleanup_expired_document_drafts(), 1)
+        self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM pending_document_flows'), 0)
+
+
+    async def test_waiting_download_rechecks_revoked_access_before_reading_bytes(self):
+        import asyncio
+        from types import SimpleNamespace
+        from app.services.processing_limits import document_processing_slot
+        from app.services.membership import MembershipError
+        download = AsyncMock(return_value=photo_bytes())
+        with patch('app.services.processing_limits.get_recognition_settings', return_value=SimpleNamespace(document_processing_concurrency=1)):
+            async with document_processing_slot():
+                task = asyncio.create_task(self.flow.receive(self.employee_id, 'max', 'waiting-access', 'photo', download))
+                try:
+                    async with asyncio.timeout(2):
+                        while not await self.pool.fetchval('SELECT count(*) FROM pending_document_flows WHERE actor_id=$1', self.employee_id):
+                            await asyncio.sleep(.005)
+                    download.assert_not_awaited()
+                    await self.pool.execute('UPDATE users SET is_active=false WHERE id=$1', self.employee_id)
+                except BaseException:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    raise
+            with self.assertRaises(MembershipError):
+                await asyncio.wait_for(task, 2)
+        download.assert_not_awaited()
+        self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM pending_document_flows WHERE actor_id=$1', self.employee_id), 0)
+
+    async def test_cancelled_waiting_upload_clears_draft_without_downloading(self):
+        import asyncio
+        from types import SimpleNamespace
+        from app.services.processing_limits import document_processing_slot
+        download = AsyncMock(return_value=photo_bytes())
+        with patch('app.services.processing_limits.get_recognition_settings', return_value=SimpleNamespace(document_processing_concurrency=1)):
+            async with document_processing_slot():
+                task = asyncio.create_task(self.flow.receive(self.employee_id, 'max', 'waiting-cancel', 'photo', download))
+                try:
+                    async with asyncio.timeout(2):
+                        while not await self.pool.fetchval('SELECT count(*) FROM pending_document_flows WHERE actor_id=$1', self.employee_id):
+                            await asyncio.sleep(.005)
+                    download.assert_not_awaited()
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(task.cancelled())
+        download.assert_not_awaited()
+        self.assertEqual(await self.pool.fetchval('SELECT count(*) FROM pending_document_flows WHERE actor_id=$1', self.employee_id), 0)
+
+
+class AccountantWorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_batch_size_limit_and_oversized_single_file(self):
+        from app.services.accountant_exports import _original_batches
+        rows = [{'id':i, 'original_size':size} for i,size in enumerate((4,4,20,0,1),1)]
+        with patch('app.services.accountant_exports.ORIGINAL_BATCH_BYTES', 8):
+            self.assertEqual(list(_original_batches(rows)), [[1,2],[3],[5]])
+
+    async def test_housekeeping_task_stops_before_database_shutdown(self):
+        import asyncio
+        from app.services import document_housekeeping as housekeeping
+        with patch.object(housekeeping, 'cleanup_expired_document_drafts', AsyncMock(return_value=0)) as cleanup:
+            task = housekeeping.start_document_housekeeping()
+            await asyncio.sleep(0)
+            await housekeeping.stop_document_housekeeping(task)
+        cleanup.assert_awaited_once()
+        self.assertTrue(task.done())
+
+    async def test_cancelled_file_work_finishes_before_unwinding_owned_files(self):
+        import asyncio
+        import threading
+        from app.services.accountant_exports import _file_work
+        started, finish, finished = threading.Event(), threading.Event(), threading.Event()
+        def write():
+            started.set()
+            finish.wait(2)
+            finished.set()
+        task = asyncio.create_task(_file_work(write))
+        while not started.is_set():
+            await asyncio.sleep(.001)
+        task.cancel()
+        await asyncio.sleep(0)
+        self.assertFalse(task.done())
+        task.cancel()  # Shutdown can cancel both a worker and its owning poller.
+        await asyncio.sleep(0)
+        self.assertFalse(task.done())
+        finish.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(finished.is_set())

@@ -218,7 +218,7 @@ class MaxIntegrationTests(DatabaseFixture):
         await links.confirm('telegram', str(self.employee.id), request['id'])
         self.assertIn('Связанные аккаунты', (await MaxHandler().handle(message(9001, '/profile')))[1])
 
-    async def test_cursor_moves_only_after_complete_batch_and_zero_is_valid(self):
+    async def test_cursor_moves_after_durable_ingest_and_zero_is_valid(self):
         client = SimpleNamespace(updates=AsyncMock(return_value=([], 0)), send=AsyncMock())
         await poll(client, 333, once=True)
         self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'), 0)
@@ -227,11 +227,12 @@ class MaxIntegrationTests(DatabaseFixture):
         client.send.side_effect = MaxAPIError('temporary', status=503)
         with self.assertRaises(MaxAPIError):
             await poll(client, 333, once=True)
-        self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'), 0)
+        self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'), 10)
+        self.assertEqual(await self.pool.fetchval("SELECT count(*) FROM max_update_inbox WHERE status<>'done'"),1)
         client.send.side_effect = None
         await poll(client, 333, once=True)
         self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'), 10)
-        self.assertEqual(client.updates.call_args.args[0], 0)
+        self.assertEqual(client.updates.call_args.args[0], 10)
 
     async def test_only_one_poller_per_bot_can_hold_lease(self):
         client = SimpleNamespace(updates=AsyncMock(return_value=([], 8)), send=AsyncMock())

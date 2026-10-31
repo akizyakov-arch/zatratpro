@@ -36,7 +36,8 @@ async def begin_document_flow(actor_id: int) -> str | None:
     async with get_pool().acquire() as connection:
         from app.services.membership import require_member
         member = await require_member(connection, actor_id)
-        await connection.execute('DELETE FROM pending_document_flows WHERE expires_at <= NOW()')
+        # The periodic core housekeeping task cleans abandoned BYTEA drafts in batches.
+        await connection.execute('DELETE FROM pending_document_flows WHERE actor_id=$1 AND expires_at <= NOW()', actor_id)
         return await connection.fetchval(
             """INSERT INTO pending_document_flows (actor_id, upload_id, data, expires_at, company_id)
                VALUES ($1, $2, NULL, NOW() + $3::interval, $4)

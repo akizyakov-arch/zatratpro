@@ -12,13 +12,17 @@ from app.services.database import get_pool
 from app.services.document_drafts import PendingDocument, _adapter
 from app.services.document_checks import document_warnings, review_fingerprint, warning_text
 from app.services.document_processing import recognize_document
+from app.services.processing_limits import document_processing_slot
 from app.services.documents import DocumentService, DocumentValidationError
 from app.services.json_formatter import format_document_preview
-from app.services.membership import require_member
+from app.services.membership import require_member, MembershipError
 from app.services.recognition import get_provider_for_user, PROVIDERS
-from app.services.workspace import WorkspaceService
+from app.services.workspace import WorkspaceService, workspace_transaction
 
 logger = logging.getLogger(__name__)
+
+# BYTEA originals stay in PostgreSQL for navigation and the final atomic transfer.
+_DRAFT_COLUMNS = 'actor_id,company_id,upload_id,data,expires_at'
 
 
 class DocumentFlowError(ValueError):
@@ -45,8 +49,8 @@ class DocumentFlow:
         self.documents = DocumentService()
 
     @asynccontextmanager
-    async def transaction(self, actor):
-        async with get_pool().acquire() as c, c.transaction():
+    async def transaction(self, actor, connection=None):
+        async with workspace_transaction(connection) as c:
             await c.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', f'document:{actor}')
             member = await require_member(c, actor)
             await c.fetchval('SELECT id FROM companies WHERE id=$1 FOR UPDATE', member['company_id'])
@@ -57,7 +61,7 @@ class DocumentFlow:
             yield c, current
 
     async def _row(self, c, actor, member, upload_id=None):
-        row = await c.fetchrow('SELECT * FROM pending_document_flows WHERE actor_id=$1 FOR UPDATE', actor)
+        row = await c.fetchrow(f'SELECT {_DRAFT_COLUMNS} FROM pending_document_flows WHERE actor_id=$1 FOR UPDATE', actor)
         if (row is None or row['company_id'] != member['company_id']
                 or (upload_id is not None and row['upload_id'] != upload_id)
                 or not await c.fetchval('SELECT expires_at>clock_timestamp() FROM pending_document_flows WHERE actor_id=$1', actor)):
@@ -98,7 +102,7 @@ class DocumentFlow:
                     return await self._projects(c, actor, member, _adapter.validate_json(row['data']))
                 return DocumentView('Документ уже принят. Дождитесь результата; если обработка прервалась, отмените загрузку и отправьте файл заново.', previous, [DocumentAction('Отменить', 'cancel')])
             await c.execute('DELETE FROM pending_document_flows WHERE actor_id=$1 AND expires_at<=clock_timestamp()', actor)
-            active = await c.fetchrow('SELECT * FROM pending_document_flows WHERE actor_id=$1', actor)
+            active = await c.fetchrow(f'SELECT {_DRAFT_COLUMNS} FROM pending_document_flows WHERE actor_id=$1', actor)
             if active and active['company_id'] != member['company_id']:
                 await c.execute('DELETE FROM pending_document_flows WHERE actor_id=$1', actor)
                 active = None
@@ -106,13 +110,19 @@ class DocumentFlow:
                 return DocumentView('Есть незавершённый документ. Завершите его перед загрузкой нового.', active['upload_id'], [DocumentAction('Продолжить', 'resume'), DocumentAction('Отменить', 'cancel')])
             upload_id = token_urlsafe(16)
             await c.execute("INSERT INTO pending_document_flows(actor_id,company_id,upload_id,data,expires_at) VALUES($1,$2,$3,NULL,clock_timestamp()+interval '15 minutes')", actor, member['company_id'], upload_id)
-            await c.execute('INSERT INTO document_upload_events(actor_id,platform,event_hash,upload_id) VALUES($1,$2,$3,$4)', actor, platform, event_hash, upload_id)
+            await c.execute('INSERT INTO document_upload_events(actor_id,platform,event_hash,upload_id,company_id) VALUES($1,$2,$3,$4,$5)', actor, platform, event_hash, upload_id, member['company_id'])
             company_id = member['company_id']
         provider = await get_provider_for_user(actor)
         try:
             if notify:
                 await notify(f'Документ получен. Распознавание: {PROVIDERS[provider]}.')
-            async with asyncio.timeout(750):
+            # Queue before downloading bytes, so waiting documents do not retain
+            # large payloads. The total deadline includes waiting for a slot.
+            async with asyncio.timeout(750), document_processing_slot():
+                async with self.transaction(actor) as (c, member):
+                    if member['company_id'] != company_id:
+                        raise DocumentFlowError('Компания изменилась. Отправьте документ заново.')
+                    await self._row(c, actor, member, upload_id)
                 data = await download()
                 text, document = await recognize_document(data, source_type, provider, caption, notify)
             pending = PendingDocument(text, format_document_preview(document), source_type=source_type,
@@ -135,6 +145,35 @@ class DocumentFlow:
             await get_pool().execute('DELETE FROM pending_document_flows WHERE actor_id=$1 AND upload_id=$2', actor, upload_id)
             logger.warning('document_processing_failed upload=%s provider=%s error_type=%s', upload_id, provider, type(exc).__name__)
             raise
+
+    async def recover_interrupted(self, actor, platform, event_id, *, connection=None):
+        """Reset an interrupted queued upload, never a ready/saved document.
+
+        Called by the durable delivery service before replaying an event. It uses
+        the caller's transaction when supplied, so recovery and a queue claim
+        commit together. Historical/unbound events and changed companies remain
+        closed: they must not silently attach an old receipt to a new company.
+        """
+        if platform not in ('telegram', 'max', 'web') or not isinstance(event_id, str) or not 1 <= len(event_id) <= 256:
+            return False
+        event_hash = hashlib.sha256(event_id.encode()).hexdigest()
+        try:
+            async with self.transaction(actor, connection=connection) as (c, member):
+                event = await c.fetchrow('''SELECT upload_id,company_id FROM document_upload_events
+                    WHERE actor_id=$1 AND platform=$2 AND event_hash=$3 FOR UPDATE''', actor, platform, event_hash)
+                if event is None or event['company_id'] is None or event['company_id'] != member['company_id']:
+                    return False
+                if await c.fetchval('SELECT id FROM documents WHERE upload_id=$1', event['upload_id']):
+                    return False
+                draft = await c.fetchrow(f'SELECT {_DRAFT_COLUMNS} FROM pending_document_flows WHERE actor_id=$1 FOR UPDATE', actor)
+                if draft is not None and draft['upload_id'] == event['upload_id']:
+                    if draft['data'] is not None or draft['company_id'] != member['company_id']:
+                        return False
+                    await c.execute('DELETE FROM pending_document_flows WHERE actor_id=$1 AND upload_id=$2 AND data IS NULL', actor, event['upload_id'])
+                await c.execute('DELETE FROM document_upload_events WHERE actor_id=$1 AND platform=$2 AND event_hash=$3 AND upload_id=$4', actor, platform, event_hash, event['upload_id'])
+                return True
+        except (MembershipError, DocumentFlowError):
+            return False
 
     async def _saved(self, c, actor, member, upload_id):
         row = await c.fetchrow('SELECT d.id,p.name FROM documents d JOIN projects p ON p.id=d.project_id WHERE d.upload_id=$1 AND d.uploaded_by_user_id=$2 AND d.company_id=$3', upload_id, actor, member['company_id'])
@@ -194,8 +233,10 @@ class DocumentFlow:
                 return DocumentView(warning_text(pending.extracted_document) + '\nСверьте выделенные строки с оригиналом.', upload_id, [DocumentAction('Проверил по оригиналу — сохранить', 'review'), DocumentAction('Отменить', 'cancel')])
             document_id = await self.documents.save_for_user(actor, project['id'], pending.normalized_text, pending.extracted_document,
                 source_type=pending.source_type, upload_id=upload_id, provider=pending.provider, connection=c)
-            if row['original_data'] is not None:
-                await c.execute('INSERT INTO document_originals(document_id,content,extension) VALUES($1,$2,$3) ON CONFLICT(document_id) DO NOTHING', document_id, row['original_data'], row['original_ext'])
+            await c.execute('''INSERT INTO document_originals(document_id,content,extension)
+                SELECT $1,original_data,original_ext FROM pending_document_flows
+                WHERE actor_id=$2 AND upload_id=$3 AND company_id=$4 AND original_data IS NOT NULL
+                ON CONFLICT(document_id) DO NOTHING''', document_id, actor, upload_id, member['company_id'])
             await c.execute('DELETE FROM pending_document_flows WHERE actor_id=$1 AND upload_id=$2', actor, upload_id)
             return await self._saved(c, actor, member, upload_id)
 
@@ -203,7 +244,7 @@ class DocumentFlow:
         if not await get_pool().fetchval("SELECT 1 FROM pending_document_flows WHERE actor_id=$1 AND expires_at>clock_timestamp() AND data->>'awaiting_project_name'='true'", actor):
             return None
         async with self.transaction(actor) as (c, member):
-            row = await c.fetchrow('SELECT * FROM pending_document_flows WHERE actor_id=$1 AND expires_at>clock_timestamp() FOR UPDATE', actor)
+            row = await c.fetchrow(f'SELECT {_DRAFT_COLUMNS} FROM pending_document_flows WHERE actor_id=$1 AND expires_at>clock_timestamp() FOR UPDATE', actor)
             if not row or row['data'] is None:
                 return None
             pending = _adapter.validate_json(row['data'])
