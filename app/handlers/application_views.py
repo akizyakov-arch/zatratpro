@@ -18,6 +18,10 @@ def command_for_button(button):
 
 
 def telegram_callback(command):
+    if command.startswith('/section_report '):
+        return 'r:' + command.removeprefix('/section_report ').replace(' ', ':')
+    if command.startswith('/report_periods '):
+        return 'rp:' + command.removeprefix('/report_periods ').replace(' ', ':')
     if command.startswith('/issue_'):
         return 'issue:' + command.removeprefix('/issue_').replace(' ', ':')
     if command.startswith('/advance '):

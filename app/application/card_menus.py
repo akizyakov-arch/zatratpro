@@ -10,16 +10,19 @@ class CardMenus:
     def __init__(self, service=None):
         self.service = service or BusinessCardService()
 
-    async def handle(self, actor, text):
+    async def handle(self, actor, text, *, event_id=None, platform='max'):
         service = self.service
         commands = text.split()
         command = commands[0] if commands else ''
         if not text.startswith('/'):
-            pending = await get_input(actor)
-            if pending and pending.action in ('card_create', 'card_reject'):
-                result = await FinancialInputs(cards=service).submit(actor, text, pending.revision)
-                return View(result.text, [[Action('Бизнес-карты', '/cards')]])
-            return None
+            inputs = FinancialInputs(cards=service)
+            if event_id is not None:
+                result = await inputs.receive(actor, text, event_id, platform=platform,
+                                              actions={'card_create', 'card_reject'})
+            else:
+                pending = await get_input(actor)
+                result = await inputs.submit(actor, text, pending.revision) if pending and pending.action in ('card_create', 'card_reject') else None
+            return View(result.text, [[Action('Бизнес-карты', '/cards')]]) if result is not None else None
         if command == '/card_new':
             result = await FinancialInputs(cards=service).start(actor, 'card_create')
             return View(result.text, [[Action('Отмена', '/card_cancel')]])

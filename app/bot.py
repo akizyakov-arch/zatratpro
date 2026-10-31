@@ -25,6 +25,9 @@ from app.handlers.advance_notifications import (
 from app.logging_utils import RedactingFormatter
 from app.services.database import close_db, init_db
 from app.services.platform_owner import synchronize_owner
+from app.services.document_housekeeping import start_document_housekeeping, stop_document_housekeeping
+
+_housekeeping_task = None
 
 
 def configure_logging() -> None:
@@ -36,6 +39,7 @@ def configure_logging() -> None:
 
 
 async def on_startup(bot: Bot) -> None:
+    global _housekeeping_task
     await init_db()
     try:
         await synchronize_owner(get_settings().bot_owner_telegram_id)
@@ -43,11 +47,15 @@ async def on_startup(bot: Bot) -> None:
         await close_db()
         raise
     logging.getLogger(__name__).info("Database pool initialized")
+    _housekeeping_task = start_document_housekeeping()
     start_notifications(bot)
     start_advance_notifications(bot)
 
 
 async def on_shutdown() -> None:
+    global _housekeeping_task
+    await stop_document_housekeeping(_housekeeping_task)
+    _housekeeping_task = None
     await stop_advance_notifications()
     await stop_notifications()
     await close_db()

@@ -361,15 +361,29 @@ class AdvanceService:
                       COALESCE(SUM(amount) FILTER(WHERE kind='spent' AND at>=$2 AND at<$3),0) AS spent,
                       COALESCE(SUM(amount) FILTER(WHERE kind='returned' AND at>=$2 AND at<$3),0) AS returned
                     FROM movements GROUP BY advance_id
+                ), pending_expenses AS (
+                    SELECT e.advance_id,SUM(e.amount) AS amount FROM advance_expenses e
+                    JOIN selected a ON a.id=e.advance_id
+                    WHERE e.created_at<$3 AND (e.approved_at IS NULL OR e.approved_at>=$3)
+                      AND (e.rejected_at IS NULL OR e.rejected_at>=$3)
+                    GROUP BY e.advance_id
+                ), pending_returns AS (
+                    SELECT r.advance_id,SUM(r.amount) AS amount FROM advance_returns r
+                    JOIN selected a ON a.id=r.advance_id
+                    WHERE r.created_at<$3 AND (r.approved_at IS NULL OR r.approved_at>=$3)
+                      AND (r.rejected_at IS NULL OR r.rejected_at>=$3)
+                    GROUP BY r.advance_id
                 )
                 SELECT a.employee_id,a.project_id,u.first_name,u.last_name,p.name AS project_name,
                   SUM(COALESCE(s.opening,0)) AS opening,SUM(COALESCE(s.received,0)) AS received,
                   SUM(COALESCE(s.spent,0)) AS spent,SUM(COALESCE(s.returned,0)) AS returned,
                   SUM(COALESCE(s.opening,0)+COALESCE(s.received,0)-COALESCE(s.spent,0)-COALESCE(s.returned,0)) AS closing,
                   SUM(CASE WHEN a.received_at IS NULL OR a.received_at>=$3 THEN a.amount ELSE 0 END) AS pending,
-                  SUM(COALESCE((SELECT SUM(e.amount) FROM advance_expenses e WHERE e.advance_id=a.id AND e.created_at<$3 AND (e.approved_at IS NULL OR e.approved_at>=$3) AND (e.rejected_at IS NULL OR e.rejected_at>=$3)),0)) AS pending_expenses,
-                  SUM(COALESCE((SELECT SUM(r.amount) FROM advance_returns r WHERE r.advance_id=a.id AND r.created_at<$3 AND (r.approved_at IS NULL OR r.approved_at>=$3) AND (r.rejected_at IS NULL OR r.rejected_at>=$3)),0)) AS pending_returns
+                  SUM(COALESCE(pe.amount,0)) AS pending_expenses,
+                  SUM(COALESCE(pr.amount,0)) AS pending_returns
                 FROM selected a LEFT JOIN sums s ON s.advance_id=a.id
+                LEFT JOIN pending_expenses pe ON pe.advance_id=a.id
+                LEFT JOIN pending_returns pr ON pr.advance_id=a.id
                 JOIN users u ON u.id=a.employee_id JOIN projects p ON p.id=a.project_id
                 GROUP BY a.employee_id,a.project_id,u.first_name,u.last_name,p.name
                 ORDER BY u.first_name NULLS LAST,a.employee_id,a.project_id

@@ -26,23 +26,21 @@ async def get_money_report_for_user(
     The caller supplies an authenticated internal user ID. Platform identity
     resolution and period selection belong to the interface adapter.
     """
-    scope = {'project_id': project_id, 'employee_id': employee_id}
     async with get_pool().acquire() as connection:
         async with connection.transaction(isolation='repeatable_read', readonly=True):
-            report = await AdvanceService().report(
-                user_id, start, end, connection=connection, **scope,
-            )
-            report['card_rows'] = [
-                dict(row) for row in await BusinessCardService().report(
-                    user_id, report['start'], report['end'], connection=connection, **scope,
-                )
-            ]
-    report['card_spent'] = sum(
-        (row['amount'] for row in report['card_rows'] if row['accepted']), Decimal(0),
-    )
-    report['card_pending'] = sum(
-        (row['amount'] for row in report['card_rows'] if not row['accepted']), Decimal(0),
-    )
+            return await build_money_report(connection, user_id, start, end,
+                                            project_id=project_id, employee_id=employee_id)
+
+
+async def build_money_report(connection, user_id, start, end=None, *, project_id=None, employee_id=None):
+    """Assemble both sources on the caller's existing snapshot/connection."""
+    scope = {'project_id': project_id, 'employee_id': employee_id, 'connection': connection}
+    report = await AdvanceService().report(user_id, start, end, **scope)
+    report['card_rows'] = [dict(row) for row in await BusinessCardService().report(
+        user_id, report['start'], report['end'], **scope)]
+    report['card_spent'] = sum((row['amount'] for row in report['card_rows'] if row['accepted']), Decimal(0))
+    report['card_pending'] = sum((row['amount'] for row in report['card_rows'] if not row['accepted']), Decimal(0))
+    report['cash_on_hand'], report['employee_debt'] = cash_and_employee_debt(report)
     return report
 
 

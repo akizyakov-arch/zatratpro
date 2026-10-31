@@ -19,6 +19,7 @@ from app.services.advances import AdvanceError, AdvanceService
 from app.services.business_cards import BusinessCardService
 from app.services.company_policy import CompanyAccessError
 from app.services.database import close_db, init_db
+from app.services.document_housekeeping import start_document_housekeeping, stop_document_housekeeping
 from app.services.report_periods import report_period_start
 from app.services.money_reports import get_money_report_for_user, cash_and_employee_debt
 from app.services.web_finance_directory import WebFinanceDirectory
@@ -68,9 +69,11 @@ async def detail_money(actor, **scope):
 @asynccontextmanager
 async def lifespan(app):
     await init_db()
+    housekeeping = start_document_housekeeping()
     try:
         yield
     finally:
+        await stop_document_housekeeping(housekeeping)
         await close_db()
 
 
@@ -366,7 +369,7 @@ def create_app():
         employee_id: int | None = None, project_id: int | None = None,
         user=Depends(manager), bounds=Depends(period_bounds),
     ):
-        return ok(await reports.report(user['id'], *bounds, project_id=project_id, employee_id=employee_id))
+        return ok(await reports.summary(user['id'], *bounds, project_id=project_id, employee_id=employee_id))
 
     @app.get('/api/reports/accountant')
     async def accountant_export(

@@ -35,14 +35,17 @@ class MaxReliabilityTests(DatabaseFixture):
 
     async def test_authentication_and_unknown_client_errors_remain_fatal(self):
         for status in (401, 400, 404, 307):
+            await self.pool.execute('DELETE FROM max_update_inbox')
+            await self.pool.execute('DELETE FROM max_poll_offsets')
             client = SimpleNamespace(updates=AsyncMock(return_value=([{}, {}], 9)),
                 send=AsyncMock(side_effect=MaxAPIError('fatal', status=status)))
             handler = SimpleNamespace(handle=AsyncMock(return_value=(1, 'reply')))
             with patch('app.max_bot.runner.MaxHandler', return_value=handler):
                 with self.assertRaises(MaxAPIError):
-                    await poll(client, 333)
+                    await poll(client, 333, once=True)
             self.assertEqual(handler.handle.await_count, 1)
-            self.assertIsNone(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'))
+            self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'),9)
+            self.assertGreater(await self.pool.fetchval("SELECT count(*) FROM max_update_inbox WHERE status<>'done'"),0)
 
     async def test_updates_read_denial_is_not_treated_as_recipient_failure(self):
         client = SimpleNamespace(updates=AsyncMock(side_effect=MaxAPIError('forbidden', status=403)), send=AsyncMock())
@@ -50,18 +53,20 @@ class MaxReliabilityTests(DatabaseFixture):
             await poll(client, 333)
         client.send.assert_not_called()
 
-    async def test_retry_keeps_initial_page_and_does_not_resend_completed_events(self):
+    async def test_retry_reuses_saved_reply_and_does_not_resend_completed_events(self):
         first, second = {'event': 1}, {'event': 2}
-        client = SimpleNamespace(updates=AsyncMock(side_effect=[([first, second], 9), EndPolling()]),
+        client = SimpleNamespace(updates=AsyncMock(return_value=([first, second], 9)),
             send=AsyncMock(side_effect=[None, MaxAPIError('temporary', status=503), None]))
-        handler = SimpleNamespace(handle=AsyncMock(side_effect=[(1, 'first'), (2, 'second'), (2, 'second')]))
-        with patch('app.max_bot.runner.MaxHandler', return_value=handler), patch('app.max_bot.runner.asyncio.sleep', new_callable=AsyncMock):
-            with self.assertRaises(EndPolling):
-                await poll(client, 333)
-        self.assertEqual([call.args[0] for call in handler.handle.await_args_list], [first, second, second])
+        handler = SimpleNamespace(handle=AsyncMock(side_effect=[(1, 'first'), (2, 'second')]))
+        with patch('app.max_bot.runner.MaxHandler', return_value=handler):
+            with self.assertRaises(MaxAPIError):
+                await poll(client, 333, once=True)
+            client.updates.return_value=([],10)
+            await poll(client,333,once=True)
+        self.assertEqual([call.args[0] for call in handler.handle.await_args_list], [first, second])
         self.assertEqual([call.args[0] for call in client.send.await_args_list], [1, 2, 2])
         self.assertEqual([call.args[0] for call in client.updates.await_args_list], [None, 9])
-        self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'), 9)
+        self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'), 10)
 
     async def test_lost_database_lock_cancels_inflight_network_request_and_allows_restart(self):
         from app.max_bot.runner import _poll_locked
@@ -97,15 +102,16 @@ class MaxReliabilityTests(DatabaseFixture):
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
-    async def test_processing_error_stops_without_advancing_cursor(self):
+    async def test_processing_error_preserves_durable_page_for_restart(self):
         client = SimpleNamespace(updates=AsyncMock(return_value=([{}, {}], 9)), send=AsyncMock())
         handler = SimpleNamespace(handle=AsyncMock(side_effect=RuntimeError('processing failed')))
         with patch('app.max_bot.runner.MaxHandler', return_value=handler):
             with self.assertRaisesRegex(RuntimeError, 'processing failed'):
-                await poll(client, 333)
+                await poll(client, 333, once=True)
         self.assertEqual(handler.handle.await_count, 1)
         client.send.assert_not_called()
-        self.assertIsNone(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'))
+        self.assertEqual(await self.pool.fetchval('SELECT marker FROM max_poll_offsets WHERE bot_id=333'),9)
+        self.assertEqual(await self.pool.fetchval("SELECT count(*) FROM max_update_inbox WHERE status<>'done'"),2)
 
     async def test_repeated_claim_is_same_candidate_only_and_does_not_exhaust_rate_limit(self):
         service = AccountLinkService()
@@ -206,14 +212,14 @@ class MaxReliabilityTests(DatabaseFixture):
             if len(replies) == 1:
                 await self.pool.execute('UPDATE users SET is_active=false WHERE id=$1', actor)
                 raise MaxAPIError('temporary', status=503)
-        client = SimpleNamespace(updates=AsyncMock(side_effect=[([message(9001, '/projects')], 10), EndPolling()]),
-            send=AsyncMock(side_effect=send))
-        with patch('app.max_bot.runner.asyncio.sleep', new_callable=AsyncMock):
-            with self.assertRaises(EndPolling):
-                await poll(client, 333)
-        self.assertIn(self.project.name, replies[0])
-        self.assertNotIn(self.project.name, replies[1])
-        self.assertEqual(replies[1], LINK_HELP)
+        client = SimpleNamespace(updates=AsyncMock(return_value=([message(9001,'/projects')],10)),send=AsyncMock(side_effect=send))
+        with self.assertRaises(MaxAPIError):
+            await poll(client,333,once=True)
+        client.updates.return_value=([],11)
+        await poll(client,333,once=True)
+        self.assertIn(self.project.name,replies[0])
+        self.assertNotIn(self.project.name,replies[1])
+        self.assertEqual(replies[1],LINK_HELP)
 
     async def test_cancelling_poller_releases_database_lock(self):
         started = asyncio.Event()

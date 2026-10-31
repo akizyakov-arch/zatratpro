@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 from app.config import get_recognition_settings as get_settings
 from app.services.recognition_errors import RecognitionError
+from app.services.recognition_clients import provider_client
 
 # Compatibility for existing handlers and third-party provider adapters.
 OCRSpaceError = RecognitionError
@@ -73,7 +74,7 @@ class OCRSpaceService:
                 logger.warning('ocr_space_transport request=%s stage=%s elapsed=%.2f', request_id, event, time.monotonic()-started)
         try:
             proxy_options = {'proxy': proxy} if proxy else {}
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=20), **proxy_options) as client:
+            async with provider_client(timeout=httpx.Timeout(120, connect=20), **proxy_options) as client:
                 with file_path.open('rb') as image_file:
                     response = await client.post(API_URL,
                         data={'apikey': key, 'language': 'rus', 'OCREngine': 2},

@@ -2,10 +2,16 @@
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
+from pathlib import Path
+import tempfile
+from weakref import WeakKeyDictionary
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from openpyxl import Workbook
+from app.config import TMP_DIR
+from app.services.async_work import run_blocking
 from app.schemas.fiscal import fiscalization_label
+from app.schemas.vat import vat_scope_label
 from app.services.database import get_pool
 from app.services.advances import AdvanceError
 from app.services.reporting import ReportService
@@ -16,6 +22,42 @@ PERIODS = dict(REPORT_PERIOD_LABELS, previous_month='Прошлый месяц')
 MAX_SOURCE_BYTES = 100 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 45 * 1024 * 1024
 MAX_DOCUMENTS = 2000
+ORIGINAL_BATCH_BYTES = 8 * 1024 * 1024
+ORIGINAL_BATCH_COUNT = 128
+_EXPORT_SLOTS = WeakKeyDictionary()
+
+
+def _export_slots():
+    loop = asyncio.get_running_loop()
+    return _EXPORT_SLOTS.setdefault(loop, asyncio.Semaphore(2))
+
+
+async def _file_work(function, *args):
+    return await run_blocking(function, *args)
+
+
+def _original_batches(rows):
+    batch, size = [], 0
+    for row in rows:
+        amount = row['original_size'] or 0
+        if not amount:
+            continue
+        if batch and (size + amount > ORIGINAL_BATCH_BYTES or len(batch) >= ORIGINAL_BATCH_COUNT):
+            yield batch
+            batch, size = [], 0
+        batch.append(row['id'])
+        size += amount
+    if batch:
+        yield batch
+
+
+def _spool_originals(rows, directory):
+    paths = {}
+    for row in rows:
+        path = Path(directory) / str(row['document_id'])
+        path.write_bytes(row['content'])
+        paths[row['document_id']] = path
+    return paths
 
 
 def accountant_dates(value, *, now=None):
@@ -43,36 +85,46 @@ class AccountantExportService:
             return await ReportService()._manager(c, actor)
 
     async def build(self, actor, value, *, project_id=None, employee_id=None):
+        # Bound concurrent packaging and its unavoidable final <=45MiB payloads.
+        async with _export_slots():
+            return await self._build(actor, value, project_id=project_id, employee_id=employee_id)
+
+    async def _build(self, actor, value, *, project_id=None, employee_id=None):
         start, end = accountant_dates(value)
-        async with get_pool().acquire() as c, c.transaction(isolation='repeatable_read'):
-            company = await ReportService()._manager(c, actor)
-            await ReportService._scope(c, company, project_id, employee_id)
-            rows = await c.fetch('''SELECT d.*,p.name AS project_name,
-                concat_ws(' ',u.first_name,u.last_name) AS employee_name,
-                o.extension,octet_length(o.content) AS original_size
-                FROM documents d JOIN projects p ON p.id=d.project_id
-                JOIN users u ON u.id=d.uploaded_by_user_id
-                LEFT JOIN document_originals o ON o.document_id=d.id
-                WHERE d.company_id=$1
-                  AND coalesce((d.document_date AT TIME ZONE 'UTC')::date,(d.created_at AT TIME ZONE 'UTC')::date) BETWEEN $2 AND $3
-                  AND ($4::bigint IS NULL OR d.project_id=$4)
-                  AND ($5::bigint IS NULL OR d.uploaded_by_user_id=$5)
-                ORDER BY coalesce((d.document_date AT TIME ZONE 'UTC')::date,(d.created_at AT TIME ZONE 'UTC')::date),d.id
-                LIMIT $6''', company, start, end, project_id, employee_id, MAX_DOCUMENTS + 1)
-            if not rows:
-                raise AdvanceError('За выбранный период документов нет.')
-            if len(rows) > MAX_DOCUMENTS or sum(r['original_size'] or 0 for r in rows) > MAX_SOURCE_BYTES:
-                raise AdvanceError('Выгрузка слишком большая. Выберите более короткий период.')
-            originals = {}
-            for row in rows:
-                if row['original_size']:
-                    originals[row['id']] = await c.fetchval('SELECT content FROM document_originals WHERE document_id=$1', row['id'])
-            items = await c.fetch('SELECT * FROM document_items WHERE document_id=ANY($1::bigint[]) ORDER BY document_id,line_no', [r['id'] for r in rows])
-        payload, missing = await asyncio.to_thread(_package, rows, items, originals, start, end)
-        # Access may have changed while constructing a large package.
-        if await self.authorize(actor) != company:
-            raise AdvanceError('Компания изменилась. Сформируйте выгрузку заново.')
-        return f'accountant-{start:%Y%m%d}-{end:%Y%m%d}.zip', payload, missing
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='accountant-', dir=TMP_DIR) as directory:
+            async with get_pool().acquire() as c, c.transaction(isolation='repeatable_read', readonly=True):
+                company = await ReportService()._manager(c, actor)
+                await ReportService._scope(c, company, project_id, employee_id)
+                rows = await c.fetch('''SELECT d.id,d.document_type,d.external_document_number,
+                    d.document_date,d.created_at,d.vendor,d.vendor_inn,d.vendor_kpp,d.currency,
+                    d.total_amount,d.duplicate_status,d.is_fiscalized,d.vat_total_amount,d.vat_scope,p.name AS project_name,
+                    concat_ws(' ',u.first_name,u.last_name) AS employee_name,
+                    o.extension,octet_length(o.content) AS original_size
+                    FROM documents d JOIN projects p ON p.id=d.project_id
+                    JOIN users u ON u.id=d.uploaded_by_user_id
+                    LEFT JOIN document_originals o ON o.document_id=d.id
+                    WHERE d.company_id=$1
+                      AND coalesce((d.document_date AT TIME ZONE 'UTC')::date,(d.created_at AT TIME ZONE 'UTC')::date) BETWEEN $2 AND $3
+                      AND ($4::bigint IS NULL OR d.project_id=$4)
+                      AND ($5::bigint IS NULL OR d.uploaded_by_user_id=$5)
+                    ORDER BY coalesce((d.document_date AT TIME ZONE 'UTC')::date,(d.created_at AT TIME ZONE 'UTC')::date),d.id
+                    LIMIT $6''', company, start, end, project_id, employee_id, MAX_DOCUMENTS + 1)
+                if not rows:
+                    raise AdvanceError('За выбранный период документов нет.')
+                if len(rows) > MAX_DOCUMENTS or sum(r['original_size'] or 0 for r in rows) > MAX_SOURCE_BYTES:
+                    raise AdvanceError('Выгрузка слишком большая. Выберите более короткий период.')
+                originals = {}
+                for ids in _original_batches(rows):
+                    batch = await c.fetch('SELECT document_id,content FROM document_originals WHERE document_id=ANY($1::bigint[])', ids)
+                    originals.update(await _file_work(_spool_originals, batch, directory))
+                    del batch
+                items = await c.fetch('SELECT * FROM document_items WHERE document_id=ANY($1::bigint[]) ORDER BY document_id,line_no', [r['id'] for r in rows])
+            payload, missing = await _file_work(_package, rows, items, originals, start, end)
+            # Access may have changed while constructing a large package.
+            if await self.authorize(actor) != company:
+                raise AdvanceError('Компания изменилась. Сформируйте выгрузку заново.')
+            return f'accountant-{start:%Y%m%d}-{end:%Y%m%d}.zip', payload, missing
 
 
 def _package(rows, items, originals, start, end):
@@ -86,18 +138,28 @@ def _package(rows, items, originals, start, end):
     missing = sum(r['id'] not in originals for r in rows)
     _append_row(summary, ['Документов', len(rows), 'Без скана', missing])
     sheet = workbook.create_sheet('Документы')
-    _append_row(sheet, ['ID', 'Проект', 'Сотрудник', 'Тип', 'Номер', 'Дата документа', 'Загружен UTC', 'Поставщик', 'ИНН', 'КПП', 'Валюта', 'Сумма', 'Дубль', 'Файл', 'Основание периода', 'Фискализация'])
-    output = BytesIO()
+    _append_row(sheet, ['ID', 'Проект', 'Сотрудник', 'Тип', 'Номер', 'Дата документа', 'Загружен UTC', 'Поставщик', 'ИНН', 'КПП', 'Валюта', 'Сумма', 'Дубль', 'Файл', 'Основание периода', 'Фискализация', 'В том числе НДС', 'Тип НДС'])
+    with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode='w+b', dir=TMP_DIR) as output:
+        return _write_package(output, workbook, rows, items, originals, sheet, missing)
+
+
+def _write_package(output, workbook, rows, items, originals, sheet, missing):
     with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         for row in rows:
             path = f"files/{row['id']}.{row['extension']}" if row['id'] in originals else ''
-            _append_row(sheet, [row['id'], row['project_name'], row['employee_name'], row['document_type'], row['external_document_number'] or '', str(row['document_date'] or ''), row['created_at'].isoformat(), row['vendor'] or '', row['vendor_inn'] or '', row['vendor_kpp'] or '', row['currency'], str(row['total_amount']), row['duplicate_status'], path or 'Скан отсутствует', 'Дата документа' if row['document_date'] else 'Дата загрузки UTC', fiscalization_label(row['is_fiscalized'])])
+            _append_row(sheet, [row['id'], row['project_name'], row['employee_name'], row['document_type'], row['external_document_number'] or '', str(row['document_date'] or ''), row['created_at'].isoformat(), row['vendor'] or '', row['vendor_inn'] or '', row['vendor_kpp'] or '', row['currency'], str(row['total_amount']), row['duplicate_status'], path or 'Скан отсутствует', 'Дата документа' if row['document_date'] else 'Дата загрузки UTC', fiscalization_label(row['is_fiscalized']), _number_text(row.get('vat_total_amount')), vat_scope_label(row.get('vat_scope'))])
             if path:
-                archive.writestr(path, originals[row['id']])
+                original = originals[row['id']]
+                if isinstance(original, (bytes, bytearray)):
+                    archive.writestr(path, original)
+                else:
+                    archive.write(original, arcname=path)
+                if output.tell() > MAX_ARCHIVE_BYTES:
+                    raise AdvanceError('Архив превышает 45 МБ. Выберите более короткий период.')
         positions = workbook.create_sheet('Позиции')
-        _append_row(positions, ['ID документа', 'Строка', 'Наименование', 'Количество', 'Цена', 'Сумма'])
+        _append_row(positions, ['ID документа', 'Строка', 'Наименование', 'Количество', 'Цена', 'Сумма', 'Ставка НДС %', 'НДС', 'Сумма без НДС', 'Цена включает НДС'])
         for item in items:
-            _append_row(positions, [item['document_id'], item['line_no'], item['name'], str(item['quantity'] or ''), str(item['price'] or ''), str(item['line_total'] or '')])
+            _append_row(positions, [item['document_id'], item['line_no'], item['name'], _number_text(item['quantity']), _number_text(item['price']), _number_text(item['line_total']), _number_text(item.get('vat_rate')), _number_text(item.get('vat_amount')), _number_text(item.get('line_total_without_vat')), 'Да' if item.get('price_includes_vat') is True else 'Нет' if item.get('price_includes_vat') is False else 'Не определено'])
         data = BytesIO()
         for worksheet in workbook:
             for cells in worksheet:
@@ -108,4 +170,9 @@ def _package(rows, items, originals, start, end):
         archive.writestr('Реестр.xlsx', data.getvalue())
     if output.tell() > MAX_ARCHIVE_BYTES:
         raise AdvanceError('Архив превышает 45 МБ. Выберите более короткий период.')
-    return output.getvalue(), missing
+    output.seek(0)
+    return output.read(), missing
+
+
+def _number_text(value):
+    return '' if value is None else str(value)

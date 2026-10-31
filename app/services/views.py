@@ -200,7 +200,10 @@ class ReportDocumentDetail:
     first_item_name: str | None
     created_at: datetime
     is_fiscalized: bool | None = None
+    currency: str = 'RUB'
 
+    vat_total_amount: Decimal | None = None
+    vat_scope: str | None = None
 
 @dataclass(slots=True)
 class ReportItemDetail:
@@ -211,6 +214,10 @@ class ReportItemDetail:
     price: Decimal | None
     line_total: Decimal | None
 
+    vat_rate: Decimal | None = None
+    vat_amount: Decimal | None = None
+    line_total_without_vat: Decimal | None = None
+    price_includes_vat: bool | None = None
 
 @dataclass(slots=True)
 class DuplicateReportRow:
@@ -253,6 +260,15 @@ class ViewService:
             raise CompanyAccessError(str(exc)) from exc
 
 
+    async def _summary(self, actor_id, period, **scope):
+        from app.services.reporting import ReportService
+        from app.services.advances import AdvanceError
+        try:
+            return await ReportService().period_summary(await self._actor(actor_id), period, **scope)
+        except AdvanceError as exc:
+            raise CompanyAccessError(str(exc)) from exc
+
+
     async def get_employee_card(self, actor_id: int, member_user_id: int) -> MemberCard:
         from app.services.reporting import ReportService
         from app.services.advances import AdvanceError
@@ -281,23 +297,22 @@ class ViewService:
 
 
     async def get_manager_report_summary(self, actor_id: int, period: str) -> ReportSummary:
-        data = await self._report(actor_id, period)
+        data = await self._summary(actor_id, period)
         return ReportSummary(period=period, **{key: data['summary'][key] for key in ('start_at','documents','total_amount','exact_duplicates','probable_duplicates')})
 
     async def get_duplicate_report_summary(self, actor_id: int, period: str) -> ReportSummary:
-        data = await self._report(actor_id, period)
-        docs = data['duplicates']
-        return ReportSummary(period, data['start'], len(docs), sum((d['total_amount'] or Decimal(0)) for d in docs if d['currency']=='RUB'), sum(d['duplicate_status']=='exact' for d in docs), sum(d['duplicate_status']=='probable' for d in docs))
+        data = await self._summary(actor_id, period)
+        return ReportSummary(period=period, **{key: data['duplicate_summary'][key] for key in ('start_at','documents','total_amount','exact_duplicates','probable_duplicates')})
 
     async def get_employee_report_summary(self, actor_id: int, period: str) -> ReportSummary:
         return await self.get_manager_report_summary(actor_id, period)
 
     async def list_report_projects(self, actor_id: int, period: str) -> list[ProjectReportRow]:
-        data = await self._report(actor_id, period)
+        data = await self._summary(actor_id, period)
         return [_dto(ProjectReportRow, row) for row in sorted(data['projects'], key=lambda row: (-row['total_amount'], -row['document_count'], row['project_name']))]
 
     async def list_report_employees(self, actor_id: int, period: str) -> list[EmployeeReportRow]:
-        data = await self._report(actor_id, period)
+        data = await self._summary(actor_id, period)
         return [_dto(EmployeeReportRow, row) for row in sorted(data['employees'], key=lambda row: (-row['total_amount'], -row['document_count'], row['user_id']))]
 
     async def get_project_report_detail(self, actor_id: int, period: str, project_id: int) -> tuple[ProjectCard, list[ReportDocumentDetail]]:
@@ -325,7 +340,7 @@ class ViewService:
         return _dto(ReportDocumentDetail, document), [_dto(ReportItemDetail, row) for row in data['items'] if row['document_id']==document_id]
 
     async def list_duplicate_report_rows(self, actor_id: int, period: str) -> list[DuplicateReportRow]:
-        data = await self._report(actor_id, period)
+        data = await self._summary(actor_id, period, include_duplicates=True)
         return [_dto(DuplicateReportRow, row) for row in sorted(data['duplicates'], key=lambda row: (row['created_at'], row['id']), reverse=True)]
 
     async def get_duplicate_report_row(self, actor_id: int, period: str, duplicate_id: int) -> DuplicateReportRow:

@@ -1,5 +1,7 @@
 """Shared return, decision and card input scenarios, independent of presentation."""
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+import hashlib
+import json
 from app.services.advances import AdvanceService, AdvanceError
 from app.services.business_cards import BusinessCardService
 from app.services.database import get_pool
@@ -60,40 +62,86 @@ class FinancialInputs:
     async def submit(self, actor, text, revision):
         async with get_pool().acquire() as c,c.transaction():
             await c.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',f'conversation:{actor}')
+            return await self._submit(c, actor, text, revision)
+
+    async def receive(self, actor, text, event_id, *, platform='max', actions=None):
+        """Idempotent plain input; failed validation also binds this delivery.
+
+        No raw text or external IDs are retained. Results and consumed revisions
+        commit with the operation; an unrelated future input is never consumed
+        by an old message after a reply delivery failure or worker restart.
+        """
+        if platform not in ('max','telegram','web') or not isinstance(event_id,str) or not 1 <= len(event_id) <= 256:
+            raise AdvanceError('Не удалось определить сообщение. Повторите ввод новым сообщением.')
+        event_hash=hashlib.sha256(event_id.encode()).hexdigest()
+        error=None
+        result=None
+        async with get_pool().acquire() as c,c.transaction():
+            await c.execute('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',f'conversation:{actor}')
+            previous=await c.fetchrow('SELECT * FROM financial_input_events WHERE actor_id=$1 AND platform=$2 AND event_hash=$3',actor,platform,event_hash)
+            if previous is not None:
+                payload=json.loads(previous['result']) if previous['result'] is not None else None
+                if payload is None:
+                    return None
+                member=await self.advances._lock_member(c,actor)
+                if member['company_id']!=previous['company_id']:
+                    raise AdvanceError('Компания изменилась. Начните действие заново.')
+                if 'error' in payload:
+                    raise AdvanceError(payload['error'])
+                return InputResult(**payload)
             state=await get_input(actor,connection=c)
-            if state is None or state.revision!=revision or state.action not in ACTIONS:
-                raise AdvanceError('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
-            member=await self.advances._lock_member(c,actor)
-            current=await get_input(actor,connection=c)
-            if current is None or current.revision!=revision:
-                raise AdvanceError('Запрос ввода изменился или истёк. Начните заново.')
-            if member['company_id']!=state.company_id:
-                raise AdvanceError('Компания изменилась. Начните действие заново.')
-            data=state.payload;action=state.action
-            validate_payload(action,data)
-            aid=data.get('advance')
-            if action=='card_create':
-                try:name,last4=text.strip().rsplit(maxsplit=1)
-                except (ValueError,AttributeError):
-                    raise AdvanceError('Формат: Основная 1234. /cancel — отмена.') from None
-                await self.cards.register(actor,name,last4,connection=c)
-                result=InputResult('Карта добавлена. Храним только название и последние 4 цифры.')
-            elif action=='card_reject':
-                await self.cards.reject(actor,data['expense'],text,connection=c)
-                result=InputResult('Расход отклонён. Причина доступна сотруднику; чек можно привязать заново.')
-            elif action=='advance_return':
-                await self.advances.request_return(actor,aid,text.strip(),data.get('key') or 'input:'+state.revision,connection=c)
-                result=InputResult('Возврат зарегистрирован. Ожидается подтверждение руководителя.',aid)
+            if state is None or state.action not in (ACTIONS if actions is None else actions):
+                await c.execute('INSERT INTO financial_input_events(actor_id,platform,event_hash) VALUES($1,$2,$3)',actor,platform,event_hash)
+                return None
+            try:
+                # Preserve the delivery binding even if validation fails, while
+                # rolling back any partially attempted business write.
+                async with c.transaction():
+                    result=await self._submit(c,actor,text,state.revision)
+            except AdvanceError as exc:
+                error=str(exc)
+            payload={'error':error} if error else asdict(result)
+            await c.execute('''INSERT INTO financial_input_events(actor_id,platform,event_hash,company_id,revision,result)
+                VALUES($1,$2,$3,$4,$5,$6::jsonb)''',actor,platform,event_hash,state.company_id,state.revision,json.dumps(payload,ensure_ascii=False))
+        if error:
+            raise AdvanceError(error)
+        return result
+
+    async def _submit(self, c, actor, text, revision):
+        state=await get_input(actor,connection=c)
+        if state is None or state.revision!=revision or state.action not in ACTIONS:
+            raise AdvanceError('Запрос ввода изменился или отменён. Откройте нужное действие заново.')
+        member=await self.advances._lock_member(c,actor)
+        current=await get_input(actor,connection=c)
+        if current is None or current.revision!=revision:
+            raise AdvanceError('Запрос ввода изменился или истёк. Начните заново.')
+        if member['company_id']!=state.company_id:
+            raise AdvanceError('Компания изменилась. Начните действие заново.')
+        data=state.payload;action=state.action
+        validate_payload(action,data)
+        aid=data.get('advance')
+        if action=='card_create':
+            try:name,last4=text.strip().rsplit(maxsplit=1)
+            except (ValueError,AttributeError):
+                raise AdvanceError('Формат: Основная 1234. /cancel — отмена.') from None
+            await self.cards.register(actor,name,last4,connection=c)
+            result=InputResult('Карта добавлена. Храним только название и последние 4 цифры.')
+        elif action=='card_reject':
+            await self.cards.reject(actor,data['expense'],text,connection=c)
+            result=InputResult('Расход отклонён. Причина доступна сотруднику; чек можно привязать заново.')
+        elif action=='advance_return':
+            await self.advances.request_return(actor,aid,text.strip(),data.get('key') or 'input:'+state.revision,connection=c)
+            result=InputResult('Возврат зарегистрирован. Ожидается подтверждение руководителя.',aid)
+        else:
+            if action=='advance_cancel_issue':
+                await self.advances.cancel(actor,aid,text,connection=c)
+            elif action=='advance_reject_expense':
+                await self.advances.reject_expense(actor,aid,data['operation'],text,connection=c)
             else:
-                if action=='advance_cancel_issue':
-                    await self.advances.cancel(actor,aid,text,connection=c)
-                elif action=='advance_reject_expense':
-                    await self.advances.reject_expense(actor,aid,data['operation'],text,connection=c)
-                else:
-                    await self.advances.reject_return(actor,aid,data['operation'],text,connection=c)
-                result=InputResult('Решение сохранено. Причина доступна в карточке выдачи сотруднику.',aid)
-            await pop_input(actor,expected_revision=revision,connection=c)
-            return result
+                await self.advances.reject_return(actor,aid,data['operation'],text,connection=c)
+            result=InputResult('Решение сохранено. Причина доступна в карточке выдачи сотруднику.',aid)
+        await pop_input(actor,expected_revision=revision,connection=c)
+        return result
 
 
 async def cancel_inputs(actor):

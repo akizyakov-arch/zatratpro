@@ -46,8 +46,11 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'image.jpg'
             Image.new('RGB',(10,10),'white').save(path)
-            with patch('app.services.recognition.get_settings',return_value=settings), patch('app.services.recognition.httpx.AsyncClient',return_value=client):
+            from app.services.recognition import image_blocks
+            with patch('app.services.recognition.get_settings',return_value=settings), patch('app.services.recognition.httpx.AsyncClient',return_value=client) as factory, patch('app.services.recognition.image_blocks', wraps=image_blocks) as prepare:
                 self.assertEqual(await DeepSeekVisionService().extract_text(path),'complete')
+                self.assertEqual(factory.call_count, 1)
+                self.assertEqual(prepare.call_count, 1)
         self.assertEqual(client.post.await_count,2)
         self.assertEqual([call.kwargs['json']['max_tokens'] for call in client.post.call_args_list],[8192,16384])
 

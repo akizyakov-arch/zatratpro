@@ -6,17 +6,35 @@ import time
 from uuid import uuid4
 from pathlib import Path
 from io import BytesIO
+from weakref import WeakKeyDictionary
 from PIL import Image
 
 import httpx
 
 from app.config import get_recognition_settings as get_settings
 from app.services.database import get_pool
+from app.services.recognition_clients import provider_client
+from app.services.async_work import run_blocking
 from app.services.ocr_space import OCRSpaceError, OCRSpaceService
 
 logger = logging.getLogger(__name__)
 
 PROVIDERS = {'deepseek': 'DeepSeek Vision', 'ocr_space': 'OCR.space'}
+_IMAGE_PREPARATION_LIMIT = 2
+_image_slots = WeakKeyDictionary()
+
+
+async def prepare_image_blocks(file_path):
+    """Bound expensive decoding/cropping without blocking the event loop.
+
+    Keep ownership of the source until an already-running thread completes, even
+    if OCR is cancelled. The caller may then safely remove its temporary files.
+    """
+    loop = asyncio.get_running_loop()
+    slots = _image_slots.setdefault(loop, asyncio.Semaphore(_IMAGE_PREPARATION_LIMIT))
+    async with slots:
+        return await run_blocking(image_blocks, file_path)
+
 
 
 async def get_provider_for_user(user_id):
@@ -68,19 +86,20 @@ class DeepSeekVisionService:
         try:
             # Stay within the handler's 120-second timeout, including one retry.
             async with asyncio.timeout(115):
-                try:
-                    return await self._extract_once(file_path, 8192)
-                except IncompleteVisionResponse:
-                    logger.info('vision_retry reason=incomplete_response max_tokens=16384')
-                    return await self._extract_once(file_path, 16384)
+                images = await prepare_image_blocks(file_path)
+                settings = get_settings()
+                async with provider_client(timeout=httpx.Timeout(110, connect=20)) as client:
+                    try:
+                        return await self._extract_once(images, 8192, client, settings)
+                    except IncompleteVisionResponse:
+                        logger.info('vision_retry reason=incomplete_response max_tokens=16384')
+                        return await self._extract_once(images, 16384, client, settings)
         except TimeoutError:
             request_id = uuid4().hex[:12]
             logger.warning('vision_failed request=%s reason=total_timeout', request_id)
             raise OCRSpaceError(f'DeepSeek не завершил распознавание за 115 секунд. Повтори позже или выбери OCR.space. Код ошибки: {request_id}.') from None
 
-    async def _extract_once(self, file_path: Path, max_tokens):
-        settings = get_settings()
-        images = image_blocks(file_path)
+    async def _extract_once(self, images, max_tokens, client, settings):
         prompt = (
             'Первое изображение — полная страница. Остальные, если есть, — увеличенные пересекающиеся фрагменты той же страницы. Не дублируй строки. '
             'Прочитай документ, учитывая поворот страницы. Верни только полный текст документа. '
@@ -93,17 +112,16 @@ class DeepSeekVisionService:
         started = time.monotonic()
         status = None
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(110, connect=20)) as client:
-                response = await client.post(
-                    settings.deepseek_base_url.rstrip('/') + '/chat/completions',
-                    headers={'Authorization': 'Bearer ' + settings.deepseek_api_key},
-                    json={'model': settings.deepseek_vision_model, 'max_tokens': max_tokens,
-                          'thinking': {'type': 'disabled'},
-                          'messages': [{'role': 'user', 'content': [
-                              {'type': 'text', 'text': prompt},
-                              *images,
-                          ]}]},
-                )
+            response = await client.post(
+                settings.deepseek_base_url.rstrip('/') + '/chat/completions',
+                headers={'Authorization': 'Bearer ' + settings.deepseek_api_key},
+                json={'model': settings.deepseek_vision_model, 'max_tokens': max_tokens,
+                      'thinking': {'type': 'disabled'},
+                      'messages': [{'role': 'user', 'content': [
+                          {'type': 'text', 'text': prompt},
+                          *images,
+                      ]}]},
+            )
             status = response.status_code
             response.raise_for_status()
             payload = response.json()

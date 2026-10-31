@@ -27,10 +27,16 @@ class FiscalEvidenceTests(unittest.TestCase):
         self.assertTrue(detect_fiscalization('t=20261030T1200&s=100.00&fn=9999078900001111&i=14885&fp=563815926&n=1'))
 
     def test_negative_marker_and_incomplete_recognition(self):
-        for text in ('НЕФИСКАЛЬНЫЙ ЧЕК','Документ не является фискальным','Не фискализирован',FISCAL+'\nНЕФИСКАЛЬНЫЙ ЧЕК'):
+        for text in ('НЕФИСКАЛЬНЫЙ ЧЕК','Документ не является фискальным','Не фискализирован', 'Кассовый чек. НЕФИСКАЛЬНЫЙ ЧЕК', 'Статус: нефискальный документ'):
             self.assertFalse(detect_fiscalization(text))
         self.assertIsNone(detect_fiscalization('ФН ? ФД ? ФП ?'))
         self.assertIsNone(detect_fiscalization('ФН 1 ФД 2 ФП 3'))
+        self.assertIsNone(detect_fiscalization(FISCAL + '\nНЕФИСКАЛЬНЫЙ ЧЕК'))
+        self.assertTrue(detect_fiscalization(FISCAL + '\nНаименование услуги: печать наклеек «Нефискальный документ»'))
+        self.assertIsNone(detect_fiscalization('Наименование услуги: печать наклеек «Нефискальный документ»'))
+        self.assertIsNone(detect_fiscalization('Кассовый чек. Наименование услуги: печать наклеек «Нефискальный документ»'))
+        self.assertTrue(detect_fiscalization(FISCAL + '\nКассовый чек. Наименование услуги: печать наклеек «Нефискальный документ»'))
+        self.assertFalse(detect_fiscalization('Внимание: данный документ не является фискальным документом'))
 
     def test_schema_does_not_trust_unsupported_model_guess(self):
         document=DocumentSchema(raw_text='Кассовый чек',is_fiscalized=True)

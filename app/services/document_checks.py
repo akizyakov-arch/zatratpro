@@ -1,6 +1,7 @@
 """Deterministic checks of extracted values; never repair quantities by guessing."""
 from decimal import Decimal, InvalidOperation
 import hashlib
+from app.schemas.vat import document_vat_total
 
 
 def number(value):
@@ -60,6 +61,15 @@ def document_warnings(document):
     if items and total is not None and all(value is not None for value in totals):
         if abs(sum(totals) - total) > Decimal('0.02') * len(items):
             warnings.append(f'Сумма позиций {sum(totals):.2f} не совпадает с итогом документа {total:.2f}. Проверь скидки, доставку и полноту списка.')
+    tax = number(document_vat_total(document))
+    if tax is not None:
+        if tax < 0 or (total is not None and tax > total + Decimal('0.02')):
+            warnings.append('НДС документа отрицательный или превышает итог; сверь с оригиналом.')
+        known_taxes = [number(item.vat_amount) for item in items]
+        if items and all(value is not None for value in known_taxes) and abs(sum(known_taxes) - tax) > Decimal('0.02') * len(items):
+            warnings.append('НДС по позициям не совпадает с НДС документа; сверь с оригиналом.')
+        if document.vat_scope == 'no_vat' and tax != 0:
+            warnings.append('Пометка «без НДС» противоречит положительной сумме НДС.')
     return warnings
 
 

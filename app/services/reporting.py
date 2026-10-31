@@ -3,24 +3,23 @@
 Dates select document upload time and financial confirmation time respectively.
 Amounts of different currencies are never combined into the RUB total.
 """
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
-from io import BytesIO
 from types import SimpleNamespace
-
-from openpyxl import load_workbook
+from weakref import WeakKeyDictionary
 
 from app.services.advances import AdvanceError, AdvanceService
-from app.services.business_cards import BusinessCardService
 from app.services.database import get_pool
-from app.services.money_reports import CASH_FIELDS, cash_and_employee_debt
+from app.services.money_reports import CASH_FIELDS, cash_and_employee_debt, build_money_report
 from app.services.report_periods import report_period_start
-from app.services.report_exports import build_manager_report_workbook, _append_row, _ILLEGAL_XML
+from app.services.report_exports import build_manager_report_workbook
+from app.services.async_work import run_blocking
 
 
-_DOCUMENT_SELECT = """
-    SELECT d.*, p.name AS project_name, p.status AS project_status,
+_DOCUMENT_QUERY = """
+    SELECT {document_columns}, p.name AS project_name, p.status AS project_status,
            COALESCE(NULLIF(d.external_document_number,''),NULLIF(d.incoming_number,'')) AS document_number,
            COALESCE(NULLIF(concat_ws(' ',u.first_name,u.last_name),''),u.username,'Сотрудник №'||u.id) AS uploaded_by_name,
            u.username AS uploaded_by_username,
@@ -45,6 +44,29 @@ _DOCUMENT_SELECT = """
     LEFT JOIN advance_expenses ae ON ae.document_id=d.id AND ae.rejected_at IS NULL
     LEFT JOIN card_expenses ce ON ce.document_id=d.id AND ce.rejected_at IS NULL
 """
+
+
+# Only the detail/full-record path asks for OCR/preview bodies.
+_DOCUMENT_SELECT = _DOCUMENT_QUERY.format(document_columns='d.*')
+_DOCUMENT_COMPACT_COLUMNS = (
+    'd.id,d.company_id,d.project_id,d.uploaded_by_user_id,d.document_type,d.source_type,'
+    'd.external_document_number,d.incoming_number,d.vendor,d.vendor_inn,d.vendor_kpp,'
+    'd.document_date,d.currency,d.total_amount,d.duplicate_status,'
+    'd.duplicate_of_document_id,d.created_at,d.is_fiscalized,d.duplicate_checked_at,d.vat_total_amount,d.vat_scope'
+)
+_DOCUMENT_COMPACT_SELECT = _DOCUMENT_QUERY.format(document_columns=_DOCUMENT_COMPACT_COLUMNS)
+_EXPORT_SLOTS = WeakKeyDictionary()
+
+
+def _export_slots():
+    loop = asyncio.get_running_loop()
+    if loop not in _EXPORT_SLOTS:
+        _EXPORT_SLOTS[loop] = asyncio.Semaphore(2)
+    return _EXPORT_SLOTS[loop]
+
+
+async def _build_export(*args, **kwargs):
+    return await run_blocking(build_manager_report_workbook, *args, **kwargs)
 
 
 def _period(start, end):
@@ -148,7 +170,7 @@ class ReportService:
                 duplicate_status=duplicate_status, payment_source=payment_source,
                 start=start, end=end, document_type=document_type,
             )
-            query = _DOCUMENT_SELECT + ' WHERE ' + where
+            query = _DOCUMENT_COMPACT_SELECT + ' WHERE ' + where
             total = await c.fetchval('SELECT count(*) FROM (' + query + ') selected', *params)
             rows = await c.fetch(query + f' ORDER BY {orders[sort]} LIMIT ${len(params)+1} OFFSET ${len(params)+2}',
                                  *params, per_page, (page - 1) * per_page)
@@ -162,7 +184,7 @@ class ReportService:
                 raise AdvanceError('Документ недоступен.')
             result = dict(row)
             result['items'] = [dict(item) for item in await c.fetch(
-                'SELECT id,document_id,line_no,name,quantity,price,line_total FROM document_items WHERE document_id=$1 ORDER BY line_no,id', document_id)]
+                'SELECT id,document_id,line_no,name,quantity,price,line_total,vat_rate,vat_amount,line_total_without_vat,price_includes_vat FROM document_items WHERE document_id=$1 ORDER BY line_no,id', document_id)]
             result['funding_history'] = [dict(item) for item in await c.fetch("""
                 SELECT 'advance' AS source,e.id,e.advance_id AS source_id,e.amount,e.created_at,
                        e.approved_at,e.rejected_at,e.rejection_reason FROM advance_expenses e WHERE e.document_id=$1
@@ -213,13 +235,7 @@ class ReportService:
 
     @staticmethod
     async def _money(c, actor, start, end, *, project_id=None, employee_id=None):
-        scope = {'project_id': project_id, 'employee_id': employee_id, 'connection': c}
-        cash = await AdvanceService().report(actor, start, end, **scope)
-        cash['card_rows'] = [dict(row) for row in await BusinessCardService().report(actor, start, end, **scope)]
-        cash['card_spent'] = sum((r['amount'] for r in cash['card_rows'] if r['accepted']), Decimal(0))
-        cash['card_pending'] = sum((r['amount'] for r in cash['card_rows'] if not r['accepted']), Decimal(0))
-        cash['cash_on_hand'], cash['employee_debt'] = cash_and_employee_debt(cash)
-        return cash
+        return await build_money_report(c, actor, start, end, project_id=project_id, employee_id=employee_id)
 
     async def overview(self, actor, start, end):
         """Dashboard aggregates avoid loading document bodies or line items."""
@@ -304,6 +320,109 @@ class ReportService:
                 raise AdvanceError('Сотрудник недоступен.')
             return dict(row)
 
+    async def subjects(self, actor, *, page=1, per_page=20):
+        """Report subjects include managers and former/zero-document employees."""
+        _page(page, per_page)
+        async with get_pool().acquire() as c, c.transaction(isolation='repeatable_read', readonly=True):
+            company = await self._manager(c, actor)
+            total = await c.fetchval("SELECT count(*) FROM company_members WHERE company_id=$1 AND role IN ('manager','employee')", company)
+            rows = await c.fetch('''SELECT u.id,u.id AS user_id,u.first_name,u.last_name,u.username,
+                cm.role,cm.status,
+                COALESCE(NULLIF(concat_ws(' ',u.first_name,u.last_name),''),u.username,'Сотрудник №'||u.id) AS name
+                FROM company_members cm JOIN users u ON u.id=cm.user_id
+                WHERE cm.company_id=$1 AND cm.role IN ('manager','employee')
+                ORDER BY lower(COALESCE(NULLIF(concat_ws(' ',u.first_name,u.last_name),''),u.username,'')),u.id
+                LIMIT $2 OFFSET $3''', company, per_page, (page-1)*per_page)
+            return {'items': [dict(row) for row in rows], 'total': total, 'page': page, 'per_page': per_page}
+
+    async def period_summary(self, actor, period, **scope):
+        try:
+            start = report_period_start(period)
+        except ValueError as exc:
+            raise AdvanceError(str(exc)) from exc
+        return await self.summary(actor, start, datetime.now(timezone.utc), **scope)
+
+    async def summary(self, actor, start, end, *, project_id=None, employee_id=None, include_duplicates=False):
+        """SQL aggregates only; no document bodies or line items cross the wire."""
+        _period(start, end)
+        async with get_pool().acquire() as c, c.transaction(isolation='repeatable_read', readonly=True):
+            company = await self._manager(c, actor)
+            await self._scope(c, company, project_id, employee_id)
+            where, params = self._conditions(company, start=start, end=end,
+                                              project_id=project_id, employee_id=employee_id)
+            currencies = await c.fetch('''SELECT d.currency,count(*) AS document_count,
+                COALESCE(sum(d.total_amount),0) AS total_amount,
+                count(*) FILTER(WHERE d.duplicate_status='exact') AS exact_duplicate_count,
+                count(*) FILTER(WHERE d.duplicate_status='probable') AS probable_duplicate_count,
+                COALESCE(sum(d.total_amount) FILTER(WHERE d.duplicate_status IN ('exact','probable')),0) AS duplicate_total
+                FROM documents d WHERE ''' + where + ' GROUP BY d.currency', *params)
+            project_rows = await c.fetch('''SELECT d.project_id AS id,p.name AS project_name,d.currency,min(d.id) AS first_document_id,
+                count(*) AS document_count,COALESCE(sum(d.total_amount),0) AS total_amount,
+                count(*) FILTER(WHERE d.duplicate_status='exact') AS exact_duplicate_count,
+                count(*) FILTER(WHERE d.duplicate_status='probable') AS probable_duplicate_count
+                FROM documents d JOIN projects p ON p.id=d.project_id AND p.company_id=d.company_id
+                WHERE ''' + where + ' GROUP BY d.project_id,p.name,d.currency ORDER BY min(d.id),d.currency', *params)
+            employee_rows = await c.fetch('''SELECT u.id,min(d.id) AS first_document_id,
+                COALESCE(NULLIF(concat_ws(' ',u.first_name,u.last_name),''),u.username,'Сотрудник №'||u.id) AS employee_name,
+                u.username,cm.role,d.currency,count(*) AS document_count,
+                COALESCE(sum(d.total_amount),0) AS total_amount,
+                count(*) FILTER(WHERE d.duplicate_status='exact') AS exact_duplicate_count,
+                count(*) FILTER(WHERE d.duplicate_status='probable') AS probable_duplicate_count
+                FROM documents d JOIN users u ON u.id=d.uploaded_by_user_id
+                LEFT JOIN company_members cm ON cm.user_id=u.id AND cm.company_id=d.company_id
+                WHERE ''' + where + ' GROUP BY u.id,u.first_name,u.last_name,u.username,cm.role,d.currency ORDER BY min(d.id),d.currency', *params)
+            duplicates = [dict(row) for row in await c.fetch(_DOCUMENT_COMPACT_SELECT + ' WHERE ' + where + " AND d.duplicate_status IN ('exact','probable') ORDER BY d.created_at DESC,d.id DESC", *params)] if include_duplicates else None
+            cash = await self._money(c, actor, start, end, project_id=project_id, employee_id=employee_id)
+            generated_at = await c.fetchval('SELECT clock_timestamp()')
+        currency_totals = {r['currency']: r['total_amount'] for r in currencies}
+        summary = {
+            'start_at': start, 'end_at': end,
+            'documents': sum(r['document_count'] for r in currencies),
+            'document_count': sum(r['document_count'] for r in currencies),
+            'total_amount': currency_totals.get('RUB', Decimal(0)), 'currency': 'RUB',
+            'totals_by_currency': currency_totals,
+            'exact_duplicates': sum(r['exact_duplicate_count'] for r in currencies),
+            'probable_duplicates': sum(r['probable_duplicate_count'] for r in currencies),
+        }
+        duplicate_totals = {r['currency']: r['duplicate_total'] for r in currencies
+                            if r['exact_duplicate_count'] or r['probable_duplicate_count']}
+        duplicate_summary = dict(summary, documents=summary['exact_duplicates']+summary['probable_duplicates'],
+            document_count=summary['exact_duplicates']+summary['probable_duplicates'],
+            total_amount=duplicate_totals.get('RUB', Decimal(0)), totals_by_currency=duplicate_totals)
+        result = {'start': start, 'end': end, 'generated_at': generated_at,
+                'filters': {'project_id': project_id, 'employee_id': employee_id},
+                'summary': summary, 'overview': summary, 'duplicate_summary': duplicate_summary,
+                'projects': self._aggregate_groups(project_rows, 'project_id'),
+                'employees': self._aggregate_groups(employee_rows, 'uploaded_by_user_id'), 'money': cash}
+        if duplicates is not None:
+            result['duplicates'] = duplicates
+        return result
+
+    @staticmethod
+    def _aggregate_groups(rows, field):
+        groups = {}
+        for r in rows:
+            key = r['id']
+            if key not in groups:
+                groups[key] = {
+                    'id': key, 'project_id': key if field == 'project_id' else None,
+                    'project_name': r['project_name'] if field == 'project_id' else None,
+                    'user_id': key if field == 'uploaded_by_user_id' else None,
+                    'employee_name': r['employee_name'] if field == 'uploaded_by_user_id' else None,
+                    'username': r['username'] if field == 'uploaded_by_user_id' else None,
+                    'role': r['role'] if field == 'uploaded_by_user_id' else None,
+                    'document_count': 0, 'total_amount': Decimal(0), 'currency': 'RUB',
+                    'totals_by_currency': {}, 'exact_duplicate_count': 0, 'probable_duplicate_count': 0,
+                }
+            group = groups[key]
+            group['document_count'] += r['document_count']
+            group['totals_by_currency'][r['currency']] = r['total_amount']
+            if r['currency'] == 'RUB':
+                group['total_amount'] += r['total_amount']
+            group['exact_duplicate_count'] += r['exact_duplicate_count']
+            group['probable_duplicate_count'] += r['probable_duplicate_count']
+        return list(groups.values())
+
     async def period_report(self, actor, period, **scope):
         try:
             start = report_period_start(period)
@@ -311,14 +430,15 @@ class ReportService:
             raise AdvanceError(str(exc)) from exc
         return await self.report(actor, start, datetime.now(timezone.utc), **scope)
 
-    async def report(self, actor, start, end, *, project_id=None, employee_id=None):
+    async def report(self, actor, start, end, *, project_id=None, employee_id=None, include_document_bodies=True):
         _period(start, end)
         async with get_pool().acquire() as c, c.transaction(isolation='repeatable_read', readonly=True):
             company = await self._manager(c, actor)
             await self._scope(c, company, project_id, employee_id)
             where, params = self._conditions(company, start=start, end=end,
                                               project_id=project_id, employee_id=employee_id)
-            documents = [dict(row) for row in await c.fetch(_DOCUMENT_SELECT + ' WHERE ' + where + ' ORDER BY d.id', *params)]
+            document_query = _DOCUMENT_SELECT if include_document_bodies else _DOCUMENT_COMPACT_SELECT
+            documents = [dict(row) for row in await c.fetch(document_query + ' WHERE ' + where + ' ORDER BY d.id', *params)]
             # No display limit is applied to reports or exports.
             items = [dict(row) for row in await c.fetch('SELECT di.* FROM document_items di JOIN documents d ON d.id=di.document_id WHERE ' + where + ' ORDER BY di.document_id,di.line_no,di.id', *params)]
             cash = await self._money(c, actor, start, end, project_id=project_id, employee_id=employee_id)
@@ -337,6 +457,7 @@ class ReportService:
         projects = self._group(documents, 'project_id')
         employees = self._group(documents, 'uploaded_by_user_id')
         return {
+            'company_id': company,
             'start': start, 'end': end, 'generated_at': generated_at,
             'filters': {'project_id': project_id, 'employee_id': employee_id},
             'summary': summary, 'overview': summary, 'projects': projects, 'employees': employees,
@@ -374,34 +495,23 @@ class ReportService:
         return list(groups.values())
 
     async def export(self, actor, start, end, *, project_id=None, employee_id=None):
-        result = await self.report(actor, start, end, project_id=project_id, employee_id=employee_id)
+        async with _export_slots():
+            return await self._export(actor, start, end, project_id=project_id, employee_id=employee_id)
+
+    async def _export(self, actor, start, end, *, project_id=None, employee_id=None):
+        result = await self.report(actor, start, end, project_id=project_id, employee_id=employee_id, include_document_bodies=False)
         summary = SimpleNamespace(**result['summary'])
         as_objects = lambda values: [SimpleNamespace(**row) for row in values]
-        _, payload = build_manager_report_workbook(
+        _, payload = await _build_export(
             f'{start:%Y-%m-%d} — {end:%Y-%m-%d} UTC (конец не включён)', summary,
             as_objects(result['projects']), as_objects(result['employees']),
             as_objects(result['duplicates']), as_objects(result['documents']),
             as_objects(result['items']), money_report=result['money'],
+            metadata={'end': end, 'generated_at': result['generated_at'],
+                      'project_id': project_id, 'employee_id': employee_id},
         )
-        workbook = load_workbook(BytesIO(payload))
-        overview = workbook['Overview']
-        _append_row(overview, ['До (не включая), UTC', end.isoformat()])
-        _append_row(overview, ['Сформирован, UTC', result['generated_at'].isoformat()])
-        _append_row(overview, ['Проект ID', project_id or 'Все'])
-        _append_row(overview, ['Сотрудник ID', employee_id or 'Все'])
-        _append_row(overview, ['Основание периода документов', 'Дата загрузки, UTC'])
-        _append_row(overview, ['Основание периода денег', 'Дата подтверждения, UTC'])
-        overview['A4'] = 'Сумма RUB'
-        workbook['Projects']['D1'] = 'Сумма RUB'
-        workbook['Employees']['E1'] = 'Сумма RUB'
-        for currency, total in result['summary']['totals_by_currency'].items():
-            _append_row(overview, [f'Документы: {currency}', float(total)])
-        for sheet_name, rows, column in (
-                ('Documents', result['documents'], 11), ('Duplicates', result['duplicates'], 11)):
-            workbook[sheet_name].cell(1, column, 'Валюта')
-            for row_number, doc in enumerate(rows, 2):
-                cell = workbook[sheet_name].cell(row_number, column, _ILLEGAL_XML.sub('\ufffd', doc['currency']))
-                cell.data_type = 's'
-        output = BytesIO()
-        workbook.save(output)
-        return f'fiinops-report-{start:%Y%m%d}-{end:%Y%m%d}.xlsx', output.getvalue()
+        async with get_pool().acquire() as c:
+            company = await self._manager(c, actor)
+            if company != result['company_id']:
+                raise AdvanceError('Компания изменилась. Сформируйте выгрузку заново.')
+        return f'fiinops-report-{start:%Y%m%d}-{end:%Y%m%d}.xlsx', payload

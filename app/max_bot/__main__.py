@@ -12,6 +12,7 @@ from app.logging_utils import RedactingFormatter
 from app.max_bot.client import MaxAPIError, MaxClient
 from app.max_bot.runner import poll
 from app.services.database import close_db, init_db
+from app.services.document_housekeeping import start_document_housekeeping, stop_document_housekeeping
 
 
 class MaxSettings(BaseSettings):
@@ -40,9 +41,11 @@ async def run(settings, development, *, latency_check=False):
             raise RuntimeError('Для этого MAX-бота настроен Webhook. Polling не запущен; подписки не менялись.')
         print('MAX: тестовый Long Polling. Для production требуется Webhook.', flush=True)
         await init_db()
+        housekeeping = start_document_housekeeping()
         try:
             await poll(client, me['user_id'])
         finally:
+            await stop_document_housekeeping(housekeeping)
             await close_db()
 
 
