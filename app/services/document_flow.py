@@ -112,8 +112,9 @@ class DocumentFlow:
             await c.execute("INSERT INTO pending_document_flows(actor_id,company_id,upload_id,data,expires_at) VALUES($1,$2,$3,NULL,clock_timestamp()+interval '15 minutes')", actor, member['company_id'], upload_id)
             await c.execute('INSERT INTO document_upload_events(actor_id,platform,event_hash,upload_id,company_id) VALUES($1,$2,$3,$4,$5)', actor, platform, event_hash, upload_id, member['company_id'])
             company_id = member['company_id']
-        provider = await get_provider_for_user(actor)
+        provider = None
         try:
+            provider = await get_provider_for_user(actor)
             if notify:
                 await notify(f'Документ получен. Распознавание: {PROVIDERS[provider]}.')
             # Queue before downloading bytes, so waiting documents do not retain

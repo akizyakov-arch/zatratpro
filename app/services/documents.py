@@ -1,3 +1,4 @@
+from app.schemas.vat import document_vat_total
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
@@ -139,12 +140,14 @@ class DocumentService:
                     source_file_path,
                     source_file_id,
                     upload_id,
-                    is_fiscalized
+                    is_fiscalized,
+                    vat_total_amount,
+                    vat_scope
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8,
                     $9, $10, $11, $12, $13, $14, $15,
-                    $16, $17, NOW(), $19, 'deepseek', NULL, NULL, $18, $20
+                    $16, $17, NOW(), $19, 'deepseek', NULL, NULL, $18, $20, $21, $22
                 )
                 ON CONFLICT (upload_id) WHERE upload_id IS NOT NULL DO NOTHING
                 RETURNING id
@@ -169,6 +172,8 @@ class DocumentService:
                 upload_id,
                 provider,
                 document.is_fiscalized,
+                _as_decimal(document_vat_total(document), "0.01"),
+                document.vat_scope,
             )
             if document_id is None:
                 # Retry of this upload, not a ban on intentionally duplicated receipts.
@@ -188,9 +193,9 @@ class DocumentService:
                         name,
                         quantity,
                         price,
-                        line_total
+                        line_total, vat_rate, vat_amount, line_total_without_vat, price_includes_vat
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     """,
                     [
                         (
@@ -200,6 +205,10 @@ class DocumentService:
                             _as_decimal(item.quantity, "0.001"),
                             _as_decimal(item.price, "0.01"),
                             _as_decimal(item.line_total, "0.01"),
+                            _as_decimal(item.vat_rate, "0.001"),
+                            _as_decimal(item.vat_amount, "0.01"),
+                            _as_decimal(item.line_total_without_vat, "0.01"),
+                            item.price_includes_vat,
                         )
                         for index, item in enumerate(items, start=1)
                     ],

@@ -52,7 +52,7 @@ _DOCUMENT_COMPACT_COLUMNS = (
     'd.id,d.company_id,d.project_id,d.uploaded_by_user_id,d.document_type,d.source_type,'
     'd.external_document_number,d.incoming_number,d.vendor,d.vendor_inn,d.vendor_kpp,'
     'd.document_date,d.currency,d.total_amount,d.duplicate_status,'
-    'd.duplicate_of_document_id,d.created_at,d.is_fiscalized,d.duplicate_checked_at'
+    'd.duplicate_of_document_id,d.created_at,d.is_fiscalized,d.duplicate_checked_at,d.vat_total_amount,d.vat_scope'
 )
 _DOCUMENT_COMPACT_SELECT = _DOCUMENT_QUERY.format(document_columns=_DOCUMENT_COMPACT_COLUMNS)
 _EXPORT_SLOTS = WeakKeyDictionary()
@@ -184,7 +184,7 @@ class ReportService:
                 raise AdvanceError('Документ недоступен.')
             result = dict(row)
             result['items'] = [dict(item) for item in await c.fetch(
-                'SELECT id,document_id,line_no,name,quantity,price,line_total FROM document_items WHERE document_id=$1 ORDER BY line_no,id', document_id)]
+                'SELECT id,document_id,line_no,name,quantity,price,line_total,vat_rate,vat_amount,line_total_without_vat,price_includes_vat FROM document_items WHERE document_id=$1 ORDER BY line_no,id', document_id)]
             result['funding_history'] = [dict(item) for item in await c.fetch("""
                 SELECT 'advance' AS source,e.id,e.advance_id AS source_id,e.amount,e.created_at,
                        e.approved_at,e.rejected_at,e.rejection_reason FROM advance_expenses e WHERE e.document_id=$1

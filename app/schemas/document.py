@@ -1,5 +1,5 @@
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 from app.schemas.fiscal import detect_fiscalization
@@ -31,7 +31,13 @@ class DocumentItem(BaseModel):
 
     @field_validator("quantity", "price", "line_total", "vat_rate", "vat_amount", "line_total_without_vat", mode="before")
     @classmethod
-    def normalize_numbers(cls, value: Any) -> Any:
+    def normalize_numbers(cls, value: Any, info) -> Any:
+        if info.field_name == 'vat_rate' and isinstance(value, str):
+            ratio = re.fullmatch(r'\s*(\d+(?:[.,]\d+)?)\s*/\s*(\d+(?:[.,]\d+)?)\s*%?\s*', value)
+            if ratio:
+                rate, denominator = (float(part.replace(',', '.')) for part in ratio.groups())
+                if 0 <= rate <= 100 and denominator == 100 + rate:
+                    return rate
         return _coerce_number(value)
 
 
@@ -58,10 +64,12 @@ class DocumentSchema(BaseModel):
     is_fiscalized: StrictBool | None = None
     currency: str = "RUB"
     total: float | None = None
+    vat_total_amount: float | None = None
+    vat_scope: Literal['document','mixed','no_vat','unknown'] | None = None
     items: list[DocumentItem] = Field(default_factory=lambda: [DocumentItem()])
     raw_text: str | None = None
 
-    @field_validator("total", mode="before")
+    @field_validator("total", "vat_total_amount", mode="before")
     @classmethod
     def normalize_total(cls, value: Any) -> Any:
         return _coerce_number(value)

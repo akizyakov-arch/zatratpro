@@ -4,6 +4,7 @@ from typing import Iterable
 
 from app.schemas.document import DocumentItem, DocumentSchema
 from app.schemas.fiscal import fiscalization_label
+from app.schemas.vat import document_vat_total
 from app.services.document_checks import warning_text
 
 
@@ -58,6 +59,15 @@ def format_document_preview(document: DocumentSchema) -> str:
         lines.append("")
         lines.append(f"Итого: {_format_amount(document.total)} {currency_display}")
 
+    tax = document_vat_total(document)
+    if document.vat_scope == 'no_vat':
+        lines.append('НДС: без НДС')
+    elif tax is not None:
+        lines.append(f'В том числе НДС: {_format_amount(tax)} {currency_display}')
+    else:
+        lines.append('НДС: не определено')
+    if document.vat_scope == 'mixed':
+        lines.append('НДС: смешанный')
     warning = warning_text(document)
     if warning:
         lines.extend(["", warning])
@@ -84,7 +94,14 @@ def _format_item(item: DocumentItem, currency_display: str) -> str:
     quantity = _format_amount(item.quantity) if item.quantity is not None else "?"
     price = _format_amount(item.price) if item.price is not None else "?"
     line_total = _format_amount(item.line_total) if item.line_total is not None else "?"
-    return f"{name} — {quantity} шт; цена в документе: {price} {currency_display}; сумма: {line_total} {currency_display}"
+    text = f"{name} — {quantity} шт; цена в документе: {price} {currency_display}; сумма: {line_total} {currency_display}"
+    if item.line_total_without_vat is not None:
+        text += f'; без НДС: {_format_amount(item.line_total_without_vat)} {currency_display}'
+    if item.vat_amount is not None:
+        text += f'; НДС: {_format_amount(item.vat_amount)} {currency_display}'
+    if item.vat_rate is not None:
+        text += f' (ставка {item.vat_rate:g}%)'
+    return text
 
 
 def _format_amount(value: float | int | None) -> str:

@@ -11,6 +11,7 @@ from openpyxl import Workbook
 from app.config import TMP_DIR
 from app.services.async_work import run_blocking
 from app.schemas.fiscal import fiscalization_label
+from app.schemas.vat import vat_scope_label
 from app.services.database import get_pool
 from app.services.advances import AdvanceError
 from app.services.reporting import ReportService
@@ -97,7 +98,7 @@ class AccountantExportService:
                 await ReportService._scope(c, company, project_id, employee_id)
                 rows = await c.fetch('''SELECT d.id,d.document_type,d.external_document_number,
                     d.document_date,d.created_at,d.vendor,d.vendor_inn,d.vendor_kpp,d.currency,
-                    d.total_amount,d.duplicate_status,d.is_fiscalized,p.name AS project_name,
+                    d.total_amount,d.duplicate_status,d.is_fiscalized,d.vat_total_amount,d.vat_scope,p.name AS project_name,
                     concat_ws(' ',u.first_name,u.last_name) AS employee_name,
                     o.extension,octet_length(o.content) AS original_size
                     FROM documents d JOIN projects p ON p.id=d.project_id
@@ -137,7 +138,7 @@ def _package(rows, items, originals, start, end):
     missing = sum(r['id'] not in originals for r in rows)
     _append_row(summary, ['Документов', len(rows), 'Без скана', missing])
     sheet = workbook.create_sheet('Документы')
-    _append_row(sheet, ['ID', 'Проект', 'Сотрудник', 'Тип', 'Номер', 'Дата документа', 'Загружен UTC', 'Поставщик', 'ИНН', 'КПП', 'Валюта', 'Сумма', 'Дубль', 'Файл', 'Основание периода', 'Фискализация'])
+    _append_row(sheet, ['ID', 'Проект', 'Сотрудник', 'Тип', 'Номер', 'Дата документа', 'Загружен UTC', 'Поставщик', 'ИНН', 'КПП', 'Валюта', 'Сумма', 'Дубль', 'Файл', 'Основание периода', 'Фискализация', 'В том числе НДС', 'Тип НДС'])
     with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode='w+b', dir=TMP_DIR) as output:
         return _write_package(output, workbook, rows, items, originals, sheet, missing)
 
@@ -146,7 +147,7 @@ def _write_package(output, workbook, rows, items, originals, sheet, missing):
     with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         for row in rows:
             path = f"files/{row['id']}.{row['extension']}" if row['id'] in originals else ''
-            _append_row(sheet, [row['id'], row['project_name'], row['employee_name'], row['document_type'], row['external_document_number'] or '', str(row['document_date'] or ''), row['created_at'].isoformat(), row['vendor'] or '', row['vendor_inn'] or '', row['vendor_kpp'] or '', row['currency'], str(row['total_amount']), row['duplicate_status'], path or 'Скан отсутствует', 'Дата документа' if row['document_date'] else 'Дата загрузки UTC', fiscalization_label(row['is_fiscalized'])])
+            _append_row(sheet, [row['id'], row['project_name'], row['employee_name'], row['document_type'], row['external_document_number'] or '', str(row['document_date'] or ''), row['created_at'].isoformat(), row['vendor'] or '', row['vendor_inn'] or '', row['vendor_kpp'] or '', row['currency'], str(row['total_amount']), row['duplicate_status'], path or 'Скан отсутствует', 'Дата документа' if row['document_date'] else 'Дата загрузки UTC', fiscalization_label(row['is_fiscalized']), _number_text(row.get('vat_total_amount')), vat_scope_label(row.get('vat_scope'))])
             if path:
                 original = originals[row['id']]
                 if isinstance(original, (bytes, bytearray)):
@@ -156,9 +157,9 @@ def _write_package(output, workbook, rows, items, originals, sheet, missing):
                 if output.tell() > MAX_ARCHIVE_BYTES:
                     raise AdvanceError('Архив превышает 45 МБ. Выберите более короткий период.')
         positions = workbook.create_sheet('Позиции')
-        _append_row(positions, ['ID документа', 'Строка', 'Наименование', 'Количество', 'Цена', 'Сумма'])
+        _append_row(positions, ['ID документа', 'Строка', 'Наименование', 'Количество', 'Цена', 'Сумма', 'Ставка НДС %', 'НДС', 'Сумма без НДС', 'Цена включает НДС'])
         for item in items:
-            _append_row(positions, [item['document_id'], item['line_no'], item['name'], _number_text(item['quantity']), _number_text(item['price']), _number_text(item['line_total'])])
+            _append_row(positions, [item['document_id'], item['line_no'], item['name'], _number_text(item['quantity']), _number_text(item['price']), _number_text(item['line_total']), _number_text(item.get('vat_rate')), _number_text(item.get('vat_amount')), _number_text(item.get('line_total_without_vat')), 'Да' if item.get('price_includes_vat') is True else 'Нет' if item.get('price_includes_vat') is False else 'Не определено'])
         data = BytesIO()
         for worksheet in workbook:
             for cells in worksheet:

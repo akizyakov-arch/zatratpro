@@ -138,6 +138,7 @@ def format_report_document_items(title: str, period: str, document, items) -> st
         f'Номер: {_text(number)}',
         'Фискализация: ' + fiscalization_label(getattr(document, 'is_fiscalized', None)),
         f'Сумма: {format_amount(document.total_amount)}',
+        'В том числе НДС: ' + (format_amount(document.vat_total_amount) if getattr(document, 'vat_total_amount', None) is not None else 'не определено'),
         f'Исполнитель: {_text(executor)}',
         '',
         'Позиции:',
@@ -150,7 +151,8 @@ def format_report_document_items(title: str, period: str, document, items) -> st
         qty = item.quantity if item.quantity is not None else '—'
         price = item.price if item.price is not None else '—'
         line_total = item.line_total if item.line_total is not None else '—'
-        lines.append(f"{_text(item.line_no)}. {_text(item_name)} | {_text(qty)} x {_text(price)} = {_text(line_total)}")
+        tax = f"; НДС {format_amount(item.vat_amount)}" if getattr(item, 'vat_amount', None) is not None else ''
+        lines.append(f"{_text(item.line_no)}. {_text(item_name)} | {_text(qty)} x {_text(price)} = {_text(line_total)}{tax}")
     if len(items) > 50:
         lines.append('Показаны только первые 50 позиций документа.')
     return NL.join(lines)

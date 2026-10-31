@@ -202,6 +202,8 @@ class ReportDocumentDetail:
     is_fiscalized: bool | None = None
     currency: str = 'RUB'
 
+    vat_total_amount: Decimal | None = None
+    vat_scope: str | None = None
 
 @dataclass(slots=True)
 class ReportItemDetail:
@@ -212,6 +214,10 @@ class ReportItemDetail:
     price: Decimal | None
     line_total: Decimal | None
 
+    vat_rate: Decimal | None = None
+    vat_amount: Decimal | None = None
+    line_total_without_vat: Decimal | None = None
+    price_includes_vat: bool | None = None
 
 @dataclass(slots=True)
 class DuplicateReportRow:

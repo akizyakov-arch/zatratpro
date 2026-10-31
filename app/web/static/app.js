@@ -2063,6 +2063,7 @@
             ["Дата загрузки", datetime(d.created_at)],
             ["Сотрудник", d.uploaded_by_name],
             ["ИНН", d.vendor_inn],
+            ["В том числе НДС", d.vat_scope === "no_vat" ? "Без НДС" : d.vat_total_amount == null ? "Не определено" : money(d.vat_total_amount, d.currency || "RUB")],
             ["Фискализация (по реквизитам)", fiscalLabel(d.is_fiscalized)],
             ["Источник оплаты", fundingBadge(d.payment_source)],
             ["Проверка дублей", duplicateBadge(d.duplicate_status)],
@@ -2086,6 +2087,9 @@
               numeric: true,
               render: (r) => money(r.line_total, d.currency || "RUB"),
             },
+            { label: "Ставка НДС", render: (r) => r.vat_rate == null ? "—" : `${r.vat_rate}%` },
+            { label: "НДС", render: (r) => r.vat_amount == null ? "—" : money(r.vat_amount, d.currency || "RUB") },
+            { label: "Без НДС", render: (r) => r.line_total_without_vat == null ? "—" : money(r.line_total_without_vat, d.currency || "RUB") },
           ],
           d.items || [],
           {
